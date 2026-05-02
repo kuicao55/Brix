@@ -31,10 +31,16 @@ class OpenAICompatProvider:
             tool_calls = []
             if choice.message.tool_calls:
                 for tc in choice.message.tool_calls:
-                    try:
-                        arguments = json.loads(tc.function.arguments)
-                    except (json.JSONDecodeError, TypeError):
-                        arguments = {"raw": tc.function.arguments}
+                    raw_args = tc.function.arguments
+                    if isinstance(raw_args, dict):
+                        arguments = raw_args
+                    elif isinstance(raw_args, str):
+                        try:
+                            arguments = json.loads(raw_args)
+                        except (json.JSONDecodeError, TypeError):
+                            arguments = {"raw": raw_args}
+                    else:
+                        arguments = {"raw": raw_args}
                     tool_calls.append(ToolCall(
                         name=tc.function.name,
                         arguments=arguments,

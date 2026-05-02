@@ -36,8 +36,8 @@ class LLMClient:
                 raise ValueError(f"Unknown protocol: {protocol}")
         return self._providers[protocol]
 
-    def _resolve_provider_config(self, model: str) -> tuple[str, dict]:
-        """Find provider config for a given model."""
+    def _resolve_provider_config(self, model: str) -> tuple[str, dict, str]:
+        """Find provider config for a given model. Returns (protocol, provider_config, provider_name)."""
         from config.loader import load_config
         from config.model_registry import ModelRegistry
 
@@ -52,7 +52,7 @@ class LLMClient:
         if not provider_config:
             raise ValueError(f"Provider not found: {provider_name}")
 
-        return provider_config["protocol"], provider_config
+        return provider_config["protocol"], provider_config, provider_name
 
     async def chat(
         self,
@@ -60,14 +60,18 @@ class LLMClient:
         model: str,
         tools: list[dict] | None = None,
     ) -> LLMResponse:
-        protocol, provider_config = self._resolve_provider_config(model)
+        protocol, provider_config, provider_name = self._resolve_provider_config(model)
         provider = self._get_provider(protocol)
 
-        api_key = os.environ.get(provider_config["api_key_env"], "")
-        if not api_key:
-            env_var = provider_config["api_key_env"]
+        api_key_env = provider_config.get("api_key_env")
+        if not api_key_env:
             raise ValueError(
-                f"API key not found: set the {env_var} environment variable"
+                f"Provider '{provider_name}' missing 'api_key_env' in config"
+            )
+        api_key = os.environ.get(api_key_env, "")
+        if not api_key:
+            raise ValueError(
+                f"API key not found: set the {api_key_env} environment variable"
             )
         return await provider.chat(
             messages=messages,

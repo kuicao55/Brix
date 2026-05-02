@@ -99,6 +99,26 @@ async def test_llm_client_chat_unset_api_key_raises(llm_client):
             )
 
 
+@pytest.mark.asyncio
+async def test_llm_client_chat_missing_api_key_env_config(llm_client):
+    """chat() should raise a clear error when provider config lacks 'api_key_env'."""
+    # Provider config without api_key_env
+    bad_provider_config = {
+        "base_url": "https://api.openai.com/v1",
+        "protocol": "openai",
+    }
+    with patch.object(
+        llm_client,
+        "_resolve_provider_config",
+        return_value=("openai", bad_provider_config, "openai"),
+    ):
+        with pytest.raises(ValueError, match="missing 'api_key_env'"):
+            await llm_client.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                model="some-model",
+            )
+
+
 # --- Fix 2: JSON parsing guard ---
 
 
@@ -134,6 +154,40 @@ async def test_openai_provider_handles_invalid_json_tool_args():
         assert result.tool_calls[0].name == "test_func"
         # Fallback: arguments should be a dict with the raw string
         assert isinstance(result.tool_calls[0].arguments, dict)
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_handles_preparsed_dict_tool_args():
+    """Provider should use pre-parsed dict arguments directly, not wrap under 'raw'."""
+    from infra.providers.openai_compat import OpenAICompatProvider
+
+    parsed_args = {"city": "Tokyo", "unit": "celsius"}
+    mock_tc = MagicMock()
+    mock_tc.function.name = "test_func"
+    mock_tc.function.arguments = parsed_args  # already a dict, not a JSON string
+
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = ""
+    mock_response.choices[0].message.tool_calls = [mock_tc]
+    mock_response.choices[0].finish_reason = "stop"
+
+    provider = OpenAICompatProvider()
+    with patch("infra.providers.openai_compat.AsyncOpenAI") as MockClient:
+        mock_instance = MockClient.return_value
+        mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_instance.close = AsyncMock()
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="test",
+            tools=[{"type": "function", "function": {"name": "test_func"}}],
+            base_url="http://test",
+            api_key="test-key",
+        )
+        assert isinstance(result, LLMResponse)
+        assert len(result.tool_calls) == 1
+        # Should be the original dict, not {"raw": {...}}
+        assert result.tool_calls[0].arguments == {"city": "Tokyo", "unit": "celsius"}
 
 
 # --- Fix 3: Client lifecycle ---
