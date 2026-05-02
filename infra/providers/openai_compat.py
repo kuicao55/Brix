@@ -19,25 +19,31 @@ class OpenAICompatProvider:
         api_key: str,
     ) -> LLMResponse:
         client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        try:
+            kwargs = {"model": model, "messages": messages}
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
 
-        kwargs = {"model": model, "messages": messages}
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+            response = await client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
 
-        response = await client.chat.completions.create(**kwargs)
-        choice = response.choices[0]
+            tool_calls = []
+            if choice.message.tool_calls:
+                for tc in choice.message.tool_calls:
+                    try:
+                        arguments = json.loads(tc.function.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        arguments = {"raw": tc.function.arguments}
+                    tool_calls.append(ToolCall(
+                        name=tc.function.name,
+                        arguments=arguments,
+                    ))
 
-        tool_calls = []
-        if choice.message.tool_calls:
-            for tc in choice.message.tool_calls:
-                tool_calls.append(ToolCall(
-                    name=tc.function.name,
-                    arguments=json.loads(tc.function.arguments),
-                ))
-
-        return LLMResponse(
-            content=choice.message.content or "",
-            tool_calls=tool_calls,
-            finish_reason=choice.finish_reason,
-        )
+            return LLMResponse(
+                content=choice.message.content or "",
+                tool_calls=tool_calls,
+                finish_reason=choice.finish_reason,
+            )
+        finally:
+            await client.close()

@@ -17,44 +17,46 @@ class AnthropicCompatProvider:
         api_key: str,
     ) -> LLMResponse:
         client = AsyncAnthropic(base_url=base_url, api_key=api_key)
+        try:
+            # Convert OpenAI-format messages to Anthropic format
+            system_msg = ""
+            anthropic_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_msg = msg["content"]
+                else:
+                    anthropic_messages.append(msg)
 
-        # Convert OpenAI-format messages to Anthropic format
-        system_msg = ""
-        anthropic_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_msg = msg["content"]
-            else:
-                anthropic_messages.append(msg)
+            kwargs = {
+                "model": model,
+                "messages": anthropic_messages,
+                "max_tokens": 4096,
+            }
+            if system_msg:
+                kwargs["system"] = system_msg
+            if tools:
+                kwargs["tools"] = self._convert_tools(tools)
 
-        kwargs = {
-            "model": model,
-            "messages": anthropic_messages,
-            "max_tokens": 4096,
-        }
-        if system_msg:
-            kwargs["system"] = system_msg
-        if tools:
-            kwargs["tools"] = self._convert_tools(tools)
+            response = await client.messages.create(**kwargs)
 
-        response = await client.messages.create(**kwargs)
+            content = ""
+            tool_calls = []
+            for block in response.content:
+                if block.type == "text":
+                    content += block.text
+                elif block.type == "tool_use":
+                    tool_calls.append(ToolCall(
+                        name=block.name,
+                        arguments=block.input,
+                    ))
 
-        content = ""
-        tool_calls = []
-        for block in response.content:
-            if block.type == "text":
-                content += block.text
-            elif block.type == "tool_use":
-                tool_calls.append(ToolCall(
-                    name=block.name,
-                    arguments=block.input,
-                ))
-
-        return LLMResponse(
-            content=content,
-            tool_calls=tool_calls,
-            finish_reason=response.stop_reason or "stop",
-        )
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls,
+                finish_reason=response.stop_reason or "stop",
+            )
+        finally:
+            await client.close()
 
     def _convert_tools(self, tools: list[dict]) -> list[dict]:
         """Convert OpenAI function calling format to Anthropic tool format."""

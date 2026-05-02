@@ -64,6 +64,11 @@ class LLMClient:
         provider = self._get_provider(protocol)
 
         api_key = os.environ.get(provider_config["api_key_env"], "")
+        if not api_key:
+            env_var = provider_config["api_key_env"]
+            raise ValueError(
+                f"API key not found: set the {env_var} environment variable"
+            )
         return await provider.chat(
             messages=messages,
             model=model,
