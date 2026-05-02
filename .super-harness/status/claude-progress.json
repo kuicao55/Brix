@@ -1,9 +1,9 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-02T23:52:30Z",
+  "updated_at": "2026-05-02T23:54:02Z",
   "spec_file": ".super-harness/specs/2026-05-02-brix-mvp-design.md",
-  "current_session_handoff": null,
+  "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": null,
   "worktree": null,
   "milestones": [
