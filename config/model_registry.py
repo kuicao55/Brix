@@ -10,7 +10,7 @@ class ModelRegistry:
 
     def get_model_by_id(self, model_id: str) -> dict | None:
         for model in self._models:
-            if model["id"] == model_id:
+            if model.get("id") == model_id:
                 return model
         return None
 
