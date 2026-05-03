@@ -5,6 +5,65 @@ from router.complexity import evaluate_complexity
 from router.model_router import select_model
 
 
+# ---------------------------------------------------------------------------
+# Fix 3: Robust intent parsing tests
+# ---------------------------------------------------------------------------
+
+class TestClassifyIntentRobust:
+    async def test_extra_whitespace_parsing(self):
+        """LLM responses with extra whitespace should still classify correctly."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="  tool_use  \n", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("What's the weather?", [], mock_llm, "gpt-4.1-mini")
+        assert result == "tool_use"
+
+    async def test_uppercase_response(self):
+        """LLM responses in uppercase should be handled."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="TASK", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("Analyze this", [], mock_llm, "gpt-4.1-mini")
+        assert result == "task"
+
+    async def test_response_with_trailing_text(self):
+        """Only the first token of the LLM response should be used."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="chat because it's a greeting", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("Hello!", [], mock_llm, "gpt-4.1-mini")
+        assert result == "chat"
+
+    async def test_heuristic_fallback_tool_use(self):
+        """When LLM returns garbage, tool keywords should trigger tool_use."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="I don't know", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("What's the weather in Tokyo?", [], mock_llm, "gpt-4.1-mini")
+        assert result == "tool_use"
+
+    async def test_heuristic_fallback_task(self):
+        """When LLM returns garbage, task keywords should trigger task."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="hmm", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("Please summarize this document", [], mock_llm, "gpt-4.1-mini")
+        assert result == "task"
+
+    async def test_heuristic_fallback_chat(self):
+        """When LLM returns garbage and no keywords match, default to chat."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="???invalid", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("Hello, how are you?", [], mock_llm, "gpt-4.1-mini")
+        assert result == "chat"
+
+    async def test_exception_triggers_heuristic(self):
+        """When LLM raises, heuristic should still classify."""
+        mock_llm = AsyncMock()
+        mock_llm.chat.side_effect = RuntimeError("API down")
+        result = await classify_intent("calculate 2+2", [], mock_llm, "gpt-4.1-mini")
+        assert result == "tool_use"
+
+
+# ---------------------------------------------------------------------------
+# Existing tests (kept intact)
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
 async def test_classify_intent_chat():
     mock_llm = AsyncMock()

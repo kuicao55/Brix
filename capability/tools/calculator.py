@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import ast
 import operator
+from typing import Optional
 
 from capability.base import Tool
+
+_MAX_DEPTH = 20
+_MAX_NODES = 100
 
 _OPERATORS = {
     ast.Add: operator.add,
@@ -19,22 +23,49 @@ _OPERATORS = {
 }
 
 
-def _safe_eval(node: ast.AST) -> float:
-    """Recursively evaluate an AST node with only arithmetic operations."""
+def _safe_eval(
+    node: ast.AST,
+    depth: int = 0,
+    _counter: Optional[list[int]] = None,
+) -> float:
+    """Recursively evaluate an AST node with only arithmetic operations.
+
+    Includes DoS protections:
+    - Maximum recursion depth (_MAX_DEPTH)
+    - Maximum node count (_MAX_NODES) -- shared counter across entire tree
+    - Exponent magnitude cap (abs <= 1000)
+    """
+    if _counter is None:
+        _counter = [0]
+    _counter[0] += 1
+
+    if depth > _MAX_DEPTH:
+        raise ValueError("Expression too deeply nested")
+    if _counter[0] > _MAX_NODES:
+        raise ValueError("Expression too complex")
+
     if isinstance(node, ast.Expression):
-        return _safe_eval(node.body)
+        return _safe_eval(node.body, depth + 1, _counter)
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+        right = _safe_eval(node.right, depth + 1, _counter)
+        if isinstance(right, (int, float)) and abs(right) > 1000:
+            raise ValueError("Exponent too large")
+        return operator.pow(_safe_eval(node.left, depth + 1, _counter), right)
     if isinstance(node, ast.BinOp):
         op = _OPERATORS.get(type(node.op))
         if op is None:
             raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-        return op(_safe_eval(node.left), _safe_eval(node.right))
+        return op(
+            _safe_eval(node.left, depth + 1, _counter),
+            _safe_eval(node.right, depth + 1, _counter),
+        )
     if isinstance(node, ast.UnaryOp):
         op = _OPERATORS.get(type(node.op))
         if op is None:
             raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
-        return op(_safe_eval(node.operand))
+        return op(_safe_eval(node.operand, depth + 1, _counter))
     raise ValueError(f"Unsupported expression: {ast.dump(node)}")
 
 
