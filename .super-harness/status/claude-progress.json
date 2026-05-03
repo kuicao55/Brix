@@ -5,10 +5,7 @@
   "spec_file": ".super-harness/specs/2026-05-02-brix-mvp-design.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "v0.1.0",
-  "worktree": {
-    "path": "worktrees/milestone-1",
-    "branch": "harness/milestone-1-core-chain"
-  },
+  "worktree": null,
   "milestones": [
     {
       "id": "milestone-1",
