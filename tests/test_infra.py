@@ -19,6 +19,16 @@ def config():
                 "api_key_env": "ZENMUX_API_KEY",
                 "protocol": "anthropic",
             },
+            "minimax": {
+                "base_url": "https://api.minimax.chat/v1",
+                "api_key_env": "MINIMAX_API_KEY",
+                "protocol": "openai",
+            },
+            "mimo": {
+                "base_url": "https://api.xiaomi.com/v1",
+                "api_key_env": "MIMO_API_KEY",
+                "protocol": "openai",
+            },
         }
     }
 
@@ -105,7 +115,7 @@ async def test_llm_client_chat_openai(llm_client):
         with patch.dict("os.environ", {"ZENMUX_API_KEY": "test-key"}):
             result = await llm_client.chat(
                 messages=[{"role": "user", "content": "hi"}],
-                model="google/gemini-3.1-pro-preview",
+                model="zenmux-openai/google/gemini-3.1-pro-preview",
             )
             assert isinstance(result, LLMResponse)
             assert result.content == "Hello!"
@@ -121,7 +131,7 @@ async def test_llm_client_chat_empty_api_key_raises(llm_client):
         with pytest.raises(ValueError, match="API key"):
             await llm_client.chat(
                 messages=[{"role": "user", "content": "hi"}],
-                model="google/gemini-3.1-pro-preview",
+                model="zenmux-openai/google/gemini-3.1-pro-preview",
             )
 
 
@@ -134,7 +144,7 @@ async def test_llm_client_chat_unset_api_key_raises(llm_client):
         with pytest.raises(ValueError, match="API key"):
             await llm_client.chat(
                 messages=[{"role": "user", "content": "hi"}],
-                model="google/gemini-3.1-pro-preview",
+                model="zenmux-openai/google/gemini-3.1-pro-preview",
             )
 
 
