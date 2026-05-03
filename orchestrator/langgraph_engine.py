@@ -97,9 +97,11 @@ class LangGraphOrchestrator:
         iterations: int = state.get("iterations", 0)
 
         try:
+            tool_schemas = context.tool_runner.get_tool_schemas() if context.tool_runner else []
             response = await context.llm_client.chat(
                 messages=context.history,
                 model=context.model,
+                tools=tool_schemas if tool_schemas else None,
             )
         except Exception as e:
             error_msg = f"Error during planning: {e}"

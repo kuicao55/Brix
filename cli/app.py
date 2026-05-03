@@ -158,6 +158,6 @@ class BrixCLI:
             try:
                 from orchestrator.langgraph_engine import LangGraphOrchestrator
                 return LangGraphOrchestrator()
-            except ImportError:
+            except ModuleNotFoundError:
                 print("Warning: langgraph not installed, falling back to state_machine engine")
         return StateMachineOrchestrator()

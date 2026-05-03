@@ -48,9 +48,11 @@ class StateMachineOrchestrator:
 
     async def _plan(self, context: OrchestratorContext) -> object:
         """Call the LLM with current history. Returns LLMResponse."""
+        tool_schemas = context.tool_runner.get_tool_schemas() if context.tool_runner else []
         return await context.llm_client.chat(
             messages=context.history,
             model=context.model,
+            tools=tool_schemas if tool_schemas else None,
         )
 
     async def _execute(
