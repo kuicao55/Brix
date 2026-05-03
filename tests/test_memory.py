@@ -48,3 +48,25 @@ def test_memory_strategy_context_window():
     window = strategy.get_context_window(history, max_chars=500)
     assert len(window) < len(history)
     assert len(window) > 0
+
+
+def test_clear_persists_after_restart(tmp_path):
+    """Cleared state should survive creating a new MemoryStorage instance."""
+    path = tmp_path / "memory.json"
+    # First instance: add messages and save
+    storage = MemoryStorage(path=str(path))
+    storage.add_message("user", "hello")
+    storage.add_message("assistant", "hi there")
+    storage.save()
+
+    # Verify messages exist in a fresh instance
+    storage2 = MemoryStorage(path=str(path))
+    assert len(storage2.get_history()) == 2
+
+    # Clear and save (simulating /clear command)
+    storage2.clear()
+    storage2.save()
+
+    # "Restart" — new instance should see empty history
+    storage3 = MemoryStorage(path=str(path))
+    assert len(storage3.get_history()) == 0

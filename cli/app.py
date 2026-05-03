@@ -84,7 +84,8 @@ class BrixCLI:
 
         if cmd == "/clear":
             self._memory.clear()
-            print("History cleared.")
+            self._memory.save()
+            print("History cleared.\n")
             return True
 
         if cmd == "/model":

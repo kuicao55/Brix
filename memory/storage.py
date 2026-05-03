@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryStorage:
@@ -39,10 +44,24 @@ class MemoryStorage:
         self._messages.clear()
 
     def save(self) -> None:
-        """Write current history to disk."""
+        """Write current history to disk using atomic temp-file-then-rename."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "w") as fh:
-            json.dump(self._messages, fh, indent=2)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=self._path.parent, suffix=".tmp", prefix=".memory-"
+        )
+        try:
+            with os.fdopen(tmp_fd, 'w') as f:
+                json.dump(self._messages, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, str(self._path))
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -53,9 +72,7 @@ class MemoryStorage:
         if not self._path.exists():
             return
         try:
-            with open(self._path) as fh:
-                data = json.load(fh)
-            if isinstance(data, list):
-                self._messages = data
-        except (json.JSONDecodeError, OSError):
+            self._messages = json.loads(self._path.read_text())
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Corrupt memory file {self._path}: {e}. Starting fresh.")
             self._messages = []
