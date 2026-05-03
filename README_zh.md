@@ -1,0 +1,390 @@
+# Brix
+
+> **[English](README.md)**
+
+模块化、多供应商 AI Agent，支持状态机编排、工具调用和持久化记忆。
+
+## 特性
+
+- **多供应商 LLM** — 统一接口，同时支持 OpenAI 兼容和 Anthropic 兼容 API
+- **双编排引擎** — 纯 Python 状态机 + LangGraph 引擎，配置切换
+- **工具调用** — 内置工具：计算器、天气查询（模拟）、文件读取
+- **持久化记忆** — 原子写入的 JSON 存储，崩溃安全
+- **智能路由** — 意图分类 + 复杂度评估，自动选择模型
+- **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
+
+---
+
+## 快速开始
+
+### 1. 克隆 & 环境搭建
+
+```bash
+git clone https://github.com/kuicao55/Brix.git
+cd Brix
+
+# 创建虚拟环境（需要 Python 3.11+）
+python3.11 -m venv .venv
+source .venv/bin/activate
+
+# 安装依赖
+pip install -e ".[dev]"
+```
+
+### 2. 配置 API Key
+
+```bash
+# 复制示例文件，填入你的 key
+cp .env.example .env
+```
+
+编辑 `.env`：
+
+```env
+# ZenMux 聚合平台（一个 key 访问所有模型）
+ZENMUX_API_KEY=your-zenmux-key-here
+
+# MiniMax 官方 API
+MINIMAX_API_KEY=your-minimax-key-here
+
+# Mimo 官方 API
+MIMO_API_KEY=your-mimo-key-here
+```
+
+> Key 通过 `python-dotenv` 自动加载，无需手动 `export`。
+
+### 3. 运行
+
+```bash
+# 方式 A：直接运行
+.venv/bin/python main.py
+
+# 方式 B：激活虚拟环境后运行
+python main.py
+```
+
+---
+
+## Shell 别名（推荐）
+
+配置 shell 别名后，可以在任意目录用一条命令启动 Brix。
+
+### 配置方法
+
+在你的 shell 配置文件中添加一行：
+
+**Zsh**（macOS 默认）— 编辑 `~/.zshrc`：
+```bash
+alias brix="cd ~/Applications/Brix && .venv/bin/python main.py"
+```
+
+**Bash** — 编辑 `~/.bashrc` 或 `~/.bash_profile`：
+```bash
+alias brix="cd ~/Applications/Brix && .venv/bin/python main.py"
+```
+
+> 如果项目路径不同，请替换 `~/Applications/Brix` 为你的实际路径。
+
+然后重新加载 shell 配置：
+
+```bash
+source ~/.zshrc   # 或 source ~/.bashrc
+```
+
+### 使用
+
+```bash
+# 在任意目录启动 Brix
+brix
+
+# 就这样 — 不需要激活 venv，也不需要 cd 到项目目录
+```
+
+### 删除别名
+
+从 shell 配置文件中删除 `alias brix=...` 那一行，然后重新加载即可。
+
+---
+
+## REPL 命令
+
+| 命令 | 说明 |
+|------|------|
+| `/quit` | 退出 Brix |
+| `/clear` | 清空对话历史 |
+| `/model` | 显示当前模型 |
+| `/history` | 显示最近消息 |
+
+---
+
+## 配置指南
+
+所有配置都在 `config/settings.yaml` 中。编辑这一个文件即可添加供应商、模型和修改行为。
+
+### 添加新供应商
+
+供应商就是一个 API 端点。在 `providers:` 下添加 3 行：
+
+```yaml
+providers:
+  # 已有供应商...
+
+  deepseek:                              # 供应商名称（任意唯一 key）
+    base_url: "https://api.deepseek.com/anthropic"  # API 端点
+    api_key_env: "DEEPSEEK_API_KEY"     # API key 对应的环境变量名
+    protocol: "anthropic"               # "anthropic" 或 "openai"
+```
+
+然后在 `.env` 中添加 API key：
+
+```env
+DEEPSEEK_API_KEY=your-key-here
+```
+
+**协议选择：**
+- `"anthropic"` — 使用 Anthropic Messages 格式的 API（如 Claude、MiniMax、Mimo）
+- `"openai"` — 使用 OpenAI Chat Completions 格式的 API（如 GPT、通过 ZenMux 的 DeepSeek）
+
+### 添加新模型
+
+在 `models:` 下添加一条：
+
+```yaml
+models:
+  # 已有模型...
+
+  - id: "deepseek/deepseek-chat"         # 格式：供应商/模型名
+    provider: "deepseek"                  # 必须匹配 providers 中的 key
+    purpose: ["fast_chat", "coding"]      # 何时使用此模型
+    capabilities: ["tool_calling"]        # 支持的功能
+    max_context: 64000                    # 上下文窗口大小
+    cost_tier: "low"                      # "low"、"medium" 或 "high"
+```
+
+### 模型 ID 格式
+
+模型 ID 遵循 `供应商/模型名` 的格式：
+
+| 示例 ID | 供应商 | 模型 |
+|---------|--------|------|
+| `minimax/MiniMax-M2.7` | minimax | MiniMax-M2.7 |
+| `mimo/mimo-v2.5-pro` | mimo | mimo-v2.5-pro |
+| `zenmux-openai/deepseek/deepseek-v4-pro` | zenmux-openai | deepseek/deepseek-v4-pro |
+
+对于 ZenMux 这类聚合平台，模型名包含供应商前缀（如 `deepseek/deepseek-v4-pro`）。
+
+### 模型字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 模型唯一标识（`供应商/模型名`） |
+| `provider` | string | 必须匹配 `providers` 中的某个 key |
+| `purpose` | list | 使用场景：`fast_chat`、`coding`、`reasoning`、`planning`、`analysis`、`simple_qa`、`image_generation`、`video_generation` |
+| `capabilities` | list | 功能特性：`tool_calling`、`strong_reasoning`、`low_latency`、`low_cost`、`long_context`、`image_generation`、`video_generation` |
+| `max_context` | int | 上下文窗口（token 数） |
+| `cost_tier` | string | `"low"`、`"medium"` 或 `"high"` |
+| `default` | bool | 设为 `true` 则为默认模型（可选） |
+
+### 默认模型 & 备用模型
+
+```yaml
+routing:
+  default_model: "minimax/MiniMax-M2.7"                    # 主力模型
+  fallback_model: "zenmux-openai/deepseek/deepseek-v4-flash"  # 主力模型失败时使用
+```
+
+---
+
+## 切换编排引擎
+
+Brix 有两个编排引擎，控制 Agent 如何处理请求：
+
+| 引擎 | 说明 | 适用场景 |
+|------|------|----------|
+| `state_machine` | 纯 Python 状态机，无额外依赖 | 默认推荐，轻量快速 |
+| `langgraph` | LangGraph StateGraph 图编排，需要安装 `langgraph` | 复杂多步任务，调试可视化 |
+
+### 如何切换
+
+编辑 `config/settings.yaml`，修改 `engine` 字段：
+
+```yaml
+engine: "state_machine"   # 纯 Python（默认）
+```
+
+或：
+
+```yaml
+engine: "langgraph"       # LangGraph StateGraph
+```
+
+保存文件，下次启动即生效。
+
+### 安装 LangGraph
+
+如果想使用 `langgraph` 引擎，需要安装：
+
+```bash
+pip install langgraph
+```
+
+如果未安装 LangGraph 但设置了 `engine: "langgraph"`，Brix 会自动回退到 `state_machine` 并显示警告。
+
+### 如何选择？
+
+- **`state_machine`** — 推荐大多数用户使用。简单、快速、无额外依赖。
+- **`langgraph`** — 需要基于图的编排和显式状态转换时使用。更适合调试复杂的多工具工作流。
+
+---
+
+## 架构
+
+```
++-----------------------------------------------------+
+|                      CLI 层                          |
+|                  cli/app.py (REPL)                   |
++-----------------------------------------------------+
+|                    路由层                             |
+|  router/intent.py  router/complexity.py              |
+|  router/model_router.py                              |
++-----------------------------------------------------+
+|                   编排层                              |
+|  orchestrator/state_machine.py  (纯 Python)          |
+|  orchestrator/langgraph_engine.py (LangGraph)        |
++-----------------------------------------------------+
+|                   能力层                              |
+|  capability/runner.py (ToolRunner)                   |
+|  capability/tools/calculator.py                      |
+|  capability/tools/weather.py                         |
+|  capability/tools/file_read.py                       |
++-----------------------------------------------------+
+|                   基础设施层                          |
+|  infra/llm_client.py (统一 LLM 客户端)               |
+|  infra/providers/openai_compat.py                    |
+|  infra/providers/anthropic_compat.py                 |
++-----------------------------------------------------+
+|                    配置层                             |
+|  config/loader.py  config/model_registry.py          |
+|  config/settings.yaml                                |
++-----------------------------------------------------+
+|                    记忆层                             |
+|  memory/storage.py (原子 JSON 存储)                   |
+|  memory/strategy.py (上下文窗口管理)                   |
++-----------------------------------------------------+
+```
+
+### 数据流
+
+```
+用户输入
+    |
+    v
+意图分类 (chat / task / tool_use)
+    |
+    v
+复杂度评估 (low / medium / high)
+    |
+    v
+模型选择 (基于意图 + 复杂度 + 配置)
+    |
+    v
+编排循环
+    |
+    +---> LLM 调用 ---> 有工具调用? ---> 执行工具 ---> 审查 --+
+    |                                                         |
+    +---------------------------------------------------------+
+    |
+    v
+响应 + 记忆持久化
+```
+
+---
+
+## 项目结构
+
+```
+brix/
++-- main.py                          # 入口
++-- pyproject.toml                   # 项目配置 & 依赖
++-- config/
+|   +-- settings.yaml                # 供应商 & 模型配置
+|   +-- loader.py                    # YAML 配置加载器
+|   +-- model_registry.py           # 模型查找（按 id/purpose）
++-- infra/
+|   +-- llm_client.py               # 统一 LLM 客户端
+|   +-- providers/
+|       +-- openai_compat.py        # OpenAI 兼容适配器
+|       +-- anthropic_compat.py     # Anthropic 兼容适配器
++-- router/
+|   +-- intent.py                   # 意图分类
+|   +-- complexity.py               # 复杂度评估
+|   +-- model_router.py             # 模型选择逻辑
++-- orchestrator/
+|   +-- engine.py                   # OrchestratorEngine 协议
+|   +-- states.py                   # 状态枚举
+|   +-- state_machine.py            # 纯 Python 状态机
+|   +-- langgraph_engine.py         # LangGraph 引擎
++-- capability/
+|   +-- base.py                     # Tool 抽象基类
+|   +-- runner.py                   # ToolRunner 注册表
+|   +-- tools/
+|       +-- calculator.py           # 数学表达式计算器
+|       +-- weather.py              # 天气查询（模拟）
+|       +-- file_read.py            # 本地文件读取
++-- memory/
+|   +-- storage.py                  # 原子 JSON 持久化
+|   +-- strategy.py                 # 上下文窗口管理
++-- cli/
+|   +-- app.py                      # REPL 界面
+|   +-- display.py                  # 输出格式化
++-- tests/
+    +-- test_config.py              # 配置层测试
+    +-- test_infra.py               # 基础设施层测试
+    +-- test_orchestrator.py        # 编排层测试
+    +-- test_langgraph.py           # LangGraph 引擎测试
+    +-- test_router.py              # 路由层测试
+    +-- test_capability.py          # 工具 & runner 测试
+    +-- test_memory.py              # 记忆层测试
+    +-- test_cli.py                 # CLI 测试
+```
+
+---
+
+## 测试
+
+```bash
+# 激活虚拟环境
+source .venv/bin/activate
+
+# 运行所有测试
+python -m pytest tests/ -v
+
+# 运行特定模块
+python -m pytest tests/test_orchestrator.py -v
+
+# 运行并查看覆盖率
+python -m pytest tests/ --cov=. --cov-report=term-missing
+```
+
+---
+
+## 技术栈
+
+| 组件 | 技术 |
+|------|------|
+| 语言 | Python 3.11+ |
+| 异步 | asyncio |
+| REPL | prompt_toolkit |
+| 配置 | PyYAML |
+| HTTP | httpx |
+| LLM (OpenAI) | openai SDK |
+| LLM (Anthropic) | anthropic SDK |
+| 编排 | langgraph（可选） |
+| 环境变量 | python-dotenv |
+| 测试 | pytest + pytest-asyncio |
+
+---
+
+## 许可证
+
+私有项目。
