@@ -1,3 +1,14 @@
+# ============================================================
+# ZenMux Unified API Gateway Configuration
+# ============================================================
+# All models are accessed through ZenMux's two endpoints:
+#   - openai protocol:  https://zenmux.ai/api/v1
+#   - anthropic protocol: https://zenmux.ai/api/anthropic
+#
+# To add a new model, just append to the models list below.
+# The model id format is: "provider/model-name"
+# ============================================================
+
 providers:
   zenmux-openai:
     base_url: "https://zenmux.ai/api/v1"
@@ -10,6 +21,7 @@ providers:
     protocol: "anthropic"
 
 models:
+  # --- Google ---
   - id: "google/gemini-3.1-pro-preview"
     provider: "zenmux-openai"
     purpose: ["fast_chat", "coding", "reasoning"]
@@ -18,6 +30,7 @@ models:
     cost_tier: "low"
     default: true
 
+  # --- OpenAI ---
   - id: "openai/gpt-4.1-mini"
     provider: "zenmux-openai"
     purpose: ["fast_chat", "simple_qa"]
@@ -25,12 +38,36 @@ models:
     max_context: 128000
     cost_tier: "low"
 
+  - id: "openai/gpt-4.1"
+    provider: "zenmux-openai"
+    purpose: ["coding", "reasoning", "planning"]
+    capabilities: ["strong_reasoning", "tool_calling", "long_context"]
+    max_context: 128000
+    cost_tier: "high"
+
+  # --- Anthropic ---
   - id: "anthropic/claude-sonnet-4-20250514"
     provider: "zenmux-anthropic"
     purpose: ["analysis", "coding", "planning"]
     capabilities: ["strong_reasoning", "tool_calling", "long_context"]
     max_context: 200000
     cost_tier: "high"
+
+  # --- DeepSeek ---
+  # - id: "deepseek/deepseek-chat"
+  #   provider: "zenmux-openai"
+  #   purpose: ["fast_chat", "coding"]
+  #   capabilities: ["tool_calling"]
+  #   max_context: 64000
+  #   cost_tier: "low"
+
+  # --- MiniMax ---
+  # - id: "minimax/minimax-m1"
+  #   provider: "zenmux-openai"
+  #   purpose: ["fast_chat", "reasoning"]
+  #   capabilities: ["tool_calling"]
+  #   max_context: 1000000
+  #   cost_tier: "low"
 
 engine: "state_machine"
 
