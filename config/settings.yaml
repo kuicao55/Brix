@@ -18,7 +18,7 @@ providers:
     api_key_env: "ZENMUX_API_KEY"
     protocol: "openai"
 
-  # --- 官方 API (默认 Anthropic 协议) ---
+  # --- 官方 API (Anthropic 协议) ---
   minimax:
     base_url: "https://api.minimaxi.com/anthropic"
     api_key_env: "MINIMAX_API_KEY"
@@ -29,23 +29,82 @@ providers:
     api_key_env: "MIMO_API_KEY"
     protocol: "anthropic"
 
-  # 添加新 provider 模板:
-  # new-provider:
-  #   base_url: "https://api.new-provider.com/anthropic"
-  #   api_key_env: "NEW_PROVIDER_API_KEY"
-  #   protocol: "anthropic"
-
 models:
-  # --- Google (via ZenMux) ---
-  - id: "zenmux-openai/google/gemini-3.1-pro-preview"
-    provider: "zenmux-openai"
-    purpose: ["fast_chat", "coding", "reasoning"]
-    capabilities: ["tool_calling", "long_context"]
-    max_context: 1000000
+  # ============================================================
+  # MiniMax — 主力模型，量大管饱
+  # ============================================================
+  - id: "minimax/MiniMax-M2.7"
+    provider: "minimax"
+    purpose: ["fast_chat", "coding", "reasoning", "planning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
     cost_tier: "low"
     default: true
 
-  # --- OpenAI (via ZenMux) ---
+  # ============================================================
+  # Mimo — 编程
+  # ============================================================
+  - id: "mimo/mimo-v2.5-pro"
+    provider: "mimo"
+    purpose: ["coding", "reasoning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
+    cost_tier: "low"
+
+  # ============================================================
+  # ZenMux — 通用知识
+  # ============================================================
+  - id: "zenmux-openai/deepseek/deepseek-v4-pro"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["tool_calling"]
+    max_context: 128000
+    cost_tier: "low"
+
+  - id: "zenmux-openai/deepseek/deepseek-v4-flash"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["tool_calling", "low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
+  # ============================================================
+  # ZenMux — 编程
+  # ============================================================
+  - id: "zenmux-openai/moonshotai/kimi-k2.6"
+    provider: "zenmux-openai"
+    purpose: ["coding", "reasoning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
+    cost_tier: "low"
+
+  - id: "zenmux-openai/z-ai/glm-5.1"
+    provider: "zenmux-openai"
+    purpose: ["coding", "reasoning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
+    cost_tier: "low"
+
+  # ============================================================
+  # ZenMux — 多模态（图片/视频生成）
+  # ============================================================
+  - id: "zenmux-openai/openai/gpt-image-2"
+    provider: "zenmux-openai"
+    purpose: ["image_generation"]
+    capabilities: ["image_generation"]
+    max_context: 32000
+    cost_tier: "high"
+
+  - id: "zenmux-openai/alibaba/happyhorse-1.0"
+    provider: "zenmux-openai"
+    purpose: ["video_generation"]
+    capabilities: ["video_generation"]
+    max_context: 32000
+    cost_tier: "high"
+
+  # ============================================================
+  # ZenMux — OpenAI / Anthropic (备用)
+  # ============================================================
   - id: "zenmux-openai/openai/gpt-4.1-mini"
     provider: "zenmux-openai"
     purpose: ["fast_chat", "simple_qa"]
@@ -60,29 +119,19 @@ models:
     max_context: 128000
     cost_tier: "high"
 
-  # --- Anthropic (via ZenMux) ---
+  - id: "zenmux-openai/google/gemini-3.1-pro-preview"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "coding", "reasoning"]
+    capabilities: ["tool_calling", "long_context"]
+    max_context: 1000000
+    cost_tier: "low"
+
   - id: "zenmux-anthropic/anthropic/claude-sonnet-4-20250514"
     provider: "zenmux-anthropic"
     purpose: ["analysis", "coding", "planning"]
     capabilities: ["strong_reasoning", "tool_calling", "long_context"]
     max_context: 200000
     cost_tier: "high"
-
-  # --- MiniMax (官方) ---
-  - id: "minimax/MiniMax-M2.7"
-    provider: "minimax"
-    purpose: ["fast_chat", "reasoning"]
-    capabilities: ["tool_calling"]
-    max_context: 128000
-    cost_tier: "low"
-
-  # --- Mimo (官方) ---
-  - id: "mimo/mimo-v2.5-pro"
-    provider: "mimo"
-    purpose: ["fast_chat", "coding", "reasoning"]
-    capabilities: ["tool_calling"]
-    max_context: 128000
-    cost_tier: "low"
 
   # 添加新 model 模板:
   # - id: "provider-name/model-name"
@@ -95,5 +144,5 @@ models:
 engine: "state_machine"
 
 routing:
-  default_model: "zenmux-openai/google/gemini-3.1-pro-preview"
-  fallback_model: "zenmux-openai/openai/gpt-4.1-mini"
+  default_model: "minimax/MiniMax-M2.7"
+  fallback_model: "zenmux-openai/deepseek/deepseek-v4-flash"
