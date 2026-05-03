@@ -37,6 +37,8 @@ models:
     max_context: 200000
     cost_tier: "high"
 
+engine: "state_machine"
+
 routing:
   default_model: "gpt-4.1-mini"
   fallback_model: "gpt-4.1-mini"

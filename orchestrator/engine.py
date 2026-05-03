@@ -13,6 +13,9 @@ class ToolRunner(Protocol):
     async def run(self, tool_name: str, params: dict) -> str:
         ...
 
+    def get_tool_schemas(self) -> list[dict]:
+        ...
+
 
 @dataclass
 class OrchestratorContext:

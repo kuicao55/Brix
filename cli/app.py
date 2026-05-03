@@ -34,7 +34,7 @@ class BrixCLI:
         self._llm_client = LLMClient(self._config)
         self._tool_runner = ToolRunner()
         self._register_tools()
-        self._orchestrator = StateMachineOrchestrator()
+        self._orchestrator = self._build_orchestrator()
 
     # ------------------------------------------------------------------
     # Public API
@@ -150,3 +150,14 @@ class BrixCLI:
         self._tool_runner.register(CalculatorTool())
         self._tool_runner.register(WeatherTool())
         self._tool_runner.register(FileReadTool())
+
+    def _build_orchestrator(self):
+        """Build the orchestrator engine based on config."""
+        engine_name = self._config.get("engine", "state_machine")
+        if engine_name == "langgraph":
+            try:
+                from orchestrator.langgraph_engine import LangGraphOrchestrator
+                return LangGraphOrchestrator()
+            except ModuleNotFoundError:
+                print("Warning: langgraph not installed, falling back to state_machine engine")
+        return StateMachineOrchestrator()
