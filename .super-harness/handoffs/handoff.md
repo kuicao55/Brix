@@ -14,8 +14,8 @@
 
 ## Current Position
 - milestone_id: milestone-1
-- task_id: 4
-- tasks_completed: [1, 2, 3]
+- task_id: 5
+- tasks_completed: [1, 2, 3, 4]
 
 ## Deferred Items
 None
