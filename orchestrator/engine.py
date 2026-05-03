@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 class ToolRunner(Protocol):
     """Protocol for something that can execute tool calls."""
 
-    async def run(self, tool_calls: list[Any]) -> list[dict]:
+    async def run(self, tool_name: str, params: dict) -> str:
         ...
 
 
