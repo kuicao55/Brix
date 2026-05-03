@@ -52,7 +52,13 @@ class LLMClient:
         if not provider_config:
             raise ValueError(f"Provider not found: {provider_name}")
 
-        return provider_config["protocol"], provider_config, provider_name
+        protocol = provider_config.get("protocol")
+        if not protocol:
+            raise ValueError(f"Provider '{provider_name}' missing 'protocol' in config")
+        base_url = provider_config.get("base_url")
+        if not base_url:
+            raise ValueError(f"Provider '{provider_name}' missing 'base_url' in config")
+        return protocol, provider_config, provider_name
 
     async def chat(
         self,
@@ -73,10 +79,15 @@ class LLMClient:
             raise ValueError(
                 f"API key not found: set the {api_key_env} environment variable"
             )
+        base_url = provider_config.get("base_url")
+        if not base_url:
+            raise ValueError(
+                f"Provider '{provider_name}' missing 'base_url' in config"
+            )
         return await provider.chat(
             messages=messages,
             model=model,
             tools=tools,
-            base_url=provider_config["base_url"],
+            base_url=base_url,
             api_key=api_key,
         )

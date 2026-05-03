@@ -36,7 +36,8 @@ class OpenAICompatProvider:
                         arguments = raw_args
                     elif isinstance(raw_args, str):
                         try:
-                            arguments = json.loads(raw_args)
+                            parsed = json.loads(raw_args)
+                            arguments = parsed if isinstance(parsed, dict) else {"raw": raw_args}
                         except (json.JSONDecodeError, TypeError):
                             arguments = {"raw": raw_args}
                     else:

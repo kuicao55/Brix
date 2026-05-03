@@ -52,6 +52,45 @@ def test_llm_client_selects_anthropic_provider(llm_client):
 
 
 @pytest.mark.asyncio
+async def test_llm_client_chat_missing_protocol_raises(llm_client):
+    """chat() should raise when provider config is missing 'protocol'."""
+    bad_config = {
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+    }
+    with patch.object(
+        llm_client,
+        "_resolve_provider_config",
+        side_effect=ValueError("Provider 'openai' missing 'protocol' in config"),
+    ):
+        with pytest.raises(ValueError, match="missing 'protocol'"):
+            await llm_client.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                model="gpt-4.1-mini",
+            )
+
+
+@pytest.mark.asyncio
+async def test_llm_client_chat_missing_base_url_raises(llm_client):
+    """chat() should raise when provider config is missing 'base_url'."""
+    bad_config = {
+        "protocol": "openai",
+        "api_key_env": "OPENAI_API_KEY",
+    }
+    with patch.object(
+        llm_client,
+        "_resolve_provider_config",
+        return_value=("openai", bad_config, "openai"),
+    ):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            with pytest.raises(ValueError, match="missing 'base_url'"):
+                await llm_client.chat(
+                    messages=[{"role": "user", "content": "hi"}],
+                    model="gpt-4.1-mini",
+                )
+
+
+@pytest.mark.asyncio
 async def test_llm_client_chat_openai(llm_client):
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -154,6 +193,39 @@ async def test_openai_provider_handles_invalid_json_tool_args():
         assert result.tool_calls[0].name == "test_func"
         # Fallback: arguments should be a dict with the raw string
         assert isinstance(result.tool_calls[0].arguments, dict)
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_handles_non_dict_json_tool_args():
+    """Provider should handle valid JSON that parses to a non-dict (e.g. list)."""
+    from infra.providers.openai_compat import OpenAICompatProvider
+
+    mock_tc = MagicMock()
+    mock_tc.function.name = "test_func"
+    mock_tc.function.arguments = "[1, 2, 3]"
+
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = ""
+    mock_response.choices[0].message.tool_calls = [mock_tc]
+    mock_response.choices[0].finish_reason = "stop"
+
+    provider = OpenAICompatProvider()
+    with patch("infra.providers.openai_compat.AsyncOpenAI") as MockClient:
+        mock_instance = MockClient.return_value
+        mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_instance.close = AsyncMock()
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="test",
+            tools=[{"type": "function", "function": {"name": "test_func"}}],
+            base_url="http://test",
+            api_key="test-key",
+        )
+        assert isinstance(result, LLMResponse)
+        assert len(result.tool_calls) == 1
+        # Non-dict JSON should fallback to {"raw": original_string}
+        assert result.tool_calls[0].arguments == {"raw": "[1, 2, 3]"}
 
 
 @pytest.mark.asyncio
