@@ -217,3 +217,70 @@ async def test_tool_execution_error():
     assert len(tool_responses) >= 1
     assert "Error executing failing_tool" in tool_responses[0]["content"]
     assert "tool broke" in tool_responses[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Non-empty tool_call_id enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_call_id_always_nonempty():
+    """tool_call_id in tool response messages must always be non-empty.
+
+    When a provider doesn't populate ToolCall.id (returns None), the
+    orchestrator must generate a synthetic ID so the subsequent LLM call
+    receives valid tool response messages.
+    """
+    from orchestrator.state_machine import StateMachineOrchestrator
+
+    # ToolCall with id=None (provider didn't populate it)
+    tool_call_no_id = ToolCall(name="lookup", arguments={"q": "test"})
+    assert tool_call_no_id.id is None  # sanity check
+
+    # ToolCall with an explicit id (provider populated it)
+    tool_call_with_id = ToolCall(name="fetch", arguments={"url": "http://example.com"}, id="call_abc123")
+
+    first_response = LLMResponse(
+        content="",
+        tool_calls=[tool_call_no_id, tool_call_with_id],
+        finish_reason="tool_calls",
+    )
+    second_response = LLMResponse(
+        content="Done.",
+        tool_calls=[],
+        finish_reason="stop",
+    )
+
+    llm = AsyncMock()
+    llm.chat = AsyncMock(side_effect=[first_response, second_response])
+
+    mock_runner = AsyncMock()
+    mock_runner.run = AsyncMock(return_value="ok")
+
+    ctx = _make_context(llm, tool_runner=mock_runner)
+    orchestrator = StateMachineOrchestrator()
+    result = await orchestrator.run("do two things", ctx)
+
+    assert result == "Done."
+
+    # All tool response messages must have non-empty tool_call_id
+    tool_responses = [m for m in ctx.history if m.get("role") == "tool"]
+    assert len(tool_responses) == 2
+    for msg in tool_responses:
+        assert msg["tool_call_id"], f"tool_call_id must be non-empty, got: {msg['tool_call_id']!r}"
+
+    # The assistant tool_calls in history must also have non-empty ids
+    assistant_tc_msgs = [m for m in ctx.history if m.get("role") == "assistant" and m.get("tool_calls")]
+    assert len(assistant_tc_msgs) == 1
+    for tc in assistant_tc_msgs[0]["tool_calls"]:
+        assert tc["id"], f"tool_call id in assistant message must be non-empty, got: {tc['id']!r}"
+
+    # The explicit id should be preserved as-is
+    assert any(tc["id"] == "call_abc123" for tc in assistant_tc_msgs[0]["tool_calls"])
+
+    # The generated id for the missing-id call should match the synthetic format
+    generated_ids = [tc["id"] for tc in assistant_tc_msgs[0]["tool_calls"] if tc["id"] != "call_abc123"]
+    assert len(generated_ids) == 1
+    assert generated_ids[0].startswith("call_")
+    assert len(generated_ids[0]) == len("call_") + 12  # "call_" + 12 hex chars

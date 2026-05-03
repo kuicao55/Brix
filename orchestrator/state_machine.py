@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from orchestrator.engine import OrchestratorContext
 from orchestrator.states import OrchestratorState
 
@@ -55,9 +57,15 @@ class StateMachineOrchestrator:
         self, context: OrchestratorContext, response: object
     ) -> None:
         """Run tool calls via the tool_runner and append results to history."""
-        # Record the assistant's tool-call message
+        # Record the assistant's tool-call message, generating synthetic IDs
+        # when the provider doesn't populate them (some OpenAI-compatible
+        # endpoints, older responses).
         tool_calls = [
-            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+            {
+                "id": tc.id or f"call_{uuid.uuid4().hex[:12]}",
+                "name": tc.name,
+                "arguments": tc.arguments,
+            }
             for tc in response.tool_calls
         ]
         context.history.append({
@@ -74,7 +82,7 @@ class StateMachineOrchestrator:
                 result = f"Error executing {tc['name']}: {e}"
             context.history.append({
                 "role": "tool",
-                "tool_call_id": tc.get("id", ""),
+                "tool_call_id": tc["id"],
                 "tool_name": tc["name"],
                 "content": str(result),
             })
