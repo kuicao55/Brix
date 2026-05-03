@@ -18,7 +18,6 @@ from infra.llm_client import LLMClient
 from memory.storage import MemoryStorage
 from memory.strategy import MemoryStrategy
 from orchestrator.engine import OrchestratorContext
-from orchestrator.langgraph_engine import LangGraphOrchestrator
 from orchestrator.state_machine import StateMachineOrchestrator
 from router.complexity import evaluate_complexity
 from router.intent import classify_intent
@@ -156,5 +155,9 @@ class BrixCLI:
         """Build the orchestrator engine based on config."""
         engine_name = self._config.get("engine", "state_machine")
         if engine_name == "langgraph":
-            return LangGraphOrchestrator()
+            try:
+                from orchestrator.langgraph_engine import LangGraphOrchestrator
+                return LangGraphOrchestrator()
+            except ImportError:
+                print("Warning: langgraph not installed, falling back to state_machine engine")
         return StateMachineOrchestrator()

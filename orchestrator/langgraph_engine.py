@@ -96,17 +96,6 @@ class LangGraphOrchestrator:
         context: OrchestratorContext = state["context"]
         iterations: int = state.get("iterations", 0)
 
-        # Check max iterations before calling LLM
-        if iterations >= state.get("max_iterations", self.max_iterations):
-            fallback = "I was unable to complete the request within the allowed steps."
-            context.history.append({"role": "assistant", "content": fallback})
-            return {
-                "iterations": iterations,
-                "response": fallback,
-                "done": True,
-                "last_llm_response": None,
-            }
-
         try:
             response = await context.llm_client.chat(
                 messages=context.history,
@@ -115,7 +104,7 @@ class LangGraphOrchestrator:
         except Exception as e:
             error_msg = f"Error during planning: {e}"
             return {
-                "iterations": iterations + 1,
+                "iterations": iterations,
                 "response": error_msg,
                 "done": True,
                 "last_llm_response": None,
@@ -127,7 +116,7 @@ class LangGraphOrchestrator:
                 {"role": "assistant", "content": response.content}
             )
             return {
-                "iterations": iterations + 1,
+                "iterations": iterations,
                 "response": response.content,
                 "done": True,
                 "last_llm_response": response,
@@ -135,7 +124,7 @@ class LangGraphOrchestrator:
 
         # Tool calls present -- need to execute
         return {
-            "iterations": iterations + 1,
+            "iterations": iterations,
             "last_llm_response": response,
             "done": False,
         }
@@ -174,10 +163,26 @@ class LangGraphOrchestrator:
         return {}
 
     async def _review_node(self, state: _GraphState) -> dict:
-        """Review tool results. After executing tools, go back to plan."""
-        # The review node simply signals that tool results are ready
-        # and the loop should continue to plan again.
-        return {"done": False}
+        """Review tool results. Decide whether to re-plan or respond."""
+        new_iterations = state.get("iterations", 0) + 1
+        max_iter = state.get("max_iterations", self.max_iterations)
+
+        if new_iterations >= max_iter:
+            # Max iterations reached — respond with fallback
+            context: OrchestratorContext = state["context"]
+            fallback = "I was unable to complete the request within the allowed steps."
+            context.history.append({"role": "assistant", "content": fallback})
+            return {
+                "iterations": new_iterations,
+                "response": fallback,
+                "done": True,
+            }
+
+        # Continue to re-plan
+        return {
+            "iterations": new_iterations,
+            "done": False,
+        }
 
     async def _respond_node(self, state: _GraphState) -> dict:
         """Final response node. Just returns the accumulated response."""
