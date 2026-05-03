@@ -1,37 +1,32 @@
 providers:
-  openai:
-    base_url: "https://api.openai.com/v1"
-    api_key_env: "OPENAI_API_KEY"
+  zenmux-openai:
+    base_url: "https://zenmux.ai/api/v1"
+    api_key_env: "ZENMUX_API_KEY"
     protocol: "openai"
 
-  anthropic:
-    base_url: "https://api.anthropic.com"
-    api_key_env: "ANTHROPIC_API_KEY"
+  zenmux-anthropic:
+    base_url: "https://zenmux.ai/api/anthropic"
+    api_key_env: "ZENMUX_API_KEY"
     protocol: "anthropic"
 
-  deepseek:
-    base_url: "https://api.deepseek.com/v1"
-    api_key_env: "DEEPSEEK_API_KEY"
-    protocol: "openai"
-
 models:
-  - id: "gpt-4.1-mini"
-    provider: "openai"
+  - id: "google/gemini-3.1-pro-preview"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "coding", "reasoning"]
+    capabilities: ["tool_calling", "long_context"]
+    max_context: 1000000
+    cost_tier: "low"
+    default: true
+
+  - id: "openai/gpt-4.1-mini"
+    provider: "zenmux-openai"
     purpose: ["fast_chat", "simple_qa"]
     capabilities: ["low_latency", "low_cost", "tool_calling"]
     max_context: 128000
     cost_tier: "low"
-    default: true
 
-  - id: "gpt-4.1"
-    provider: "openai"
-    purpose: ["coding", "reasoning", "planning"]
-    capabilities: ["strong_reasoning", "tool_calling", "long_context"]
-    max_context: 128000
-    cost_tier: "high"
-
-  - id: "claude-sonnet-4-20250514"
-    provider: "anthropic"
+  - id: "anthropic/claude-sonnet-4-20250514"
+    provider: "zenmux-anthropic"
     purpose: ["analysis", "coding", "planning"]
     capabilities: ["strong_reasoning", "tool_calling", "long_context"]
     max_context: 200000
@@ -40,5 +35,5 @@ models:
 engine: "state_machine"
 
 routing:
-  default_model: "gpt-4.1-mini"
-  fallback_model: "gpt-4.1-mini"
+  default_model: "google/gemini-3.1-pro-preview"
+  fallback_model: "openai/gpt-4.1-mini"

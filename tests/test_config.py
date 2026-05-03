@@ -16,10 +16,12 @@ def test_load_config_returns_dict():
 def test_model_registry_get_by_id():
     config = load_config()
     registry = ModelRegistry(config)
-    model = registry.get_model_by_id("gpt-4.1-mini")
+    default = registry.get_default_model()
+    assert default is not None
+    model = registry.get_model_by_id(default["id"])
     assert model is not None
-    assert model["id"] == "gpt-4.1-mini"
-    assert model["provider"] == "openai"
+    assert model["id"] == default["id"]
+    assert "provider" in model
 
 
 def test_model_registry_get_default():

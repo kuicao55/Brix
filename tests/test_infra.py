@@ -9,14 +9,14 @@ from infra.llm_client import LLMClient, LLMResponse, ToolCall
 def config():
     return {
         "providers": {
-            "openai": {
-                "base_url": "https://api.openai.com/v1",
-                "api_key_env": "OPENAI_API_KEY",
+            "zenmux-openai": {
+                "base_url": "https://zenmux.ai/api/v1",
+                "api_key_env": "ZENMUX_API_KEY",
                 "protocol": "openai",
             },
-            "anthropic": {
-                "base_url": "https://api.anthropic.com",
-                "api_key_env": "ANTHROPIC_API_KEY",
+            "zenmux-anthropic": {
+                "base_url": "https://zenmux.ai/api/anthropic",
+                "api_key_env": "ZENMUX_API_KEY",
                 "protocol": "anthropic",
             },
         }
@@ -102,10 +102,10 @@ async def test_llm_client_chat_openai(llm_client):
         mock_instance = MockClient.return_value
         mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
         mock_instance.close = AsyncMock()
-        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+        with patch.dict("os.environ", {"ZENMUX_API_KEY": "test-key"}):
             result = await llm_client.chat(
                 messages=[{"role": "user", "content": "hi"}],
-                model="gpt-4.1-mini",
+                model="google/gemini-3.1-pro-preview",
             )
             assert isinstance(result, LLMResponse)
             assert result.content == "Hello!"
@@ -117,11 +117,11 @@ async def test_llm_client_chat_openai(llm_client):
 @pytest.mark.asyncio
 async def test_llm_client_chat_empty_api_key_raises(llm_client):
     """chat() should raise a clear error when API key env var is empty."""
-    with patch.dict("os.environ", {"OPENAI_API_KEY": ""}):
+    with patch.dict("os.environ", {"ZENMUX_API_KEY": ""}):
         with pytest.raises(ValueError, match="API key"):
             await llm_client.chat(
                 messages=[{"role": "user", "content": "hi"}],
-                model="gpt-4.1-mini",
+                model="google/gemini-3.1-pro-preview",
             )
 
 
@@ -129,12 +129,12 @@ async def test_llm_client_chat_empty_api_key_raises(llm_client):
 async def test_llm_client_chat_unset_api_key_raises(llm_client):
     """chat() should raise a clear error when API key env var is unset."""
     env = os.environ.copy()
-    env.pop("OPENAI_API_KEY", None)
+    env.pop("ZENMUX_API_KEY", None)
     with patch.dict("os.environ", env, clear=True):
         with pytest.raises(ValueError, match="API key"):
             await llm_client.chat(
                 messages=[{"role": "user", "content": "hi"}],
-                model="gpt-4.1-mini",
+                model="google/gemini-3.1-pro-preview",
             )
 
 
