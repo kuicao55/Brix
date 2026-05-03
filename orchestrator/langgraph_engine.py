@@ -97,7 +97,9 @@ class LangGraphOrchestrator:
         iterations: int = state.get("iterations", 0)
 
         try:
-            tool_schemas = context.tool_runner.get_tool_schemas() if context.tool_runner else []
+            tool_schemas = []
+            if context.tool_runner and hasattr(context.tool_runner, "get_tool_schemas"):
+                tool_schemas = context.tool_runner.get_tool_schemas()
             response = await context.llm_client.chat(
                 messages=context.history,
                 model=context.model,
