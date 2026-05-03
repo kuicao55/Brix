@@ -1,46 +1,39 @@
 # ============================================================
 # Provider & Model Configuration
 # ============================================================
-# Structure:
-#   providers:  每个 provider = base_url + api_key_env + protocol
-#   models:     model id 格式 = provider/model-name
-#
-# 添加新 provider: 只需加 base_url + api_key_env + protocol
-# 添加新 model:    只需加 id + provider + 用途标签
-#
-# protocol 只有两种:
-#   "openai"    — OpenAI 兼容协议（绝大多数模型）
-#   "anthropic" — Anthropic Messages 协议
+# 添加新 provider: 复制模板 → 填 base_url + api_key_env
+# 添加新 model:    复制模板 → 填 id + provider
+# 默认使用 Anthropic 协议
 # ============================================================
 
 providers:
   # --- 聚合平台 ---
-  zenmux-openai:
-    base_url: "https://zenmux.ai/api/v1"
-    api_key_env: "ZENMUX_API_KEY"
-    protocol: "openai"
-
   zenmux-anthropic:
     base_url: "https://zenmux.ai/api/anthropic"
     api_key_env: "ZENMUX_API_KEY"
     protocol: "anthropic"
 
-  # --- 官方 API ---
-  minimax:
-    base_url: "https://api.minimax.chat/v1"
-    api_key_env: "MINIMAX_API_KEY"
+  zenmux-openai:
+    base_url: "https://zenmux.ai/api/v1"
+    api_key_env: "ZENMUX_API_KEY"
     protocol: "openai"
+
+  # --- 官方 API (默认 Anthropic 协议) ---
+  minimax:
+    base_url: "https://api.minimaxi.com/anthropic"
+    api_key_env: "MINIMAX_API_KEY"
+    protocol: "anthropic"
 
   mimo:
-    base_url: "https://api.xiaomi.com/v1"
+    base_url: "https://api.xiaomimimo.com/anthropic"
     api_key_env: "MIMO_API_KEY"
-    protocol: "openai"
+    protocol: "anthropic"
 
-  # 添加新 provider 只需复制下面模板:
+  # 添加新 provider 模板:
   # new-provider:
-  #   base_url: "https://api.new-provider.com/v1"
+  #   base_url: "https://api.new-provider.com/anthropic"
   #   api_key_env: "NEW_PROVIDER_API_KEY"
-  #   protocol: "openai"
+  #   protocol: "anthropic"
 
 models:
   # --- Google (via ZenMux) ---
@@ -76,11 +69,11 @@ models:
     cost_tier: "high"
 
   # --- MiniMax (官方) ---
-  - id: "minimax/minimax-m1"
+  - id: "minimax/MiniMax-M2.7"
     provider: "minimax"
     purpose: ["fast_chat", "reasoning"]
     capabilities: ["tool_calling"]
-    max_context: 1000000
+    max_context: 128000
     cost_tier: "low"
 
   # --- Mimo (官方) ---
@@ -91,7 +84,7 @@ models:
     max_context: 128000
     cost_tier: "low"
 
-  # 添加新 model 只需复制下面模板:
+  # 添加新 model 模板:
   # - id: "provider-name/model-name"
   #   provider: "provider-name"
   #   purpose: ["fast_chat"]

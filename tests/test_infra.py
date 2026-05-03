@@ -20,14 +20,14 @@ def config():
                 "protocol": "anthropic",
             },
             "minimax": {
-                "base_url": "https://api.minimax.chat/v1",
+                "base_url": "https://api.minimaxi.com/anthropic",
                 "api_key_env": "MINIMAX_API_KEY",
-                "protocol": "openai",
+                "protocol": "anthropic",
             },
             "mimo": {
-                "base_url": "https://api.xiaomi.com/v1",
+                "base_url": "https://api.xiaomimimo.com/anthropic",
                 "api_key_env": "MIMO_API_KEY",
-                "protocol": "openai",
+                "protocol": "anthropic",
             },
         }
     }
