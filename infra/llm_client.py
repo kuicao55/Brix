@@ -8,6 +8,7 @@ from dataclasses import dataclass
 class ToolCall:
     name: str
     arguments: dict
+    id: str | None = None
 
 
 @dataclass

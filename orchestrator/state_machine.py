@@ -25,7 +25,10 @@ class StateMachineOrchestrator:
         context.history.append({"role": "user", "content": user_input})
 
         for _ in range(self.max_iterations):
-            response = await self._plan(context)
+            try:
+                response = await self._plan(context)
+            except Exception as e:
+                return f"Error during planning: {e}"
 
             if not response.tool_calls:
                 context.history.append(
@@ -34,7 +37,10 @@ class StateMachineOrchestrator:
                 return response.content
 
             # Tool calls present — execute them
-            await self._execute(context, response)
+            try:
+                await self._execute(context, response)
+            except Exception as e:
+                return f"Error during tool execution: {e}"
 
         # Exhausted iterations — return a fallback
         fallback = "I was unable to complete the request within the allowed steps."
@@ -53,22 +59,23 @@ class StateMachineOrchestrator:
     ) -> None:
         """Run tool calls via the tool_runner and append results to history."""
         # Record the assistant's tool-call message
+        tool_calls = [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+            for tc in response.tool_calls
+        ]
         context.history.append({
             "role": "assistant",
             "content": response.content,
-            "tool_calls": [
-                {"name": tc.name, "arguments": tc.arguments}
-                for tc in response.tool_calls
-            ],
+            "tool_calls": tool_calls,
         })
 
-        # Run tools
-        results = await context.tool_runner.run(response.tool_calls)
-
-        # Append tool results to history
-        for result in results:
+        # Run each tool and append results
+        for tc in tool_calls:
+            result = await context.tool_runner.run(tc["name"], tc["arguments"])
             context.history.append({
                 "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "tool_name": tc["name"],
                 "content": str(result),
             })
 

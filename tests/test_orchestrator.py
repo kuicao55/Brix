@@ -133,9 +133,7 @@ async def test_tool_calling_loop():
     llm.chat = AsyncMock(side_effect=[first_response, second_response])
 
     mock_runner = AsyncMock()
-    mock_runner.run = AsyncMock(
-        return_value=[{"tool": "get_weather", "result": "sunny"}]
-    )
+    mock_runner.run = AsyncMock(return_value='{"tool": "get_weather", "result": "sunny"}')
 
     ctx = _make_context(llm, tool_runner=mock_runner)
     orchestrator = StateMachineOrchestrator()
@@ -145,7 +143,7 @@ async def test_tool_calling_loop():
     # LLM called twice: planning + re-planning after tool execution
     assert llm.chat.call_count == 2
     # Tool runner was called once with the tool call
-    mock_runner.run.assert_called_once()
+    mock_runner.run.assert_called_once_with("get_weather", {"city": "Tokyo"})
 
 
 # ---------------------------------------------------------------------------
@@ -169,9 +167,7 @@ async def test_max_iteration_guard():
     llm.chat = AsyncMock(return_value=always_tool_response)
 
     mock_runner = AsyncMock()
-    mock_runner.run = AsyncMock(
-        return_value=[{"tool": "search", "result": "data"}]
-    )
+    mock_runner.run = AsyncMock(return_value='{"tool": "search", "result": "data"}')
 
     ctx = _make_context(llm, tool_runner=mock_runner)
     orchestrator = StateMachineOrchestrator(max_iterations=3)
@@ -180,5 +176,32 @@ async def test_max_iteration_guard():
     # Should have stopped after 3 planning calls
     assert llm.chat.call_count == 3
     # Result should be a fallback / last-resort message (not crash)
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Tool execution error handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_error():
+    """Orchestrator handles tool execution errors gracefully."""
+    from orchestrator.state_machine import StateMachineOrchestrator
+
+    tool_call = ToolCall(name="failing_tool", arguments={})
+    llm = AsyncMock()
+    llm.chat = AsyncMock(return_value=LLMResponse(
+        content="", tool_calls=[tool_call], finish_reason="tool_calls"
+    ))
+
+    mock_runner = AsyncMock()
+    mock_runner.run = AsyncMock(side_effect=RuntimeError("tool broke"))
+
+    ctx = _make_context(llm, tool_runner=mock_runner)
+    orchestrator = StateMachineOrchestrator()
+    result = await orchestrator.run("use failing tool", ctx)
+
     assert isinstance(result, str)
     assert len(result) > 0
