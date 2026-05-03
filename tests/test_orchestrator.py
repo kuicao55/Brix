@@ -203,5 +203,17 @@ async def test_tool_execution_error():
     orchestrator = StateMachineOrchestrator()
     result = await orchestrator.run("use failing tool", ctx)
 
+    # Orchestrator returns a response, not a crash
     assert isinstance(result, str)
     assert len(result) > 0
+
+    # History contains the assistant's tool-call message
+    tool_call_msgs = [m for m in ctx.history if m.get("role") == "assistant" and m.get("tool_calls")]
+    assert len(tool_call_msgs) >= 1
+    assert tool_call_msgs[0]["tool_calls"][0]["name"] == "failing_tool"
+
+    # History contains the error tool response
+    tool_responses = [m for m in ctx.history if m.get("role") == "tool"]
+    assert len(tool_responses) >= 1
+    assert "Error executing failing_tool" in tool_responses[0]["content"]
+    assert "tool broke" in tool_responses[0]["content"]

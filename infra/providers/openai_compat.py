@@ -43,6 +43,7 @@ class OpenAICompatProvider:
                     else:
                         arguments = {"raw": raw_args}
                     tool_calls.append(ToolCall(
+                        id=tc.id,
                         name=tc.function.name,
                         arguments=arguments,
                     ))

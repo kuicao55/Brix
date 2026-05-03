@@ -46,6 +46,7 @@ class AnthropicCompatProvider:
                     content += block.text
                 elif block.type == "tool_use":
                     tool_calls.append(ToolCall(
+                        id=block.id,
                         name=block.name,
                         arguments=block.input,
                     ))

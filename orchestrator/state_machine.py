@@ -37,10 +37,7 @@ class StateMachineOrchestrator:
                 return response.content
 
             # Tool calls present — execute them
-            try:
-                await self._execute(context, response)
-            except Exception as e:
-                return f"Error during tool execution: {e}"
+            await self._execute(context, response)
 
         # Exhausted iterations — return a fallback
         fallback = "I was unable to complete the request within the allowed steps."
@@ -71,7 +68,10 @@ class StateMachineOrchestrator:
 
         # Run each tool and append results
         for tc in tool_calls:
-            result = await context.tool_runner.run(tc["name"], tc["arguments"])
+            try:
+                result = await context.tool_runner.run(tc["name"], tc["arguments"])
+            except Exception as e:
+                result = f"Error executing {tc['name']}: {e}"
             context.history.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id", ""),
