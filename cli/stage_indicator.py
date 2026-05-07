@@ -6,7 +6,7 @@ from rich.console import Console
 
 from cli.spinner import Spinner
 
-STAGE_ICON = "\u2739"
+STAGE_ICON = "\u22b9"
 
 
 class StageIndicator:
