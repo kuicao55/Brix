@@ -54,6 +54,14 @@ class Spinner:
                 self.live.update(self._render_frame())
             time.sleep(0.1)
 
+    def stop(self) -> None:
+        """Stop spinner silently — no output printed."""
+        self.running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        if self.live:
+            self.live.stop()
+
     def update_label(self, label: str) -> None:
         """Change the spinner label while running."""
         self.label = label

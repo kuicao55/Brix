@@ -68,6 +68,25 @@ class TestSpinnerLeak:
         # First spinner should now be stopped (thread leak prevented)
         assert first_spinner.running is False
 
+    def test_stage_active_silently_stops_previous_spinner(self):
+        """Calling stage_active twice does NOT print 'Done' for the first spinner."""
+        indicator, buf = _make_indicator()
+        indicator.stage_active("Intent")
+        indicator.stage_active("Memory")
+        output = buf.getvalue()
+        # No "Done" should appear — the first spinner was stopped silently
+        assert "Done" not in output
+
+
+class TestStageDoneStopsSpinner:
+    def test_stage_done_stops_active_spinner(self):
+        """stage_done() stops the active spinner started by stage_active()."""
+        indicator, buf = _make_indicator()
+        spinner = indicator.stage_active("Intent")
+        assert spinner.running is True
+        indicator.stage_done("Intent", 1.0)
+        assert spinner.running is False
+
 
 class TestMarkupEscape:
     def test_stage_done_escapes_markup(self):
@@ -78,6 +97,31 @@ class TestMarkupEscape:
         # The literal bracket text should appear (escaped), not styled output
         assert "[bold]injected[/bold]" in output
         assert "[red]bad[/red]" in output
+
+
+class TestSpinnerStop:
+    def test_spinner_stop_stops_thread(self):
+        """Spinner.stop() stops the animation thread."""
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=80)
+        spinner = Spinner(console, label="Test")
+        spinner.start()
+        assert spinner.running is True
+        spinner.stop()
+        assert spinner.running is False
+
+    def test_spinner_stop_does_not_print(self):
+        """Spinner.stop() does NOT print a 'Done' message (unlike finish)."""
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=80)
+        spinner = Spinner(console, label="Test")
+        spinner.start()
+        spinner.stop()
+        output = buf.getvalue()
+        # stop() should not print "Done" or any visible message
+        # (Rich Live may emit terminal control sequences, that's OK)
+        assert "Done" not in output
+        assert "\u2713" not in output  # no checkmark printed
 
 
 class TestFinish:

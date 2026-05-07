@@ -17,8 +17,15 @@ class StageIndicator:
         self.console = console
         self._active_spinner: Spinner | None = None
 
+    def _stop_spinner(self) -> None:
+        """Silently stop the active spinner without printing any output."""
+        if self._active_spinner is not None:
+            self._active_spinner.stop()
+            self._active_spinner = None
+
     def stage_done(self, name: str, elapsed: float, detail: str = "") -> None:
         """Print a completed stage line with icon, name, time, and optional detail."""
+        self._stop_spinner()
         parts = ["  ", STAGE_ICON, " ", markup_escape(name), "  ", "{:.1f}s".format(elapsed)]
         if detail:
             parts.extend(["  ", markup_escape(detail)])
@@ -26,9 +33,7 @@ class StageIndicator:
 
     def stage_active(self, name: str) -> Spinner:
         """Start a Spinner for the current active stage and return it."""
-        if self._active_spinner is not None:
-            self._active_spinner.finish()
-            self._active_spinner = None
+        self._stop_spinner()
         spinner = Spinner(self.console, label=name)
         spinner.start()
         self._active_spinner = spinner
@@ -36,6 +41,4 @@ class StageIndicator:
 
     def finish(self) -> None:
         """Stop any active spinner."""
-        if self._active_spinner is not None:
-            self._active_spinner.finish()
-            self._active_spinner = None
+        self._stop_spinner()
