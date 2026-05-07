@@ -20,6 +20,8 @@ class MemoryStrategy:
 
     def _count_tokens(self, text: str) -> int:
         """Count tokens in text. Falls back to char/4 if tiktoken unavailable."""
+        if not text:
+            return 0
         if self._encoder is not None:
             return len(self._encoder.encode(text))
         return max(1, len(text) // 4)
@@ -47,15 +49,19 @@ class MemoryStrategy:
 
         # Count system messages against budget
         system_tokens = sum(
-            self._count_tokens(m.get("content", "")) for m in system_msgs
+            self._count_tokens(m.get("content") or "") for m in system_msgs
         )
         remaining = limit - system_tokens
+
+        # If system messages alone exceed the budget, return only system messages
+        if remaining <= 0:
+            return system_msgs
 
         # Walk backwards through non-system messages
         total = 0
         window: list[dict[str, Any]] = []
         for msg in reversed(non_system):
-            msg_tokens = self._count_tokens(msg.get("content", ""))
+            msg_tokens = self._count_tokens(msg.get("content") or "")
             if total + msg_tokens > remaining and window:
                 break
             window.append(msg)

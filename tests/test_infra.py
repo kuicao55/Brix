@@ -546,3 +546,114 @@ async def test_no_retry_on_auth_error():
             await client.chat([{"role": "user", "content": "hi"}], "test-model")
         # Should only be called once — no retry
         assert mock_provider.chat.call_count == 1
+
+
+# --- Quality Review edge cases ---
+
+
+@pytest.mark.asyncio
+async def test_no_fallback_on_non_retryable_error():
+    """Non-retryable errors (e.g. auth) should NOT trigger fallback, even if fallback is configured."""
+    from openai import AuthenticationError
+
+    mock_provider = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.json.return_value = {"error": {"message": "invalid key"}}
+    mock_provider.chat = AsyncMock(
+        side_effect=AuthenticationError(
+            message="invalid key",
+            response=mock_response,
+            body={"error": {"message": "invalid key"}},
+        )
+    )
+
+    config = {
+        "providers": {
+            "test-provider": {
+                "protocol": "openai",
+                "base_url": "http://test",
+                "api_key_env": "TEST_KEY",
+            }
+        },
+        "routing": {
+            "fallback_model": "test/fallback-model",
+        },
+    }
+    client = LLMClient(config)
+
+    with patch.object(client, "_get_provider", return_value=mock_provider), \
+         patch.object(client, "_resolve_provider_config", return_value=(
+             "openai", {"protocol": "openai", "base_url": "http://test", "api_key_env": "TEST_KEY"}, "test"
+         )), \
+         patch.dict("os.environ", {"TEST_KEY": "sk-test"}):
+        with pytest.raises(AuthenticationError):
+            await client.chat([{"role": "user", "content": "hi"}], "test-model")
+        # Should only be called once — no retry, no fallback
+        assert mock_provider.chat.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_on_5xx_internal_server_error():
+    """5xx InternalServerError should be retried (Finding 3)."""
+    from openai import InternalServerError
+
+    def _make_500_error():
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.headers = {}
+        mock_response.json.return_value = {"error": {"message": "server error"}}
+        return InternalServerError(
+            message="server error",
+            response=mock_response,
+            body={"error": {"message": "server error"}},
+        )
+
+    mock_provider = MagicMock()
+    mock_provider.chat = AsyncMock(
+        side_effect=[
+            _make_500_error(),  # first attempt
+            _make_500_error(),  # second attempt
+            LLMResponse(content="ok after retry", tool_calls=[], finish_reason="stop"),  # third succeeds
+        ]
+    )
+
+    config = {
+        "providers": {
+            "test-provider": {
+                "protocol": "openai",
+                "base_url": "http://test",
+                "api_key_env": "TEST_KEY",
+            }
+        }
+    }
+    client = LLMClient(config)
+
+    with patch.object(client, "_get_provider", return_value=mock_provider), \
+         patch.object(client, "_resolve_provider_config", return_value=(
+             "openai", {"protocol": "openai", "base_url": "http://test", "api_key_env": "TEST_KEY"}, "test"
+         )), \
+         patch.dict("os.environ", {"TEST_KEY": "sk-test"}):
+        response = await client.chat([{"role": "user", "content": "hi"}], "test-model")
+        assert response.content == "ok after retry"
+        assert mock_provider.chat.call_count == 3
+
+
+def test_retryable_errors_includes_5xx():
+    """_get_retryable_errors should include InternalServerError for both SDKs."""
+    from infra.llm_client import _get_retryable_errors
+    from openai import InternalServerError as OpenAI5xx
+    from anthropic import InternalServerError as Anthropic5xx
+
+    retryable = _get_retryable_errors()
+    assert OpenAI5xx in retryable
+    assert Anthropic5xx in retryable
+
+
+def test_retryable_errors_excludes_auth():
+    """_get_retryable_errors should NOT include AuthenticationError."""
+    from infra.llm_client import _get_retryable_errors
+    from openai import AuthenticationError
+
+    retryable = _get_retryable_errors()
+    assert AuthenticationError not in retryable

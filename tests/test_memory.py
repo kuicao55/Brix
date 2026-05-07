@@ -122,3 +122,62 @@ def test_clear_persists_after_restart(tmp_path):
     # "Restart" — new instance should see empty history
     storage3 = MemoryStorage(path=str(path))
     assert len(storage3.get_history()) == 0
+
+
+# --- Quality Review edge cases ---
+
+
+def test_count_tokens_none_content():
+    """_count_tokens should return 0 for None or empty content, not crash."""
+    strategy = MemoryStrategy()
+    assert strategy._count_tokens("") == 0
+    assert strategy._count_tokens(None) == 0
+
+
+def test_count_tokens_none_content_fallback():
+    """_count_tokens with char-based fallback should also handle None/empty."""
+    strategy = MemoryStrategy()
+    strategy._encoder = None  # force char-based fallback
+    assert strategy._count_tokens("") == 0
+    assert strategy._count_tokens(None) == 0
+
+
+def test_context_window_none_content_messages():
+    """Messages with content=None (e.g. tool-call messages) should not crash."""
+    strategy = MemoryStrategy(max_tokens=1000)
+    history = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": None, "tool_calls": [{"name": "foo"}]},
+        {"role": "user", "content": "Continue"},
+    ]
+    window = strategy.get_context_window(history)
+    assert len(window) == 4  # all fit within 1000 tokens
+
+
+def test_context_window_system_exceeds_budget():
+    """If system messages alone exceed the token limit, return only system messages."""
+    strategy = MemoryStrategy(max_tokens=5)
+    long_system = "You are a very helpful assistant. " * 50  # well over 5 tokens
+    history = [
+        {"role": "system", "content": long_system},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+    window = strategy.get_context_window(history)
+    # Should only contain the system message, not any non-system messages
+    assert len(window) == 1
+    assert window[0]["role"] == "system"
+
+
+def test_context_window_system_exceeds_budget_exact_boundary():
+    """Edge case: system messages exactly at the budget boundary."""
+    strategy = MemoryStrategy(max_tokens=10)
+    # System message that uses all 10 tokens
+    history = [
+        {"role": "system", "content": "abcdefghij"},  # ~2-3 tokens with tiktoken
+        {"role": "user", "content": "Hello"},
+    ]
+    window = strategy.get_context_window(history)
+    # System message should always be present
+    assert any(m.get("role") == "system" for m in window)

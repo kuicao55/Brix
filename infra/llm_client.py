@@ -23,12 +23,24 @@ def _get_retryable_errors() -> tuple[type[BaseException], ...]:
     try:
         from openai import RateLimitError, APITimeoutError, APIConnectionError
         errors.extend([RateLimitError, APITimeoutError, APIConnectionError])
+        # Include 5xx server errors (retryable)
+        try:
+            from openai import InternalServerError as OpenAI5xx
+            errors.append(OpenAI5xx)
+        except ImportError:
+            pass
     except ImportError:
         pass
 
     try:
         from anthropic import RateLimitError, APITimeoutError, APIConnectionError
         errors.extend([RateLimitError, APITimeoutError, APIConnectionError])
+        # Include 5xx server errors (retryable)
+        try:
+            from anthropic import InternalServerError as Anthropic5xx
+            errors.append(Anthropic5xx)
+        except ImportError:
+            pass
     except ImportError:
         pass
 
@@ -150,8 +162,8 @@ class LLMClient:
 
         try:
             return await _chat_with_retry(messages, model, tools)
-        except Exception:
-            # Try fallback model if configured
+        except _get_retryable_errors():
+            # Try fallback model if configured (only for transient errors)
             fallback = self._routing_config.get("fallback_model")
             if fallback and fallback != model:
                 return await self._call_provider(messages, fallback, tools)
