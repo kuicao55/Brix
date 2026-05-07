@@ -75,7 +75,7 @@ class MemoryStrategy:
             # Reserve tokens for the "[truncated]" marker on the last truncated message
             marker = "\n[truncated]"
             marker_tokens = self._count_tokens(marker)
-            budget = max(marker_tokens + 1, limit)
+            budget = limit  # Never exceed the configured limit
             result: list[dict[str, Any]] = []
             used = 0
             for i, msg in enumerate(system_msgs):
@@ -86,7 +86,12 @@ class MemoryStrategy:
                     used += msg_tokens
                 else:
                     # Truncate this message to fit remaining budget (reserve marker space)
-                    remaining_budget = max(1, budget - used - marker_tokens)
+                    remaining_budget = budget - used - marker_tokens
+                    if remaining_budget <= 0:
+                        # Not enough room for content + marker, use marker-only placeholder
+                        if used + marker_tokens <= budget:
+                            result.append({**msg, "content": marker.strip()})
+                        break
                     truncated_content = self._truncate_to_tokens(content, remaining_budget)
                     if truncated_content:
                         result.append({**msg, "content": truncated_content + marker})
