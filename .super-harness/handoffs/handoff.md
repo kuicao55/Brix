@@ -1,7 +1,7 @@
-# Handoff — 2026-05-07 17:29
+# Handoff — 2026-05-07 18:15
 
 ## State
-**Status:** PLANNING
+**Status:** MILESTONE_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-02-brix-mvp-design.md
@@ -15,13 +15,13 @@
 ## Current Position
 - milestone_id: milestone-3
 - task_id: null (no task started yet)
-- tasks_completed: []
+- tasks_completed: [task-1, task-2, task-3, task-4]
 
 ## Deferred Items
 None
 
 ## Key Decisions
-Hook 系统使用 hooks/ 顶层独立目录；fire() 同步方法；set_model/set_error 保持直接调用 FlowLog；绑定逻辑内联在 cli/app.py
+Hook system uses hooks/ top-level directory; fire() best-effort semantics with logging.warning; set_model/set_error stay direct FlowLog calls; binding logic inline in cli/app.py
 
 ## Next Action
-/super-harness:resume
+/super-harness:plan (next milestone) or harness-finishing
