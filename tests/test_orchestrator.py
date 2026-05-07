@@ -291,3 +291,98 @@ async def test_tool_call_id_always_nonempty():
     assert len(generated_ids) == 1
     assert generated_ids[0].startswith("call_")
     assert len(generated_ids[0]) == len("call_") + 12  # "call_" + 12 hex chars
+
+
+# ---------------------------------------------------------------------------
+# Test 8: Streaming — text_delta events
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_stream_yields_text_delta():
+    """run_stream() should yield text_delta events from LLM."""
+    from orchestrator.engine import OrchestratorContext
+    from orchestrator.state_machine import StateMachineOrchestrator
+
+    orchestrator = StateMachineOrchestrator(max_iterations=1)
+
+    mock_llm = MagicMock()
+
+    async def mock_stream(*args, **kwargs):
+        yield {"type": "text_delta", "text": "Hello"}
+        yield {"type": "text_delta", "text": " world"}
+
+    mock_llm.chat_stream = mock_stream
+
+    context = OrchestratorContext(
+        history=[],
+        tool_runner=MagicMock(get_tool_schemas=MagicMock(return_value=[])),
+        llm_client=mock_llm,
+        model="test-model",
+        hooks=None,
+    )
+
+    results = []
+    async for event in orchestrator.run_stream("hi", context):
+        results.append(event)
+
+    text_events = [e for e in results if e.get("type") == "text_delta"]
+    assert len(text_events) == 2
+    assert text_events[0]["text"] == "Hello"
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Streaming — tool call handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_stream_handles_tool_calls():
+    """run_stream() should yield tool_call, execute tool, yield tool_result."""
+    from orchestrator.engine import OrchestratorContext
+    from orchestrator.state_machine import StateMachineOrchestrator
+
+    orchestrator = StateMachineOrchestrator(max_iterations=2)
+
+    call_count = 0
+
+    async def mock_stream_first(*args, **kwargs):
+        yield {"type": "text_delta", "text": "Let me calculate"}
+        yield {"type": "tool_call", "id": "call_1", "name": "calculator", "input": {"expr": "2+2"}}
+
+    async def mock_stream_second(*args, **kwargs):
+        yield {"type": "text_delta", "text": "The result is 4"}
+
+    streams = [mock_stream_first(), mock_stream_second()]
+
+    mock_llm = MagicMock()
+
+    async def mock_chat_stream(*args, **kwargs):
+        nonlocal call_count
+        idx = min(call_count, len(streams) - 1)
+        call_count += 1
+        async for event in streams[idx]:
+            yield event
+
+    mock_llm.chat_stream = mock_chat_stream
+
+    mock_runner = MagicMock()
+    mock_runner.get_tool_schemas = MagicMock(return_value=[])
+    mock_runner.run = AsyncMock(return_value="4")
+
+    context = OrchestratorContext(
+        history=[],
+        tool_runner=mock_runner,
+        llm_client=mock_llm,
+        model="test-model",
+        hooks=None,
+    )
+
+    results = []
+    async for event in orchestrator.run_stream("what is 2+2", context):
+        results.append(event)
+
+    types = [e["type"] for e in results]
+    assert "tool_call" in types
+    assert "tool_result" in types
+    assert "text_delta" in types

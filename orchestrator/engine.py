@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, AsyncGenerator, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -34,4 +34,9 @@ class OrchestratorEngine(Protocol):
     """Protocol that all orchestrator implementations must satisfy."""
 
     async def run(self, user_input: str, context: OrchestratorContext) -> str:
+        ...
+
+    async def run_stream(
+        self, user_input: str, context: OrchestratorContext
+    ) -> AsyncGenerator[dict, None]:
         ...
