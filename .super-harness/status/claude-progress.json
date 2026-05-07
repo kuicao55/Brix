@@ -34,11 +34,11 @@
       "title": "Hook \u7cfb\u7edf + FlowLog \u91cd\u6784",
       "description": "Hook \u7cfb\u7edf + FlowLog \u91cd\u6784",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-07-hook-system-design.md",
       "plan_file": ".super-harness/plans/2026-05-07-hook-system.md",
       "session_date": "2026-05-07T17:26:44Z",
-      "notes": null
+      "notes": "Completed 2026-05-07. 4 tasks, all verified. HookRegistry + FlowLog integration complete."
     }
   ]
 }
