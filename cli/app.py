@@ -19,6 +19,7 @@ from cli.banner import show_banner
 from cli.spinner import Spinner
 from cli.stream_renderer import StreamRenderer
 from cli.theme import BRIX_THEME
+from cli.tool_display import ToolDisplay
 from config.loader import load_config
 from log.flow import FlowLog
 from log.writer import flush_log, read_all, read_entry, format_compact_list, format_detail, entry_count
@@ -253,6 +254,7 @@ class BrixCLI:
         content_parts = []
         has_error = False
         spinner_finished = False
+        tool_display = ToolDisplay(self._console)
 
         try:
             async for event in self._orchestrator.run_stream(user_input, context):
@@ -284,17 +286,19 @@ class BrixCLI:
                         renderer.flush()
                         renderer = None
                     tool_name = event.get("name", "unknown")
-                    self._console.print(
-                        "\n  [tool.name]\u2699 {}[/]".format(tool_name)
+                    tool_display.show_tool_start(
+                        tool_name, event.get("input", {})
                     )
 
                 elif event_type == "tool_result":
                     tool_name = event.get("name", "unknown")
                     elapsed_ms = event.get("ms", 0)
-                    self._console.print(
-                        "  [tool.success]\u2713[/] {} [dim]({}ms)[/]".format(
-                            tool_name, elapsed_ms
-                        )
+                    is_err = event.get("is_error", False)
+                    tool_display.show_tool_result(
+                        tool_name,
+                        event.get("result", ""),
+                        elapsed_ms,
+                        is_error=is_err,
                     )
 
         except Exception as exc:
