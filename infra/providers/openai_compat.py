@@ -70,7 +70,7 @@ class OpenAICompatProvider:
 
         Yields:
             {"type": "text_delta", "text": "..."} for content chunks
-            {"type": "tool_call", "id": ..., "name": ..., "arguments": ...} at end
+            {"type": "tool_call", "id": ..., "name": ..., "input": ...} at end
         """
         client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         try:
@@ -84,7 +84,7 @@ class OpenAICompatProvider:
             # Accumulate tool call deltas across chunks
             # keyed by tool call index
             tc_buffers: dict[int, dict[str, Any]] = defaultdict(
-                lambda: {"id": None, "name": "", "arguments": ""}
+                lambda: {"id": None, "name": "", "input": ""}
             )
 
             async for chunk in stream:
@@ -106,12 +106,12 @@ class OpenAICompatProvider:
                         if tc_delta.function and tc_delta.function.name:
                             buf["name"] = tc_delta.function.name
                         if tc_delta.function and tc_delta.function.arguments:
-                            buf["arguments"] += tc_delta.function.arguments
+                            buf["input"] += tc_delta.function.arguments
 
             # Flush accumulated tool calls
             for idx in sorted(tc_buffers.keys()):
                 buf = tc_buffers[idx]
-                raw_args = buf["arguments"]
+                raw_args = buf["input"]
                 try:
                     parsed = json.loads(raw_args) if raw_args else {}
                     arguments = parsed if isinstance(parsed, dict) else {"raw": raw_args}
@@ -122,7 +122,7 @@ class OpenAICompatProvider:
                     "type": "tool_call",
                     "id": buf["id"],
                     "name": buf["name"],
-                    "arguments": arguments,
+                    "input": arguments,
                 }
         finally:
             await client.close()

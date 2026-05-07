@@ -74,7 +74,7 @@ class AnthropicCompatProvider:
 
         Yields:
             {"type": "text_delta", "text": "..."} for text chunks
-            {"type": "tool_call", "id": ..., "name": ..., "arguments": ...} at end
+            {"type": "tool_call", "id": ..., "name": ..., "input": ...} at end
         """
         client = AsyncAnthropic(base_url=base_url, api_key=api_key)
         try:
@@ -112,7 +112,7 @@ class AnthropicCompatProvider:
                             "type": "tool_call",
                             "id": block.id,
                             "name": block.name,
-                            "arguments": block.input,
+                            "input": block.input,
                         }
         finally:
             await client.close()

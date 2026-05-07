@@ -128,7 +128,7 @@ async def test_openai_stream_yields_tool_calls():
     tool_calls = [e for e in results if e["type"] == "tool_call"]
     assert len(tool_calls) == 1
     assert tool_calls[0]["name"] == "get_weather"
-    assert tool_calls[0]["arguments"] == {"loc": "Paris"}
+    assert tool_calls[0]["input"] == {"loc": "Paris"}
     assert tool_calls[0]["id"] == "call_123"
 
 
