@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncIterator
 
 from tenacity import (
     retry,
@@ -186,3 +186,41 @@ class LLMClient:
             if fallback and fallback != model:
                 return await self._call_provider(messages, fallback, tools)
             raise
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream chat completions, delegating to the provider's chat_stream().
+
+        Yields event dicts from the underlying provider.
+        """
+        protocol, provider_config, provider_name = self._resolve_provider_config(model)
+
+        api_key_env = provider_config.get("api_key_env")
+        if not api_key_env:
+            raise ValueError(
+                f"Provider '{provider_name}' missing 'api_key_env' in config"
+            )
+        api_key = os.environ.get(api_key_env, "")
+        if not api_key:
+            raise ValueError(
+                f"API key not found: set the {api_key_env} environment variable"
+            )
+        base_url = provider_config.get("base_url")
+        if not base_url:
+            raise ValueError(
+                f"Provider '{provider_name}' missing 'base_url' in config"
+            )
+
+        provider = self._get_provider(protocol)
+        async for event in provider.chat_stream(
+            messages=messages,
+            model=model,
+            tools=tools,
+            base_url=base_url,
+            api_key=api_key,
+        ):
+            yield event

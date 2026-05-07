@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from typing import Any, AsyncIterator
 
 from anthropic import AsyncAnthropic
 
@@ -58,6 +59,61 @@ class AnthropicCompatProvider:
                 tool_calls=tool_calls,
                 finish_reason=response.stop_reason or "stop",
             )
+        finally:
+            await client.close()
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None,
+        base_url: str,
+        api_key: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream chat completions using Anthropic's streaming API.
+
+        Yields:
+            {"type": "text_delta", "text": "..."} for text chunks
+            {"type": "tool_call", "id": ..., "name": ..., "arguments": ...} at end
+        """
+        client = AsyncAnthropic(base_url=base_url, api_key=api_key)
+        try:
+            system_msg = ""
+            anthropic_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_msg = msg["content"]
+                else:
+                    anthropic_messages.append(self._convert_message(msg))
+
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": anthropic_messages,
+                "max_tokens": 4096,
+            }
+            if system_msg:
+                kwargs["system"] = system_msg
+            if tools:
+                kwargs["tools"] = self._convert_tools(tools)
+
+            async with client.messages.stream(**kwargs) as stream:
+                async for event in stream:
+                    if (
+                        event.type == "content_block_delta"
+                        and event.delta.type == "text_delta"
+                    ):
+                        yield {"type": "text_delta", "text": event.delta.text}
+
+                # Get the final assembled message for tool_use blocks
+                final_message = await stream.get_final_message()
+                for block in final_message.content:
+                    if block.type == "tool_use":
+                        yield {
+                            "type": "tool_call",
+                            "id": block.id,
+                            "name": block.name,
+                            "arguments": block.input,
+                        }
         finally:
             await client.close()
 
