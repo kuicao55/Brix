@@ -7,7 +7,7 @@
 **Project Name:** Brix
 **Harness Version:** 3.6.0
 **Generated:** 2026-05-07
-**Last Updated:** 2026-05-07 (milestone-5 complete)
+**Last Updated:** 2026-05-08 (milestone-6 complete)
 
 ## Tech Stack
 
@@ -29,7 +29,9 @@
 | Memory | Conversation persistence, context window management | `memory/` |
 | CLI | User input, output display, command handling | `cli/` |
 | **Theme** | **Rich theme with BRIX_THEME styles (16 keys)** | **`cli/theme.py`** |
-| **Spinner** | **Braille animation spinner (start/finish/fail)** | **`cli/spinner.py`** |
+| **Spinner** | **Braille animation spinner (start/finish/fail/stop)** | **`cli/spinner.py`** |
+| **StageIndicator** | **Compact pipeline stage progress display** | **`cli/stage_indicator.py`** |
+| **Banner** | **Rich Console startup banner with styled table** | **`cli/banner.py`** |
 | **StreamRenderer** | **Safe-boundary Markdown streaming renderer** | **`cli/stream_renderer.py`** |
 | **ToolDisplay** | **Tool execution status panels with Rich markup** | **`cli/tool_display.py`** |
 | Log | FlowLog event recording, JSONL persistence | `log/` |
@@ -48,12 +50,14 @@
 - Rich markup escaping on all untrusted tool inputs/names to prevent injection
 - Safe-boundary rendering: code fences, blank lines, and newlines outside fences as render boundaries
 - Spinner lifecycle: spinner_finished flag prevents double-finish in tool_call → text_delta flow
+- StageIndicator owns spinner lifecycle: _stop_spinner() silently stops before new stage or completion
+- Styled prompt: prompt_toolkit.HTML() for ❯ indicator with ANSI color styling
 
 ## Project Structure
 
 ```
 Brix/
-├── cli/          # CLI interface (app.py, display.py, theme.py, spinner.py, stream_renderer.py, tool_display.py)
+├── cli/          # CLI interface (app.py, display.py, theme.py, spinner.py, stream_renderer.py, tool_display.py, stage_indicator.py, banner.py)
 ├── config/       # Model registry, provider configs
 ├── capability/   # Tool registration and execution
 ├── hooks/        # Hook event registry (HookRegistry, HookEvent)
