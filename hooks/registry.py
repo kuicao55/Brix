@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,11 +39,14 @@ class HookRegistry:
         2. Call all registered custom hooks.
         """
         if self._log is not None:
-            self._log.step(event, **data)
+            try:
+                self._log.step(event, **data)
+            except Exception:
+                logger.warning("HookRegistry: log.step() failed for event '%s'", event, exc_info=True)
 
         hook_event = HookEvent(name=event, data=data)
         for hook in self._hooks.get(event, []):
             try:
                 hook(hook_event)
             except Exception:
-                pass  # one failing hook does not affect others
+                logger.warning("HookRegistry: hook failed for event '%s'", event, exc_info=True)
