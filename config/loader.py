@@ -91,8 +91,9 @@ def load_config(path: str | Path | None = None) -> dict:
     cwd = Path.cwd()
     project_brix = cwd / ".brix"
     if project_brix.is_dir():
+        project_settings = project_brix / "settings.yaml"
         loader = ConfigLoader(
-            project_path=project_brix / "settings.yaml",
+            project_path=project_settings if project_settings.exists() else None,
             local_path=project_brix / "settings.local.yaml",
         )
     else:
