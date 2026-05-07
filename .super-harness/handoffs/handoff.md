@@ -1,28 +1,27 @@
-# Handoff — 2026-05-03 11:00
+# Handoff — 2026-05-07 18:15
 
 ## State
 **Status:** MILESTONE_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-02-brix-mvp-design.md
-- **plan:** .super-harness/plans/2026-05-02-milestone-2.md
+- **plan:** .super-harness/plans/2026-05-07-hook-system.md
 - **progress:** .super-harness/status/claude-progress.json
 
 ## Worktree
-worktrees/milestone-2 (branch: harness/milestone-2-langgraph)
+## Worktree
+(no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-2
-- task_id: ALL_COMPLETE
-- tasks_completed: [1]
+- milestone_id: milestone-3
+- task_id: null (no task started yet)
+- tasks_completed: [task-1, task-2, task-3, task-4]
 
 ## Deferred Items
-- tool_call_id parity test for LangGraph engine (low priority)
+None
 
 ## Key Decisions
-- Upgraded to Python 3.11 for langgraph support
-- Overrode Codex "needs-attention" after 3 fix rounds (all substantive issues addressed)
-- Engine config: 均衡模式 (Claude Spec Review + Codex Code Quality Review)
+Hook system uses hooks/ top-level directory; fire() best-effort semantics with logging.warning; set_model/set_error stay direct FlowLog calls; binding logic inline in cli/app.py
 
 ## Next Action
-/super-harness:resume (will proceed to harness-finishing to merge worktree)
+/super-harness:plan (next milestone) or harness-finishing

@@ -9,6 +9,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 
 from capability.runner import ToolRunner
+from hooks.registry import HookRegistry
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.weather import WeatherTool
@@ -141,10 +142,12 @@ class BrixCLI:
     async def _process(self, user_input: str) -> str:
         """Classify, route, run orchestrator, and persist."""
         log = FlowLog(user_input)
+        hooks = HookRegistry()
+        hooks.bind_log(log)
 
         history = self._memory.get_history()
         context_window = self._strategy.get_context_window(history)
-        log.step("memory", msgs=len(history),
+        hooks.fire("memory", msgs=len(history),
                  window=len(context_window),
                  chars=sum(len(m.get("content", "")) for m in context_window),
                  context_window=[{"role": m.get("role"), "content": m.get("content", "")}
@@ -153,13 +156,13 @@ class BrixCLI:
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
             user_input, context_window, self._llm_client,
-            default_model, log=log,
+            default_model, hooks=hooks,
         )
         complexity = evaluate_complexity(user_input)
         model = select_model(intent, complexity, self._config)
 
-        log.step("complexity", result=complexity)
-        log.step("router", model=model, reason=f"{intent}->{complexity}")
+        hooks.fire("complexity", result=complexity)
+        hooks.fire("router", model=model, reason=f"{intent}->{complexity}")
         log.set_model(model)
 
         context = OrchestratorContext(
@@ -167,7 +170,7 @@ class BrixCLI:
             tool_runner=self._tool_runner,
             llm_client=self._llm_client,
             model=model,
-            log=log,
+            hooks=hooks,
         )
 
         try:
@@ -194,7 +197,7 @@ class BrixCLI:
             self._memory.add_message("assistant", response)
             saved_count += 1
         self._memory.save()
-        log.step("persist", saved=saved_count)
+        hooks.fire("persist", saved=saved_count)
 
         try:
             flush_log(log)

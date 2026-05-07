@@ -8,6 +8,7 @@ Step 4 (GREEN): all should pass after implementation.
 import pytest
 from unittest.mock import AsyncMock
 
+from hooks.registry import HookRegistry
 from infra.llm_client import LLMResponse, ToolCall
 
 
@@ -24,12 +25,15 @@ def _make_context(llm_client, tool_runner=None):
         tool_runner = AsyncMock()
         tool_runner.run = AsyncMock(return_value="")
 
+    hooks = HookRegistry()
+
     return OrchestratorContext(
         history=[],
         memory={},
         tool_runner=tool_runner,
         llm_client=llm_client,
         model="test-model",
+        hooks=hooks,
     )
 
 

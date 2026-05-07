@@ -40,7 +40,7 @@ async def classify_intent(
     history: list[dict],
     llm_client: Any,
     model: str,
-    log: Any = None,
+    hooks: Any = None,
 ) -> str:
     """Classify user intent as chat, task, or tool_use."""
     messages = [
@@ -57,11 +57,11 @@ async def classify_intent(
         first_token = re.split(r"[\s\n]+", raw_content.strip().lower())[0] if raw_content.strip() else ""
         if first_token in ("chat", "task", "tool_use"):
             elapsed = int((time.monotonic() - t0) * 1000)
-            if log:
-                log.step("intent", result=first_token, via="llm",
-                         model=model, response=raw_content.strip(),
-                         ms=elapsed, prompt_msgs=len(messages),
-                         prompt=_summarize_msgs(messages))
+            if hooks:
+                hooks.fire("intent", result=first_token, via="llm",
+                           model=model, response=raw_content.strip(),
+                           ms=elapsed, prompt_msgs=len(messages),
+                           prompt=_summarize_msgs(messages))
             return first_token
     except Exception:
         pass
@@ -76,9 +76,9 @@ async def classify_intent(
         result = "chat"
 
     elapsed = int((time.monotonic() - t0) * 1000)
-    if log:
-        log.step("intent", result=result, via="heuristic",
-                 model=model,
-                 ms=elapsed, prompt_msgs=len(messages),
-                 prompt=_summarize_msgs(messages))
+    if hooks:
+        hooks.fire("intent", result=result, via="heuristic",
+                   model=model,
+                   ms=elapsed, prompt_msgs=len(messages),
+                   prompt=_summarize_msgs(messages))
     return result

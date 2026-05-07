@@ -80,7 +80,7 @@ class StateMachineOrchestrator:
         )
         elapsed = int((time.monotonic() - t0) * 1000)
 
-        if context.log:
+        if context.hooks:
             tc_names = [tc.name for tc in response.tool_calls]
             step_data = dict(
                 iter=self._current_iter,
@@ -91,7 +91,7 @@ class StateMachineOrchestrator:
             )
             if response.content:
                 step_data["response"] = response.content
-            context.log.step("orch_plan", **step_data)
+            context.hooks.fire("orch_plan", **step_data)
         return response
 
     async def _execute(
@@ -124,8 +124,8 @@ class StateMachineOrchestrator:
                 result = f"Error executing {tc['name']}: {e}"
             elapsed = int((time.monotonic() - t0) * 1000)
 
-            if context.log:
-                context.log.step(
+            if context.hooks:
+                context.hooks.fire(
                     "tool_exec",
                     name=tc["name"],
                     args=tc["arguments"],

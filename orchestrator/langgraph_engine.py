@@ -110,7 +110,7 @@ class LangGraphOrchestrator:
             )
             elapsed = int((time.monotonic() - t0) * 1000)
 
-            if context.log:
+            if context.hooks:
                 tc_names = [tc.name for tc in response.tool_calls]
                 step_data = dict(
                     iter=iterations + 1,
@@ -122,7 +122,7 @@ class LangGraphOrchestrator:
                 )
                 if response.content:
                     step_data["response"] = response.content
-                context.log.step("orch_plan", **step_data)
+                context.hooks.fire("orch_plan", **step_data)
         except Exception as e:
             error_msg = f"Error during planning: {e}"
             return {
@@ -178,8 +178,8 @@ class LangGraphOrchestrator:
                 result = f"Error executing {tc['name']}: {e}"
             elapsed = int((time.monotonic() - t0) * 1000)
 
-            if context.log:
-                context.log.step(
+            if context.hooks:
+                context.hooks.fire(
                     "tool_exec",
                     name=tc["name"],
                     args=tc["arguments"],
