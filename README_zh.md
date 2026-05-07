@@ -12,6 +12,7 @@
 - **持久化记忆** — 原子写入的 JSON 存储，崩溃安全
 - **智能路由** — 意图分类 + 复杂度评估，自动选择模型
 - **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
+- **流程日志** — 每轮对话自动记录完整数据流，便于调试和审计
 
 ---
 
@@ -114,6 +115,87 @@ brix
 | `/clear` | 清空对话历史 |
 | `/model` | 显示当前模型 |
 | `/history` | 显示最近消息 |
+| `/log` | 显示最近 20 条流程日志列表 |
+| `/log <N>` | 查看第 N 条日志的详细信息 |
+
+---
+
+## 流程日志
+
+Brix 会自动记录每轮对话的完整数据流，存储在 `data/logs/brix.jsonl`（JSONL 格式）。
+
+### 查看日志
+
+```
+you> /log
+Recent logs (1-3):
+
+  #1  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
+  #2  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "明天上海天气如何？"
+
+Use /log <number> to view details
+```
+
+### 查看详细日志
+
+```
+you> /log 1
+------------------------------------------------------------
+  Trace:  49621c65
+  Time:   2026-05-07T15:35:05
+  Input:  你好
+  Model:  minimax/MiniMax-M2.7
+  Status: OK
+------------------------------------------------------------
+  [1] memory  @15:35:05.203  0.2s
+      从存储加载历史记录，裁剪上下文窗口
+      msgs: 0, window: 0, chars: 0
+
+  [2] intent  @15:35:09.738  4.5s
+      调用 LLM 分类用户意图 (chat/task/tool_use)
+      result: chat | via: llm | model: minimax/MiniMax-M2.7
+      response: chat
+
+  [3] complexity  @15:35:09.738  0.0s
+      基于关键词规则评估请求复杂度
+      result: low
+
+  [4] router  @15:35:09.738  0.0s
+      根据意图和复杂度选择最佳模型
+      model: minimax/MiniMax-M2.7
+
+  [5] orch_plan  @15:35:12.844  3.1s
+      调用 LLM 生成回复或决定调用哪些工具
+      response: 你好！有什么我可以帮助你的吗？
+
+  [6] persist  @15:35:12.846  0.0s
+      将本轮对话保存到存储
+      saved: 2
+```
+
+### 日志字段说明
+
+每个步骤记录以下信息：
+
+| 字段 | 说明 |
+|------|------|
+| `@HH:MM:SS.mmm` | 步骤完成的墙钟时间 |
+| `X.Xs` | 该步骤的实际耗时 |
+| `prompt` | 发送给 LLM 的完整消息列表 |
+| `response` | LLM 的原始返回内容 |
+| `ms` | LLM 调用或工具执行的精确耗时（毫秒） |
+
+### 记录的步骤
+
+| 步骤 | 说明 |
+|------|------|
+| `memory` | 从存储加载历史，构建上下文窗口 |
+| `intent` | LLM 分类用户意图，记录 prompt 和响应 |
+| `complexity` | 基于规则评估请求复杂度 |
+| `router` | 根据意图和复杂度选择模型 |
+| `orch_plan` | LLM 生成回复或决定工具调用，记录完整 prompt |
+| `tool_exec` | 执行工具并记录输入/输出 |
+| `persist` | 将对话保存到存储 |
 
 ---
 
@@ -271,6 +353,10 @@ pip install langgraph
 |  memory/storage.py (原子 JSON 存储)                   |
 |  memory/strategy.py (上下文窗口管理)                   |
 +-----------------------------------------------------+
+|                    日志层                             |
+|  log/flow.py (流程日志收集器)                         |
+|  log/writer.py (JSONL 文件读写)                       |
++-----------------------------------------------------+
 ```
 
 ### 数据流
@@ -334,6 +420,9 @@ brix/
 +-- memory/
 |   +-- storage.py                  # 原子 JSON 持久化
 |   +-- strategy.py                 # 上下文窗口管理
++-- log/
+|   +-- flow.py                     # FlowLog 流程日志收集器
+|   +-- writer.py                   # JSONL 文件读写
 +-- cli/
 |   +-- app.py                      # REPL 界面
 |   +-- display.py                  # 输出格式化
@@ -346,6 +435,7 @@ brix/
     +-- test_capability.py          # 工具 & runner 测试
     +-- test_memory.py              # 记忆层测试
     +-- test_cli.py                 # CLI 测试
+    +-- test_flow_log.py            # 流程日志测试
 ```
 
 ---

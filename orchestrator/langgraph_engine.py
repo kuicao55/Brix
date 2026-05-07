@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any, TypedDict
 
@@ -100,11 +101,28 @@ class LangGraphOrchestrator:
             tool_schemas = []
             if context.tool_runner and hasattr(context.tool_runner, "get_tool_schemas"):
                 tool_schemas = context.tool_runner.get_tool_schemas()
+
+            t0 = time.monotonic()
             response = await context.llm_client.chat(
                 messages=context.history,
                 model=context.model,
                 tools=tool_schemas if tool_schemas else None,
             )
+            elapsed = int((time.monotonic() - t0) * 1000)
+
+            if context.log:
+                tc_names = [tc.name for tc in response.tool_calls]
+                step_data = dict(
+                    iter=iterations + 1,
+                    tools=tc_names,
+                    ms=elapsed,
+                    msg_count=len(context.history),
+                    prompt=[{"role": m.get("role"), "content": m.get("content", "")}
+                            for m in context.history],
+                )
+                if response.content:
+                    step_data["response"] = response.content
+                context.log.step("orch_plan", **step_data)
         except Exception as e:
             error_msg = f"Error during planning: {e}"
             return {
@@ -153,10 +171,22 @@ class LangGraphOrchestrator:
         })
 
         for tc in tool_calls:
+            t0 = time.monotonic()
             try:
                 result = await context.tool_runner.run(tc["name"], tc["arguments"])
             except Exception as e:
                 result = f"Error executing {tc['name']}: {e}"
+            elapsed = int((time.monotonic() - t0) * 1000)
+
+            if context.log:
+                context.log.step(
+                    "tool_exec",
+                    name=tc["name"],
+                    args=tc["arguments"],
+                    result=str(result)[:100],
+                    ms=elapsed,
+                )
+
             context.history.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],

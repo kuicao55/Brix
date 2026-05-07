@@ -12,6 +12,7 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Persistent Memory** — Crash-safe JSON storage with atomic writes
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
 - **Extensible Config** — Add new providers and models by editing a single YAML file
+- **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
 
 ---
 
@@ -114,6 +115,87 @@ To remove, delete the `alias brix=...` line from your shell config and reload.
 | `/clear` | Clear conversation history |
 | `/model` | Show current model |
 | `/history` | Show recent messages |
+| `/log` | Show recent 20 flow log entries |
+| `/log <N>` | View detailed info for log entry #N |
+
+---
+
+## Flow Log
+
+Brix automatically records the complete data flow for every conversation turn, stored in `data/logs/brix.jsonl` (JSONL format).
+
+### Viewing Logs
+
+```
+you> /log
+Recent logs (1-3):
+
+  #1  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
+  #2  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "What's the weather in Shanghai tomorrow?"
+
+Use /log <number> to view details
+```
+
+### Viewing Detailed Logs
+
+```
+you> /log 1
+------------------------------------------------------------
+  Trace:  49621c65
+  Time:   2026-05-07T15:35:05
+  Input:  你好
+  Model:  minimax/MiniMax-M2.7
+  Status: OK
+------------------------------------------------------------
+  [1] memory  @15:35:05.203  0.2s
+      Load history from storage, trim context window
+      msgs: 0, window: 0, chars: 0
+
+  [2] intent  @15:35:09.738  4.5s
+      Call LLM to classify user intent (chat/task/tool_use)
+      result: chat | via: llm | model: minimax/MiniMax-M2.7
+      response: chat
+
+  [3] complexity  @15:35:09.738  0.0s
+      Evaluate request complexity based on keyword rules
+      result: low
+
+  [4] router  @15:35:09.738  0.0s
+      Select best model based on intent and complexity
+      model: minimax/MiniMax-M2.7
+
+  [5] orch_plan  @15:35:12.844  3.1s
+      Call LLM to generate response or decide tool calls
+      response: 你好！有什么我可以帮助你的吗？
+
+  [6] persist  @15:35:12.846  0.0s
+      Save conversation to storage
+      saved: 2
+```
+
+### Log Fields
+
+Each step records:
+
+| Field | Description |
+|-------|-------------|
+| `@HH:MM:SS.mmm` | Wall-clock time when the step completed |
+| `X.Xs` | Actual duration of the step |
+| `prompt` | Full message list sent to the LLM |
+| `response` | Raw LLM response content |
+| `ms` | Precise LLM call or tool execution time (ms) |
+
+### Recorded Steps
+
+| Step | Description |
+|------|-------------|
+| `memory` | Load history from storage, build context window |
+| `intent` | LLM classifies user intent, records prompt and response |
+| `complexity` | Rule-based request complexity evaluation |
+| `router` | Select model based on intent and complexity |
+| `orch_plan` | LLM generates response or decides tool calls, records full prompt |
+| `tool_exec` | Execute tools and record input/output |
+| `persist` | Save conversation to storage |
 
 ---
 
@@ -271,6 +353,10 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  memory/storage.py (Atomic JSON)                     |
 |  memory/strategy.py (Context Window)                 |
 +-----------------------------------------------------+
+|                    Log Layer                          |
+|  log/flow.py (FlowLog Collector)                     |
+|  log/writer.py (JSONL File I/O)                      |
++-----------------------------------------------------+
 ```
 
 ### Data Flow
@@ -334,6 +420,9 @@ brix/
 +-- memory/
 |   +-- storage.py                  # Atomic JSON persistence
 |   +-- strategy.py                 # Context window management
++-- log/
+|   +-- flow.py                     # FlowLog step collector
+|   +-- writer.py                   # JSONL file I/O
 +-- cli/
 |   +-- app.py                      # REPL interface
 |   +-- display.py                  # Output formatting
@@ -346,6 +435,7 @@ brix/
     +-- test_capability.py          # Tool & runner tests
     +-- test_memory.py              # Memory tests
     +-- test_cli.py                 # CLI tests
+    +-- test_flow_log.py            # Flow log tests
 ```
 
 ---
