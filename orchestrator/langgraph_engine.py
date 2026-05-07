@@ -156,14 +156,16 @@ class LangGraphOrchestrator:
         context: OrchestratorContext = state["context"]
         response = state["last_llm_response"]
 
-        tool_calls = [
-            {
-                "id": tc.id or f"call_{uuid.uuid4().hex[:12]}",
+        tool_calls = []
+        for tc in response.tool_calls:
+            args = tc.arguments
+            if not isinstance(args, dict):
+                args = {"raw": args}
+            tool_calls.append({
+                "id": tc.id or "call_{}".format(uuid.uuid4().hex[:12]),
                 "name": tc.name,
-                "arguments": tc.arguments,
-            }
-            for tc in response.tool_calls
-        ]
+                "arguments": args,
+            })
         context.history.append({
             "role": "assistant",
             "content": response.content,
@@ -172,12 +174,8 @@ class LangGraphOrchestrator:
 
         for tc in tool_calls:
             t0 = time.monotonic()
-            # Coerce non-dict arguments to dict for tool execution
-            args = tc["arguments"]
-            if not isinstance(args, dict):
-                args = {"raw": args}
             try:
-                result = await context.tool_runner.run(tc["name"], args)
+                result = await context.tool_runner.run(tc["name"], tc["arguments"])
             except Exception as e:
                 result = f"Error executing {tc['name']}: {e}"
             elapsed = int((time.monotonic() - t0) * 1000)
@@ -263,10 +261,13 @@ class LangGraphOrchestrator:
                     if event.get("type") == "text_delta":
                         content_parts.append(event.get("text", ""))
                     elif event.get("type") == "tool_call":
+                        raw_args = event.get("input", {})
+                        if not isinstance(raw_args, dict):
+                            raw_args = {"raw": raw_args}
                         tool_calls.append({
                             "id": event.get("id") or "call_{}".format(uuid.uuid4().hex[:12]),
                             "name": event.get("name", ""),
-                            "arguments": event.get("input", {}),
+                            "arguments": raw_args,
                         })
             except Exception as e:
                 yield {"type": "text_delta", "text": "Error during planning: {}".format(e)}
@@ -288,12 +289,8 @@ class LangGraphOrchestrator:
             for tc in tool_calls:
                 t0 = time.monotonic()
                 is_error = False
-                # Coerce non-dict arguments to dict for tool execution
-                args = tc["arguments"]
-                if not isinstance(args, dict):
-                    args = {"raw": args}
                 try:
-                    result = await context.tool_runner.run(tc["name"], args)
+                    result = await context.tool_runner.run(tc["name"], tc["arguments"])
                 except Exception as e:
                     result = "Error executing {}: {}".format(tc["name"], e)
                     is_error = True
