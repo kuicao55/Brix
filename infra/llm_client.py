@@ -2,6 +2,47 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
+
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True if the exception is transient and should be retried.
+
+    Retries on rate-limit, timeout, connection, and generic errors.
+    Does NOT retry on authentication/authorization errors.
+    """
+    try:
+        from openai import AuthenticationError as OpenAIAuthError
+        if isinstance(exc, OpenAIAuthError):
+            return False
+    except ImportError:
+        pass
+    try:
+        from openai import PermissionDeniedError as OpenAIPermError
+        if isinstance(exc, OpenAIPermError):
+            return False
+    except ImportError:
+        pass
+    try:
+        from anthropic import AuthenticationError as AnthropicAuthError
+        if isinstance(exc, AnthropicAuthError):
+            return False
+    except ImportError:
+        pass
+    try:
+        from anthropic import PermissionDeniedError as AnthropicPermError
+        if isinstance(exc, AnthropicPermError):
+            return False
+    except ImportError:
+        pass
+    return True
 
 
 @dataclass
@@ -24,6 +65,8 @@ class LLMClient:
     def __init__(self, config: dict):
         self._providers_config = config.get("providers", {})
         self._providers: dict = {}
+        self._retry_config = config.get("retry", {})
+        self._routing_config = config.get("routing", {})
 
     def _get_provider(self, protocol: str):
         if protocol not in self._providers:
@@ -61,14 +104,14 @@ class LLMClient:
             raise ValueError(f"Provider '{provider_name}' missing 'base_url' in config")
         return protocol, provider_config, provider_name
 
-    async def chat(
+    async def _call_provider(
         self,
         messages: list[dict],
         model: str,
-        tools: list[dict] | None = None,
+        tools: list[dict] | None,
     ) -> LLMResponse:
+        """Single provider call (no retry). Used as the retry target."""
         protocol, provider_config, provider_name = self._resolve_provider_config(model)
-        provider = self._get_provider(protocol)
 
         api_key_env = provider_config.get("api_key_env")
         if not api_key_env:
@@ -85,6 +128,8 @@ class LLMClient:
             raise ValueError(
                 f"Provider '{provider_name}' missing 'base_url' in config"
             )
+
+        provider = self._get_provider(protocol)
         return await provider.chat(
             messages=messages,
             model=model,
@@ -92,3 +137,32 @@ class LLMClient:
             base_url=base_url,
             api_key=api_key,
         )
+
+    async def chat(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None = None,
+    ) -> LLMResponse:
+        """Chat with retry + fallback model support."""
+        max_retries = self._retry_config.get("max_retries", 3)
+        base_delay = self._retry_config.get("base_delay", 1.0)
+        max_delay = self._retry_config.get("max_delay", 30.0)
+
+        @retry(
+            retry=retry_if_exception(_is_retryable),
+            stop=stop_after_attempt(max_retries),
+            wait=wait_exponential(multiplier=base_delay, min=base_delay, max=max_delay),
+            reraise=True,
+        )
+        async def _chat_with_retry(msgs, mdl, tls):
+            return await self._call_provider(msgs, mdl, tls)
+
+        try:
+            return await _chat_with_retry(messages, model, tools)
+        except Exception:
+            # Try fallback model if configured
+            fallback = self._routing_config.get("fallback_model")
+            if fallback and fallback != model:
+                return await self._call_provider(messages, fallback, tools)
+            raise

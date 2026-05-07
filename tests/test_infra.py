@@ -409,3 +409,114 @@ def test_phase1_dependencies_importable():
     assert hasattr(tenacity, "retry")
     assert hasattr(tiktoken, "encoding_for_model")
     assert hasattr(rich, "print")
+
+
+# --- Fix 5: Retry with tenacity ---
+
+
+@pytest.mark.asyncio
+async def test_retry_on_transient_error():
+    """LLMClient.chat() should retry on transient errors."""
+    mock_provider = MagicMock()
+    mock_provider.chat = AsyncMock(
+        side_effect=[
+            Exception("rate_limit"),  # first attempt
+            Exception("rate_limit"),  # second attempt
+            LLMResponse(content="ok", tool_calls=[], finish_reason="stop"),  # third succeeds
+        ]
+    )
+
+    config = {
+        "providers": {
+            "test-provider": {
+                "protocol": "openai",
+                "base_url": "http://test",
+                "api_key_env": "TEST_KEY",
+            }
+        }
+    }
+    client = LLMClient(config)
+
+    with patch.object(client, "_get_provider", return_value=mock_provider), \
+         patch.object(client, "_resolve_provider_config", return_value=(
+             "openai", {"protocol": "openai", "base_url": "http://test", "api_key_env": "TEST_KEY"}, "test"
+         )), \
+         patch.dict("os.environ", {"TEST_KEY": "sk-test"}):
+        response = await client.chat([{"role": "user", "content": "hi"}], "test-model")
+        assert response.content == "ok"
+        assert mock_provider.chat.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_fallback_model():
+    """After exhausting retries, try fallback_model."""
+    mock_provider = MagicMock()
+    mock_provider.chat = AsyncMock(
+        side_effect=[
+            Exception("rate_limit"),
+            Exception("rate_limit"),
+            Exception("rate_limit"),  # 3 failures on primary
+            LLMResponse(content="fallback ok", tool_calls=[], finish_reason="stop"),  # fallback succeeds
+        ]
+    )
+
+    config = {
+        "providers": {
+            "test-provider": {
+                "protocol": "openai",
+                "base_url": "http://test",
+                "api_key_env": "TEST_KEY",
+            }
+        },
+        "routing": {
+            "fallback_model": "test/fallback-model",
+        },
+    }
+    client = LLMClient(config)
+
+    with patch.object(client, "_get_provider", return_value=mock_provider), \
+         patch.object(client, "_resolve_provider_config", return_value=(
+             "openai", {"protocol": "openai", "base_url": "http://test", "api_key_env": "TEST_KEY"}, "test"
+         )), \
+         patch.dict("os.environ", {"TEST_KEY": "sk-test"}):
+        response = await client.chat([{"role": "user", "content": "hi"}], "test-model")
+        assert response.content == "fallback ok"
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_auth_error():
+    """Auth errors (401/403) should not be retried."""
+    from openai import AuthenticationError
+
+    mock_provider = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.json.return_value = {"error": {"message": "invalid key"}}
+    mock_provider.chat = AsyncMock(
+        side_effect=AuthenticationError(
+            message="invalid key",
+            response=mock_response,
+            body={"error": {"message": "invalid key"}},
+        )
+    )
+
+    config = {
+        "providers": {
+            "test-provider": {
+                "protocol": "openai",
+                "base_url": "http://test",
+                "api_key_env": "TEST_KEY",
+            }
+        }
+    }
+    client = LLMClient(config)
+
+    with patch.object(client, "_get_provider", return_value=mock_provider), \
+         patch.object(client, "_resolve_provider_config", return_value=(
+             "openai", {"protocol": "openai", "base_url": "http://test", "api_key_env": "TEST_KEY"}, "test"
+         )), \
+         patch.dict("os.environ", {"TEST_KEY": "sk-test"}):
+        with pytest.raises(AuthenticationError):
+            await client.chat([{"role": "user", "content": "hi"}], "test-model")
+        # Should only be called once — no retry
+        assert mock_provider.chat.call_count == 1

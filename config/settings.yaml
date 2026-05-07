@@ -146,3 +146,8 @@ engine: "state_machine"
 routing:
   default_model: "minimax/MiniMax-M2.7"
   fallback_model: "zenmux-openai/deepseek/deepseek-v4-flash"
+
+retry:
+  max_retries: 3
+  base_delay: 1.0
+  max_delay: 30.0
