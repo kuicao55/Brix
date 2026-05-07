@@ -300,9 +300,10 @@ class LangGraphOrchestrator:
 
                 yield {
                     "type": "tool_result",
-                    "tool_call_id": tc["id"],
+                    "id": tc["id"],
                     "name": tc["name"],
                     "result": str(result),
+                    "ms": elapsed,
                 }
 
                 context.history.append({

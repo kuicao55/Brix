@@ -386,3 +386,12 @@ async def test_run_stream_handles_tool_calls():
     assert "tool_call" in types
     assert "tool_result" in types
     assert "text_delta" in types
+
+    # tool_result events must use "id" (not "tool_call_id") and include "ms"
+    tool_results = [e for e in results if e["type"] == "tool_result"]
+    assert len(tool_results) >= 1
+    for tr in tool_results:
+        assert "id" in tr, f"tool_result must contain 'id', got keys: {list(tr.keys())}"
+        assert "tool_call_id" not in tr, "tool_result must not contain 'tool_call_id'"
+        assert "ms" in tr, f"tool_result must contain 'ms', got keys: {list(tr.keys())}"
+        assert isinstance(tr["ms"], (int, float)), f"'ms' must be numeric, got {type(tr['ms'])}"
