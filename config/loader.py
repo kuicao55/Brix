@@ -42,8 +42,9 @@ class ConfigLoader:
         if self._local_path:
             self._merge_layer(merged, self._local_path)
 
-        # Fallback: if no project layer was provided, use the old config/settings.yaml
-        if not self._project_path and self._fallback_path:
+        # Fallback: use old config/settings.yaml when no project layer provided
+        # OR when all layers yielded nothing (e.g., empty/malformed project config)
+        if (not self._project_path or not merged) and self._fallback_path:
             self._merge_layer(merged, self._fallback_path)
 
         return merged
