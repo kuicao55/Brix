@@ -417,11 +417,24 @@ def test_phase1_dependencies_importable():
 @pytest.mark.asyncio
 async def test_retry_on_transient_error():
     """LLMClient.chat() should retry on transient errors."""
+    from openai import RateLimitError
+
+    def _make_rate_limit_error():
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        mock_response.json.return_value = {"error": {"message": "rate limit"}}
+        return RateLimitError(
+            message="rate limit",
+            response=mock_response,
+            body={"error": {"message": "rate limit"}},
+        )
+
     mock_provider = MagicMock()
     mock_provider.chat = AsyncMock(
         side_effect=[
-            Exception("rate_limit"),  # first attempt
-            Exception("rate_limit"),  # second attempt
+            _make_rate_limit_error(),  # first attempt
+            _make_rate_limit_error(),  # second attempt
             LLMResponse(content="ok", tool_calls=[], finish_reason="stop"),  # third succeeds
         ]
     )
@@ -450,12 +463,25 @@ async def test_retry_on_transient_error():
 @pytest.mark.asyncio
 async def test_retry_fallback_model():
     """After exhausting retries, try fallback_model."""
+    from openai import RateLimitError
+
+    def _make_rate_limit_error():
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        mock_response.json.return_value = {"error": {"message": "rate limit"}}
+        return RateLimitError(
+            message="rate limit",
+            response=mock_response,
+            body={"error": {"message": "rate limit"}},
+        )
+
     mock_provider = MagicMock()
     mock_provider.chat = AsyncMock(
         side_effect=[
-            Exception("rate_limit"),
-            Exception("rate_limit"),
-            Exception("rate_limit"),  # 3 failures on primary
+            _make_rate_limit_error(),
+            _make_rate_limit_error(),
+            _make_rate_limit_error(),  # 3 failures on primary
             LLMResponse(content="fallback ok", tool_calls=[], finish_reason="stop"),  # fallback succeeds
         ]
     )

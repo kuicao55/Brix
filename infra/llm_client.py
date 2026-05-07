@@ -6,43 +6,33 @@ from typing import Any
 
 from tenacity import (
     retry,
-    retry_if_exception,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
 
 
-def _is_retryable(exc: BaseException) -> bool:
-    """Return True if the exception is transient and should be retried.
+def _get_retryable_errors() -> tuple[type[BaseException], ...]:
+    """Lazily resolve SDK exception types that are transient and should be retried.
 
-    Retries on rate-limit, timeout, connection, and generic errors.
-    Does NOT retry on authentication/authorization errors.
+    Returns a tuple of exception classes for rate-limit, timeout, and connection errors
+    from both OpenAI and Anthropic SDKs, plus stdlib equivalents.
     """
+    errors: list[type[BaseException]] = [ConnectionError, TimeoutError]
+
     try:
-        from openai import AuthenticationError as OpenAIAuthError
-        if isinstance(exc, OpenAIAuthError):
-            return False
+        from openai import RateLimitError, APITimeoutError, APIConnectionError
+        errors.extend([RateLimitError, APITimeoutError, APIConnectionError])
     except ImportError:
         pass
+
     try:
-        from openai import PermissionDeniedError as OpenAIPermError
-        if isinstance(exc, OpenAIPermError):
-            return False
+        from anthropic import RateLimitError, APITimeoutError, APIConnectionError
+        errors.extend([RateLimitError, APITimeoutError, APIConnectionError])
     except ImportError:
         pass
-    try:
-        from anthropic import AuthenticationError as AnthropicAuthError
-        if isinstance(exc, AnthropicAuthError):
-            return False
-    except ImportError:
-        pass
-    try:
-        from anthropic import PermissionDeniedError as AnthropicPermError
-        if isinstance(exc, AnthropicPermError):
-            return False
-    except ImportError:
-        pass
-    return True
+
+    return tuple(errors)
 
 
 @dataclass
@@ -150,7 +140,7 @@ class LLMClient:
         max_delay = self._retry_config.get("max_delay", 30.0)
 
         @retry(
-            retry=retry_if_exception(_is_retryable),
+            retry=retry_if_exception_type(_get_retryable_errors()),
             stop=stop_after_attempt(max_retries),
             wait=wait_exponential(multiplier=base_delay, min=base_delay, max=max_delay),
             reraise=True,
