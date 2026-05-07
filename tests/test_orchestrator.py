@@ -8,6 +8,7 @@ Step 4 (GREEN): all should pass after implementation.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from hooks.registry import HookRegistry
 from infra.llm_client import LLMResponse, ToolCall
 
 
@@ -36,11 +37,12 @@ def test_states_enum():
 
 
 def test_orchestrator_context():
-    """OrchestratorContext holds history, memory, tool_runner, llm_client, model."""
+    """OrchestratorContext holds history, memory, tool_runner, llm_client, model, hooks."""
     from orchestrator.engine import OrchestratorContext
 
     mock_llm = MagicMock()
     mock_runner = MagicMock()
+    hooks = HookRegistry()
 
     ctx = OrchestratorContext(
         history=[{"role": "user", "content": "hello"}],
@@ -48,6 +50,7 @@ def test_orchestrator_context():
         tool_runner=mock_runner,
         llm_client=mock_llm,
         model="gpt-4.1-mini",
+        hooks=hooks,
     )
 
     assert ctx.history == [{"role": "user", "content": "hello"}]
@@ -55,6 +58,7 @@ def test_orchestrator_context():
     assert ctx.tool_runner is mock_runner
     assert ctx.llm_client is mock_llm
     assert ctx.model == "gpt-4.1-mini"
+    assert ctx.hooks is hooks
 
 
 # ---------------------------------------------------------------------------
@@ -70,12 +74,15 @@ def _make_context(llm_client, tool_runner=None):
         tool_runner = AsyncMock()
         tool_runner.run = AsyncMock(return_value=[])
 
+    hooks = HookRegistry()
+
     return OrchestratorContext(
         history=[],
         memory={},
         tool_runner=tool_runner,
         llm_client=llm_client,
         model="test-model",
+        hooks=hooks,
     )
 
 
