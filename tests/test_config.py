@@ -100,3 +100,88 @@ def test_model_registry_routing_references_missing_model():
     registry = ModelRegistry(config)
     assert registry.get_default_model() is None
     assert registry.get_fallback_model() is None
+
+
+# --- Layered config tests ---
+
+
+def test_layered_config_merge(tmp_path):
+    """ConfigLoader should merge global -> project -> local layers."""
+    from config.loader import ConfigLoader
+
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    (global_dir / "config.yaml").write_text(
+        "model: gpt-4\ndebug: false\nretry:\n  max_retries: 3"
+    )
+
+    project_dir = tmp_path / "project" / ".brix"
+    project_dir.mkdir(parents=True)
+    (project_dir / "settings.yaml").write_text(
+        "model: claude-sonnet\nlogging: true"
+    )
+
+    local_dir = tmp_path / "project" / ".brix"
+    (local_dir / "settings.local.yaml").write_text(
+        "debug: true\napi_key: secret"
+    )
+
+    loader = ConfigLoader(
+        global_path=global_dir / "config.yaml",
+        project_path=project_dir / "settings.yaml",
+        local_path=local_dir / "settings.local.yaml",
+    )
+    config = loader.load()
+
+    # Local overrides project overrides global
+    assert config["model"] == "claude-sonnet"  # project overrides global
+    assert config["debug"] is True  # local overrides global
+    assert config["logging"] is True  # project-only key preserved
+    assert config["api_key"] == "secret"  # local-only key preserved
+    assert config["retry"]["max_retries"] == 3  # global nested key preserved
+
+
+def test_layered_config_missing_layers(tmp_path):
+    """Missing layers should be silently skipped."""
+    from config.loader import ConfigLoader
+
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    (global_dir / "config.yaml").write_text("model: gpt-4")
+
+    loader = ConfigLoader(
+        global_path=global_dir / "config.yaml",
+        project_path=tmp_path / "nonexistent" / "settings.yaml",
+        local_path=tmp_path / "nonexistent" / "settings.local.yaml",
+    )
+    config = loader.load()
+    assert config["model"] == "gpt-4"
+
+
+def test_layered_config_backward_compat(tmp_path):
+    """If no .brix/ dir exists, fall back to config/settings.yaml."""
+    from config.loader import ConfigLoader
+
+    # Simulate the old single-file config
+    old_config = tmp_path / "config" / "settings.yaml"
+    old_config.parent.mkdir(parents=True)
+    old_config.write_text("model: old-model\nengine: state_machine")
+
+    loader = ConfigLoader(
+        global_path=tmp_path / "nonexistent_global.yaml",
+        project_path=None,  # no .brix/settings.yaml
+        local_path=None,  # no .brix/settings.local.yaml
+        fallback_path=old_config,
+    )
+    config = loader.load()
+    assert config["model"] == "old-model"
+
+
+def test_banner_contains_model_info(capsys):
+    """Banner should display model and version info."""
+    from cli.banner import show_banner
+
+    show_banner(model="test-model", version="0.1.0", cwd="/test/dir")
+    captured = capsys.readouterr()
+    assert "BRIX" in captured.out or "Brix" in captured.out or "brix" in captured.out.lower()
+    assert "test-model" in captured.out

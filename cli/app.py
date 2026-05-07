@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
@@ -13,6 +14,7 @@ from hooks.registry import HookRegistry
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.weather import WeatherTool
+from cli.banner import show_banner
 from cli.display import format_response
 from config.loader import load_config
 from log.flow import FlowLog
@@ -47,7 +49,8 @@ class BrixCLI:
     async def run(self) -> None:
         """Start the REPL loop."""
         session: PromptSession[str] = PromptSession(history=InMemoryHistory())
-        print("Brix — personal AI agent (type /quit to exit)")
+        default_model = self._config.get("routing", {}).get("default_model", "unknown")
+        show_banner(model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
         while True:
             try:
