@@ -8,6 +8,7 @@ from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
+from rich.console import Console
 
 from capability.runner import ToolRunner
 from hooks.registry import HookRegistry
@@ -15,7 +16,9 @@ from capability.tools.calculator import CalculatorTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.weather import WeatherTool
 from cli.banner import show_banner
-from cli.display import format_response
+from cli.spinner import Spinner
+from cli.stream_renderer import StreamRenderer
+from cli.theme import BRIX_THEME
 from config.loader import load_config
 from log.flow import FlowLog
 from log.writer import flush_log, read_all, read_entry, format_compact_list, format_detail, entry_count
@@ -41,6 +44,7 @@ class BrixCLI:
         self._tool_runner = ToolRunner()
         self._register_tools()
         self._orchestrator = self._build_orchestrator()
+        self._console = Console(theme=BRIX_THEME)
 
     # ------------------------------------------------------------------
     # Public API
@@ -48,7 +52,7 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
-        session: PromptSession[str] = PromptSession(history=InMemoryHistory())
+        session = PromptSession(history=InMemoryHistory())
         default_model = self._config.get("routing", {}).get("default_model", "unknown")
         show_banner(model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
@@ -56,7 +60,7 @@ class BrixCLI:
             try:
                 user_input = await session.prompt_async("you> ")
             except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye.")
+                self._console.print("\n[dim]Goodbye.[/]")
                 break
 
             text = user_input.strip()
@@ -69,13 +73,11 @@ class BrixCLI:
                     continue
                 # /quit returns True from _handle_command after printing
 
-            # Normal message — route and run
+            # Normal message — stream response
             try:
-                response = await self._process(text)
+                await self._process_streaming(text)
             except Exception as exc:
-                response = f"Error: {exc}"
-
-            print(format_response(response))
+                self._console.print("[red]Error:[/] {}".format(exc))
 
     # ------------------------------------------------------------------
     # Command handling
@@ -208,6 +210,118 @@ class BrixCLI:
             pass
 
         return response
+
+    async def _process_streaming(self, user_input: str) -> None:
+        """Stream orchestrator output with spinner and markdown rendering."""
+        log = FlowLog(user_input)
+        hooks = HookRegistry()
+        hooks.bind_log(log)
+
+        history = self._memory.get_history()
+        context_window = self._strategy.get_context_window(history)
+        hooks.fire("memory", msgs=len(history),
+                   window=len(context_window),
+                   chars=sum(len(m.get("content", "")) for m in context_window),
+                   context_window=[{"role": m.get("role"), "content": m.get("content", "")}
+                                   for m in context_window])
+
+        default_model = self._config.get("routing", {}).get("default_model", "")
+        intent = await classify_intent(
+            user_input, context_window, self._llm_client,
+            default_model, hooks=hooks,
+        )
+        complexity = evaluate_complexity(user_input)
+        model = select_model(intent, complexity, self._config)
+
+        hooks.fire("complexity", result=complexity)
+        hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
+        log.set_model(model)
+
+        context = OrchestratorContext(
+            history=list(context_window),
+            tool_runner=self._tool_runner,
+            llm_client=self._llm_client,
+            model=model,
+            hooks=hooks,
+        )
+
+        # Start spinner while waiting for first token
+        spinner = Spinner(self._console, label="Thinking...")
+        spinner.start()
+
+        renderer = None
+        content_parts = []
+        has_error = False
+
+        try:
+            async for event in self._orchestrator.run_stream(user_input, context):
+                event_type = event.get("type", "")
+
+                if event_type == "text_delta":
+                    text = event.get("text", "")
+                    if text:
+                        # First text token — stop spinner, start renderer
+                        if renderer is None:
+                            spinner.finish("Response")
+                            renderer = StreamRenderer(self._console)
+                            renderer.start()
+                        renderer.push_delta(text)
+                        content_parts.append(text)
+
+                elif event_type == "tool_call":
+                    # Flush renderer before showing tool call
+                    if renderer is not None:
+                        renderer.flush()
+                        renderer = None
+                    tool_name = event.get("name", "unknown")
+                    self._console.print(
+                        "\n  [tool.name]\u2699 {}[/]".format(tool_name)
+                    )
+
+                elif event_type == "tool_result":
+                    tool_name = event.get("name", "unknown")
+                    elapsed_ms = event.get("ms", 0)
+                    self._console.print(
+                        "  [tool.success]\u2713[/] {} [dim]({}ms)[/]".format(
+                            tool_name, elapsed_ms
+                        )
+                    )
+
+        except Exception as exc:
+            has_error = True
+            if renderer is not None:
+                renderer.flush()
+                renderer = None
+            elif spinner.running:
+                spinner.fail("Error")
+            log.set_error(str(exc))
+            self._console.print("[red]Error:[/] {}".format(exc))
+
+        # Flush any remaining content
+        if renderer is not None:
+            renderer.flush()
+
+        response = "".join(content_parts)
+
+        if response.startswith("Error"):
+            has_error = True
+            log.set_error(response)
+
+        # Persist conversation
+        saved_count = 0
+        if self._strategy.should_save({"role": "user", "content": user_input}):
+            self._memory.add_message("user", user_input)
+            saved_count += 1
+        if not has_error and self._strategy.should_save({"role": "assistant", "content": response}):
+            self._memory.add_message("assistant", response)
+            saved_count += 1
+        self._memory.save()
+        hooks.fire("persist", saved=saved_count)
+
+        try:
+            flush_log(log)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Tool registration
