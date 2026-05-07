@@ -156,7 +156,7 @@ def test_context_window_none_content_messages():
 
 
 def test_context_window_system_exceeds_budget():
-    """If system messages alone exceed the token limit, return only system messages."""
+    """If system messages alone exceed the token limit, truncate to fit."""
     strategy = MemoryStrategy(max_tokens=5)
     long_system = "You are a very helpful assistant. " * 50  # well over 5 tokens
     history = [
@@ -165,9 +165,11 @@ def test_context_window_system_exceeds_budget():
         {"role": "assistant", "content": "Hi there!"},
     ]
     window = strategy.get_context_window(history)
-    # Should only contain the system message, not any non-system messages
+    # Should contain truncated system message, no non-system messages
     assert len(window) == 1
     assert window[0]["role"] == "system"
+    assert "[truncated]" in window[0]["content"]
+    assert len(window[0]["content"]) < len(long_system)
 
 
 def test_context_window_system_exceeds_budget_exact_boundary():

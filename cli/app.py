@@ -33,7 +33,8 @@ class BrixCLI:
     def __init__(self, config: dict | None = None) -> None:
         self._config = config if config is not None else load_config()
         self._memory = MemoryStorage()
-        self._strategy = MemoryStrategy()
+        max_tokens = self._config.get("memory", {}).get("max_context_tokens", 8000)
+        self._strategy = MemoryStrategy(max_tokens=max_tokens)
         self._llm_client = LLMClient(self._config)
         self._tool_runner = ToolRunner()
         self._register_tools()

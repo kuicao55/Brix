@@ -53,9 +53,21 @@ class MemoryStrategy:
         )
         remaining = limit - system_tokens
 
-        # If system messages alone exceed the budget, return only system messages
+        # If system messages alone exceed the budget, truncate the last one to fit
         if remaining <= 0:
-            return system_msgs
+            # Hard cap: truncate system content to prevent provider 400 errors
+            if system_msgs:
+                overflow = abs(remaining)
+                last = system_msgs[-1]
+                content = last.get("content") or ""
+                if content:
+                    # Estimate tokens to remove (with safety margin)
+                    chars_to_remove = overflow * 4 + 16  # ~4 chars per token + margin
+                    truncated = content[: max(0, len(content) - chars_to_remove)]
+                    if truncated:
+                        last = {**last, "content": truncated + "\n[truncated]"}
+                        return system_msgs[:-1] + [last]
+            return []
 
         # Walk backwards through non-system messages
         total = 0
