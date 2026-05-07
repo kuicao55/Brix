@@ -72,9 +72,10 @@ class MemoryStrategy:
         if remaining <= 0:
             if not system_msgs:
                 return []
-            # Allocate budget across system messages: keep all but truncate content
-            # Reserve at least 1 token per message for overhead
-            budget = max(1, limit)
+            # Reserve tokens for the "[truncated]" marker on the last truncated message
+            marker = "\n[truncated]"
+            marker_tokens = self._count_tokens(marker)
+            budget = max(marker_tokens + 1, limit)
             result: list[dict[str, Any]] = []
             used = 0
             for i, msg in enumerate(system_msgs):
@@ -84,11 +85,11 @@ class MemoryStrategy:
                     result.append(msg)
                     used += msg_tokens
                 else:
-                    # Truncate this message to fit remaining budget
-                    remaining_budget = max(1, budget - used)
+                    # Truncate this message to fit remaining budget (reserve marker space)
+                    remaining_budget = max(1, budget - used - marker_tokens)
                     truncated_content = self._truncate_to_tokens(content, remaining_budget)
                     if truncated_content:
-                        result.append({**msg, "content": truncated_content + "\n[truncated]"})
+                        result.append({**msg, "content": truncated_content + marker})
                     break
             # Guarantee at least one system message is always returned
             if not result and system_msgs:
