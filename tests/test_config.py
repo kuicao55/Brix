@@ -203,11 +203,17 @@ def test_layered_config_fallback_with_global(tmp_path):
     assert config["debug"] is False
 
 
-def test_banner_contains_model_info(capsys):
+def test_banner_contains_model_info():
     """Banner should display model and version info."""
+    import io
+
+    from rich.console import Console
+
     from cli.banner import show_banner
 
-    show_banner(model="test-model", version="0.1.0", cwd="/test/dir")
-    captured = capsys.readouterr()
-    assert "BRIX" in captured.out or "Brix" in captured.out or "brix" in captured.out.lower()
-    assert "test-model" in captured.out
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+    show_banner(console=console, model="test-model", version="0.1.0", cwd="/test/dir")
+    output = buf.getvalue()
+    assert "BRIX" in output or "Brix" in output or "brix" in output.lower()
+    assert "test-model" in output
