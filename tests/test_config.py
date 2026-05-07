@@ -177,6 +177,32 @@ def test_layered_config_backward_compat(tmp_path):
     assert config["model"] == "old-model"
 
 
+def test_layered_config_fallback_with_global(tmp_path):
+    """Fallback should merge on top of global when no project path given."""
+    from config.loader import ConfigLoader
+
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    (global_dir / "config.yaml").write_text("model: gpt-4\ndebug: false")
+
+    old_config = tmp_path / "config" / "settings.yaml"
+    old_config.parent.mkdir(parents=True)
+    old_config.write_text("model: old-model\nengine: state_machine")
+
+    loader = ConfigLoader(
+        global_path=global_dir / "config.yaml",
+        project_path=None,  # no .brix/settings.yaml
+        local_path=None,
+        fallback_path=old_config,
+    )
+    config = loader.load()
+    # Fallback should override global's model
+    assert config["model"] == "old-model"
+    assert config["engine"] == "state_machine"
+    # Global's debug should be preserved
+    assert config["debug"] is False
+
+
 def test_banner_contains_model_info(capsys):
     """Banner should display model and version info."""
     from cli.banner import show_banner
