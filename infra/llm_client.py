@@ -6,7 +6,7 @@ from typing import Any
 
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -45,6 +45,22 @@ def _get_retryable_errors() -> tuple[type[BaseException], ...]:
         pass
 
     return tuple(errors)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Check if an exception is retryable (transient errors only).
+
+    For status-based errors, retry 5xx (server errors) and known retryable types
+    (rate limit, timeout, connection). Do NOT retry 4xx client errors (auth, bad request).
+    """
+    # First check if the exception type is in our explicit retryable list
+    if isinstance(exc, _get_retryable_errors()):
+        return True
+    # For status-based errors not in the list, only retry 5xx
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        return 500 <= status_code < 600
+    return False
 
 
 @dataclass
@@ -152,7 +168,7 @@ class LLMClient:
         max_delay = self._retry_config.get("max_delay", 30.0)
 
         @retry(
-            retry=retry_if_exception_type(_get_retryable_errors()),
+            retry=retry_if_exception(_is_retryable),
             stop=stop_after_attempt(max_retries),
             wait=wait_exponential(multiplier=base_delay, min=base_delay, max=max_delay),
             reraise=True,
@@ -162,8 +178,10 @@ class LLMClient:
 
         try:
             return await _chat_with_retry(messages, model, tools)
-        except _get_retryable_errors():
-            # Try fallback model if configured (only for transient errors)
+        except Exception as exc:
+            # Try fallback model if configured (only for transient/retryable errors)
+            if not _is_retryable(exc):
+                raise
             fallback = self._routing_config.get("fallback_model")
             if fallback and fallback != model:
                 return await self._call_provider(messages, fallback, tools)
