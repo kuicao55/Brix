@@ -124,11 +124,10 @@ class BrixCLI:
                     print(format_detail(entry))
                 return True
 
-            # /log — show compact list of last 20
-            entries = read_all()[-20:]
-            start = max(1, total - len(entries) + 1)
-            print(f"Recent logs (1-{total}):\n")
-            print(format_compact_list(entries, start))
+            # /log — show compact list of last 20, newest first
+            entries = read_all()[-20:][::-1]
+            print(f"Recent logs (newest first, 1-{total}):\n")
+            print(format_compact_list(entries, 1))
             print(f"\nUse /log <number> to view details")
             return True
 

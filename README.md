@@ -13,6 +13,7 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
 - **Extensible Config** — Add new providers and models by editing a single YAML file
 - **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
+- **Hook System** — Event-driven architecture with `HookRegistry`; core modules fire events via `hooks.fire()`, FlowLog acts as default listener, easily extensible with custom hooks
 
 ---
 
@@ -128,10 +129,10 @@ Brix automatically records the complete data flow for every conversation turn, s
 
 ```
 you> /log
-Recent logs (1-3):
+Recent logs (newest first, 1-3):
 
-  #1  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
-  #2  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "What's the weather in Shanghai tomorrow?"
+  #1  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "What's the weather in Shanghai tomorrow?"
+  #2  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
 
 Use /log <number> to view details
 ```
@@ -196,6 +197,45 @@ Each step records:
 | `orch_plan` | LLM generates response or decides tool calls, records full prompt |
 | `tool_exec` | Execute tools and record input/output |
 | `persist` | Save conversation to storage |
+
+---
+
+## Hook System
+
+Brix uses an event-driven architecture via `HookRegistry`. Core modules (router, orchestrator, CLI) fire events through `hooks.fire()` instead of calling `FlowLog` directly. FlowLog acts as the default listener, automatically receiving all events.
+
+### How It Works
+
+```
+Core modules ---(hooks.fire())---> HookRegistry ---(auto-forward)---> FlowLog.step()
+                                       |
+                                       +---> Custom hooks (future extensions)
+```
+
+### Registering Custom Hooks
+
+```python
+from hooks.registry import HookRegistry
+
+hooks = HookRegistry()
+hooks.bind_log(log)  # FlowLog receives all events
+
+# Register a custom hook for specific events
+hooks.register("tool_exec", lambda e: print(f"Tool called: {e.data['name']}"))
+hooks.register("intent", lambda e: audit_log(e))
+```
+
+### Available Events
+
+| Event | Trigger Location | Data Fields |
+|-------|-----------------|-------------|
+| `memory` | cli/app.py | `msgs`, `window`, `chars` |
+| `intent` | router/intent.py | `result`, `via`, `model`, `ms` |
+| `complexity` | cli/app.py | `result` |
+| `router` | cli/app.py | `model`, `reason` |
+| `orch_plan` | orchestrator/ | `iter`, `tools`, `ms`, `response` |
+| `tool_exec` | orchestrator/ | `name`, `args`, `result`, `ms` |
+| `persist` | cli/app.py | `saved` |
 
 ---
 
@@ -357,6 +397,10 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  log/flow.py (FlowLog Collector)                     |
 |  log/writer.py (JSONL File I/O)                      |
 +-----------------------------------------------------+
+|                   Hook Layer                          |
+|  hooks/registry.py (HookRegistry + HookEvent)        |
+|  Core modules fire events → FlowLog auto-receives    |
++-----------------------------------------------------+
 ```
 
 ### Data Flow
@@ -423,6 +467,9 @@ brix/
 +-- log/
 |   +-- flow.py                     # FlowLog step collector
 |   +-- writer.py                   # JSONL file I/O
++-- hooks/
+|   +-- registry.py                 # HookRegistry + HookEvent
+|   +-- __init__.py                 # Re-exports
 +-- cli/
 |   +-- app.py                      # REPL interface
 |   +-- display.py                  # Output formatting
