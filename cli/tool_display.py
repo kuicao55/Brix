@@ -28,11 +28,12 @@ class ToolDisplay:
 
     def show_tool_start(self, tool_name: str, tool_input: dict) -> None:
         """Display a formatted panel when a tool call begins."""
+        safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
         detail = self._format_detail(tool_name, tool_input)
         panel = Panel(
             detail,
-            title="[tool.name]{} {}[/]".format(icon, tool_name),
+            title="[tool.name]{} {}[/]".format(icon, safe_name),
             title_align="left",
             border_style="tool.border",
             padding=(0, 1),
@@ -47,6 +48,7 @@ class ToolDisplay:
         is_error: bool = False,
     ) -> None:
         """Display a one-line summary when a tool call completes."""
+        safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
         status_style = "tool.error" if is_error else "tool.success"
         status_icon = "\u2717" if is_error else "\u2713"
@@ -58,7 +60,7 @@ class ToolDisplay:
 
         text = Text()
         text.append("  {} ".format(icon), style="dim")
-        text.append("{}".format(tool_name), style="tool.name")
+        text.append(safe_name, style="tool.name")
         text.append("  {}".format(status_icon), style=status_style)
         text.append("  {}".format(elapsed_str), style="dim cyan")
         if is_error:

@@ -284,8 +284,12 @@ class LangGraphOrchestrator:
             for tc in tool_calls:
                 t0 = time.monotonic()
                 is_error = False
+                # Coerce non-dict arguments to dict for tool execution
+                args = tc["arguments"]
+                if not isinstance(args, dict):
+                    args = {"raw": args}
                 try:
-                    result = await context.tool_runner.run(tc["name"], tc["arguments"])
+                    result = await context.tool_runner.run(tc["name"], args)
                 except Exception as e:
                     result = "Error executing {}: {}".format(tc["name"], e)
                     is_error = True
