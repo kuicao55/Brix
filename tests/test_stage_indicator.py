@@ -56,6 +56,30 @@ class TestStageActive:
         spinner.finish("cleanup")
 
 
+class TestSpinnerLeak:
+    def test_stage_active_stops_previous_spinner(self):
+        """Calling stage_active twice stops the first spinner."""
+        indicator, _ = _make_indicator()
+        first_spinner = indicator.stage_active("Intent")
+        # The first spinner should be running
+        assert first_spinner.running is True
+        # Start a second spinner — this must stop the first one
+        indicator.stage_active("Memory")
+        # First spinner should now be stopped (thread leak prevented)
+        assert first_spinner.running is False
+
+
+class TestMarkupEscape:
+    def test_stage_done_escapes_markup(self):
+        """stage_done escapes Rich markup in name and detail."""
+        indicator, buf = _make_indicator()
+        indicator.stage_done("[bold]injected[/bold]", 1.0, detail="[red]bad[/red]")
+        output = buf.getvalue()
+        # The literal bracket text should appear (escaped), not styled output
+        assert "[bold]injected[/bold]" in output
+        assert "[red]bad[/red]" in output
+
+
 class TestFinish:
     def test_finish_stops_active_spinner(self):
         """finish() stops the active spinner without error."""
