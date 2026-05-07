@@ -22,4 +22,7 @@ BRIX_THEME = Theme({
     "spinner.active": Style(color="blue"),
     "spinner.done": Style(color="green"),
     "spinner.failed": Style(color="red"),
+    "stage.name": Style(dim=True, color="white"),
+    "stage.time": Style(dim=True, color="cyan"),
+    "stage.detail": Style(dim=True, color="grey50"),
 })

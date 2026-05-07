@@ -77,6 +77,13 @@ def test_theme_spinner_styles_defined():
         assert BRIX_THEME.styles.get(key) is not None, "Missing: {}".format(key)
 
 
+def test_theme_stage_styles_defined():
+    """stage.name, stage.time, stage.detail should exist in theme."""
+    from cli.theme import BRIX_THEME
+    for key in ["stage.name", "stage.time", "stage.detail"]:
+        assert BRIX_THEME.styles.get(key) is not None, "Missing: {}".format(key)
+
+
 # ------------------------------------------------------------------
 # Spinner tests (Task 3)
 # ------------------------------------------------------------------
