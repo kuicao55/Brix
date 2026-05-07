@@ -26,7 +26,7 @@ class OrchestratorContext:
     tool_runner: Any = None
     llm_client: Any = None
     model: str = ""
-    log: Any = None  # FlowLog instance; typed Any to avoid circular import
+    hooks: Any = None  # HookRegistry instance; typed Any to avoid circular import
 
 
 @runtime_checkable
