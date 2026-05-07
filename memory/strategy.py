@@ -26,6 +26,21 @@ class MemoryStrategy:
             return len(self._encoder.encode(text))
         return max(1, len(text) // 4)
 
+    def _truncate_to_tokens(self, text: str, max_tokens: int) -> str:
+        """Truncate text to fit within max_tokens. Uses encoder when available."""
+        if not text:
+            return ""
+        if self._encoder is not None:
+            tokens = self._encoder.encode(text)
+            if len(tokens) <= max_tokens:
+                return text
+            return self._encoder.decode(tokens[:max_tokens])
+        # Fallback: approximate with chars
+        max_chars = max_tokens * 4
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars]
+
     def should_save(self, message: dict[str, Any]) -> bool:
         """MVP: always save every message."""
         return True
@@ -53,21 +68,32 @@ class MemoryStrategy:
         )
         remaining = limit - system_tokens
 
-        # If system messages alone exceed the budget, truncate the last one to fit
+        # If system messages alone exceed the budget, truncate to fit
         if remaining <= 0:
-            # Hard cap: truncate system content to prevent provider 400 errors
-            if system_msgs:
-                overflow = abs(remaining)
-                last = system_msgs[-1]
-                content = last.get("content") or ""
-                if content:
-                    # Estimate tokens to remove (with safety margin)
-                    chars_to_remove = overflow * 4 + 16  # ~4 chars per token + margin
-                    truncated = content[: max(0, len(content) - chars_to_remove)]
-                    if truncated:
-                        last = {**last, "content": truncated + "\n[truncated]"}
-                        return system_msgs[:-1] + [last]
-            return []
+            if not system_msgs:
+                return []
+            # Allocate budget across system messages: keep all but truncate content
+            # Reserve at least 1 token per message for overhead
+            budget = max(1, limit)
+            result: list[dict[str, Any]] = []
+            used = 0
+            for i, msg in enumerate(system_msgs):
+                content = msg.get("content") or ""
+                msg_tokens = self._count_tokens(content)
+                if used + msg_tokens <= budget:
+                    result.append(msg)
+                    used += msg_tokens
+                else:
+                    # Truncate this message to fit remaining budget
+                    remaining_budget = max(1, budget - used)
+                    truncated_content = self._truncate_to_tokens(content, remaining_budget)
+                    if truncated_content:
+                        result.append({**msg, "content": truncated_content + "\n[truncated]"})
+                    break
+            # Guarantee at least one system message is always returned
+            if not result and system_msgs:
+                result.append({**system_msgs[0], "content": "[system prompt truncated to fit budget]"})
+            return result
 
         # Walk backwards through non-system messages
         total = 0
