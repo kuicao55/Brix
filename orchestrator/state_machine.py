@@ -186,10 +186,12 @@ class StateMachineOrchestrator:
 
             for tc in tool_calls:
                 t0 = time.monotonic()
+                is_error = False
                 try:
                     result = await context.tool_runner.run(tc["name"], tc["arguments"])
                 except Exception as e:
                     result = "Error executing {}: {}".format(tc["name"], e)
+                    is_error = True
                 elapsed = int((time.monotonic() - t0) * 1000)
 
                 if context.hooks:
@@ -207,6 +209,7 @@ class StateMachineOrchestrator:
                     "name": tc["name"],
                     "result": str(result),
                     "ms": elapsed,
+                    "is_error": is_error,
                 }
 
                 context.history.append({

@@ -395,3 +395,5 @@ async def test_run_stream_handles_tool_calls():
         assert "tool_call_id" not in tr, "tool_result must not contain 'tool_call_id'"
         assert "ms" in tr, f"tool_result must contain 'ms', got keys: {list(tr.keys())}"
         assert isinstance(tr["ms"], (int, float)), f"'ms' must be numeric, got {type(tr['ms'])}"
+        assert "is_error" in tr, f"tool_result must contain 'is_error', got keys: {list(tr.keys())}"
+        assert isinstance(tr["is_error"], bool), f"'is_error' must be bool, got {type(tr['is_error'])}"

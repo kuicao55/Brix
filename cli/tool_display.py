@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from rich.console import Console
+from rich.markup import escape as markup_escape
 from rich.panel import Panel
 from rich.text import Text
 
@@ -66,23 +67,33 @@ class ToolDisplay:
 
     def _format_detail(self, tool_name: str, tool_input: dict) -> str:
         """Return tool-specific detail string for the panel body."""
+        if not isinstance(tool_input, dict):
+            try:
+                preview = json.dumps(tool_input, ensure_ascii=False)[:150]
+            except (TypeError, ValueError):
+                preview = repr(tool_input)[:150]
+            return markup_escape(preview)
+
         if tool_name == "bash":
-            cmd = tool_input.get("command", "")
+            cmd = markup_escape(str(tool_input.get("command", "")))
             return "[white on grey11]$ {}[/]".format(cmd)
         elif tool_name == "file_read":
-            path = tool_input.get("path", "")
-            return "\U0001f4c4 Reading [link]{}[/]".format(path)
+            path = markup_escape(str(tool_input.get("path", "")))
+            return "\U0001f4c4 Reading {}".format(path)
         elif tool_name == "file_write":
-            path = tool_input.get("path", "")
-            content = tool_input.get("content", "")
+            path = markup_escape(str(tool_input.get("path", "")))
+            content = str(tool_input.get("content", ""))
             lines = content.count("\n") + 1
-            return "\u270f\ufe0f Writing [link]{}[/] ({} lines)".format(path, lines)
+            return "\u270f\ufe0f Writing {} ({} lines)".format(path, lines)
         elif tool_name == "file_edit":
-            path = tool_input.get("path", "")
-            return "\U0001f4dd Editing [link]{}[/]".format(path)
+            path = markup_escape(str(tool_input.get("path", "")))
+            return "\U0001f4dd Editing {}".format(path)
         elif tool_name == "web_search":
-            query = tool_input.get("query", "")
+            query = markup_escape(str(tool_input.get("query", "")))
             return "\U0001f50e Searching: {}".format(query)
         else:
-            preview = json.dumps(tool_input, ensure_ascii=False)[:150]
-            return preview
+            try:
+                preview = json.dumps(tool_input, ensure_ascii=False)[:150]
+            except (TypeError, ValueError):
+                preview = repr(tool_input)[:150]
+            return markup_escape(preview)
