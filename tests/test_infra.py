@@ -395,3 +395,17 @@ async def test_anthropic_provider_chat():
         assert call_kwargs["tools"][0]["name"] == "get_weather"
         assert call_kwargs["tools"][0]["description"] == "Get weather for a city"
         assert "input_schema" in call_kwargs["tools"][0]
+
+
+# --- Phase 1 dependency imports ---
+
+
+def test_phase1_dependencies_importable():
+    """Verify Phase 1 dependencies are installed."""
+    import tenacity
+    import tiktoken
+    import rich
+
+    assert hasattr(tenacity, "retry")
+    assert hasattr(tiktoken, "encoding_for_model")
+    assert hasattr(rich, "print")
