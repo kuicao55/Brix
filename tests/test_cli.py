@@ -6,6 +6,9 @@ Step 4 (GREEN): all should pass after implementation.
 """
 
 import io
+import asyncio
+from unittest.mock import patch, MagicMock, AsyncMock
+
 import pytest
 
 from cli.display import format_response
@@ -203,3 +206,122 @@ def test_stream_renderer_closed_fence_is_safe():
     renderer.push_delta("Before.\n\n```python\ncode\n```\n")
     assert "Before" in renderer.rendered
     assert "```python" in renderer.rendered
+
+
+def test_stream_renderer_newline_outside_fence_is_safe():
+    """A newline outside a code fence should be a safe rendering boundary.
+
+    This ensures single-paragraph responses render incrementally at each
+    newline rather than waiting until flush().
+    """
+    from rich.console import Console
+    from cli.stream_renderer import StreamRenderer
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+    renderer = StreamRenderer(console)
+
+    # Simulate streaming: text arrives with embedded newlines
+    # but no blank lines (double-newlines) and no code fences.
+    # Without trailing \n, no empty-line element is created by split().
+    renderer.push_delta("Line one\nLine two")
+    assert "Line one" in renderer.rendered, (
+        "Newline outside fence should be a safe boundary"
+    )
+
+
+def test_stream_renderer_newline_inside_fence_not_safe():
+    """Newlines inside a code fence should NOT be treated as safe boundaries.
+
+    Content inside an open code fence must wait until the fence closes.
+    """
+    from rich.console import Console
+    from cli.stream_renderer import StreamRenderer
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+    renderer = StreamRenderer(console)
+
+    # Push an opening fence and some code lines
+    renderer.push_delta("```python\nprint('hello')\nprint('world')\n")
+    # Should NOT render yet — fence is still open
+    assert renderer.rendered == ""
+    assert "print" in renderer.pending
+
+    # Close the fence
+    renderer.push_delta("```\n")
+    assert "print('hello')" in renderer.rendered
+
+
+# ------------------------------------------------------------------
+# Spinner lifecycle fix tests (Issue 1: spinner stops on tool-only streams)
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spinner_stops_on_tool_only_stream():
+    """Spinner must stop when stream yields only tool events (no text_delta).
+
+    Regression test: previously the spinner only stopped on first text_delta,
+    so tool-only streams left the spinner running indefinitely.
+    """
+    from cli.app import BrixCLI
+
+    async def tool_only_stream():
+        yield {"type": "tool_call", "name": "calculator"}
+        yield {"type": "tool_result", "name": "calculator", "ms": 42}
+
+    mock_spinner = MagicMock()
+    mock_spinner.running = True
+
+    with patch("cli.app.Spinner", return_value=mock_spinner), \
+         patch("cli.app.load_config", return_value={
+             "routing": {"default_model": "test-model"},
+             "memory": {"max_context_tokens": 8000},
+         }), \
+         patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="tool_use"), \
+         patch("cli.app.evaluate_complexity", return_value="low"), \
+         patch("cli.app.select_model", return_value="test-model"):
+
+        cli = BrixCLI()
+        cli._orchestrator = MagicMock()
+        cli._orchestrator.run_stream = MagicMock(return_value=tool_only_stream())
+
+        await cli._process_streaming("calculate something")
+
+        # Spinner.finish() must have been called (not left running)
+        mock_spinner.finish.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_spinner_stops_on_empty_stream():
+    """Spinner must stop when stream yields no events at all.
+
+    Regression test: an empty stream (immediate end) previously left the
+    spinner running indefinitely because no text_delta ever arrived.
+    """
+    from cli.app import BrixCLI
+
+    async def empty_stream():
+        return
+        yield  # make it an async generator
+
+    mock_spinner = MagicMock()
+    mock_spinner.running = True
+
+    with patch("cli.app.Spinner", return_value=mock_spinner), \
+         patch("cli.app.load_config", return_value={
+             "routing": {"default_model": "test-model"},
+             "memory": {"max_context_tokens": 8000},
+         }), \
+         patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="general"), \
+         patch("cli.app.evaluate_complexity", return_value="low"), \
+         patch("cli.app.select_model", return_value="test-model"):
+
+        cli = BrixCLI()
+        cli._orchestrator = MagicMock()
+        cli._orchestrator.run_stream = MagicMock(return_value=empty_stream())
+
+        await cli._process_streaming("hello")
+
+        # Spinner.finish() must have been called
+        mock_spinner.finish.assert_called()

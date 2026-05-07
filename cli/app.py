@@ -252,6 +252,7 @@ class BrixCLI:
         renderer = None
         content_parts = []
         has_error = False
+        spinner_finished = False
 
         try:
             async for event in self._orchestrator.run_stream(user_input, context):
@@ -263,12 +264,17 @@ class BrixCLI:
                         # First text token — stop spinner, start renderer
                         if renderer is None:
                             spinner.finish("Response")
+                            spinner_finished = True
                             renderer = StreamRenderer(self._console)
                             renderer.start()
                         renderer.push_delta(text)
                         content_parts.append(text)
 
                 elif event_type == "tool_call":
+                    # Stop spinner before printing tool call
+                    if not spinner_finished:
+                        spinner.finish("Response")
+                        spinner_finished = True
                     # Flush renderer before showing tool call
                     if renderer is not None:
                         renderer.flush()
@@ -292,10 +298,17 @@ class BrixCLI:
             if renderer is not None:
                 renderer.flush()
                 renderer = None
-            elif spinner.running:
+            if not spinner_finished:
                 spinner.fail("Error")
+                spinner_finished = True
             log.set_error(str(exc))
             self._console.print("[red]Error:[/] {}".format(exc))
+
+        finally:
+            # Guarantee spinner is stopped even if stream yields no events
+            if not spinner_finished:
+                spinner.finish("Response")
+                spinner_finished = True
 
         # Flush any remaining content
         if renderer is not None:

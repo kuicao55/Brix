@@ -13,6 +13,7 @@ class StreamRenderer:
     Safe boundaries:
       - After a fully closed code fence (``` ... ```)
       - After a blank line (paragraph break)
+      - After any newline outside a code fence
 
     Content accumulates in ``pending`` until a safe boundary is found,
     then the ready portion moves to ``rendered`` and the Live display updates.
@@ -57,6 +58,11 @@ class StreamRenderer:
         """Return the character position of the last safe rendering boundary.
 
         Returns None if no safe boundary exists yet.
+
+        Safe boundaries:
+          - After a fully closed code fence (``` ... ```)
+          - After a blank line (paragraph break)
+          - After any newline outside a code fence
         """
         lines = text.split("\n")
         in_fence = False
@@ -69,9 +75,9 @@ class StreamRenderer:
                     # Just closed a fence — safe boundary after this line
                     pos = sum(len(l) + 1 for l in lines[:i + 1])
                     last_safe = pos
-            elif not in_fence and stripped == "" and i > 0:
-                # Blank line outside a fence — safe boundary
-                pos = sum(len(l) + 1 for l in lines[:i + 1])
+            elif not in_fence and i > 0:
+                # Any line break outside a fence is a safe boundary
+                pos = sum(len(l) + 1 for l in lines[:i])
                 last_safe = pos
         return last_safe if last_safe > 0 else None
 
