@@ -266,21 +266,22 @@ def test_stream_renderer_newline_inside_fence_not_safe():
 
 @pytest.mark.asyncio
 async def test_spinner_stops_on_tool_only_stream():
-    """Spinner must stop when stream yields only tool events (no text_delta).
+    """StageIndicator must finish when stream yields only tool events (no text_delta).
 
     Regression test: previously the spinner only stopped on first text_delta,
     so tool-only streams left the spinner running indefinitely.
+    Now StageIndicator wraps Spinner; finish() must still be called.
     """
     from cli.app import BrixCLI
+    from cli.stage_indicator import StageIndicator
 
     async def tool_only_stream():
         yield {"type": "tool_call", "name": "calculator"}
         yield {"type": "tool_result", "name": "calculator", "ms": 42}
 
-    mock_spinner = MagicMock()
-    mock_spinner.running = True
+    mock_indicator = MagicMock(spec=StageIndicator)
 
-    with patch("cli.app.Spinner", return_value=mock_spinner), \
+    with patch("cli.app.StageIndicator", return_value=mock_indicator), \
          patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
@@ -295,27 +296,28 @@ async def test_spinner_stops_on_tool_only_stream():
 
         await cli._process_streaming("calculate something")
 
-        # Spinner.finish() must have been called (not left running)
-        mock_spinner.finish.assert_called()
+        # StageIndicator.finish() must have been called (not left running)
+        mock_indicator.finish.assert_called()
 
 
 @pytest.mark.asyncio
 async def test_spinner_stops_on_empty_stream():
-    """Spinner must stop when stream yields no events at all.
+    """StageIndicator must finish when stream yields no events at all.
 
     Regression test: an empty stream (immediate end) previously left the
     spinner running indefinitely because no text_delta ever arrived.
+    Now StageIndicator wraps Spinner; finish() must still be called.
     """
     from cli.app import BrixCLI
+    from cli.stage_indicator import StageIndicator
 
     async def empty_stream():
         return
         yield  # make it an async generator
 
-    mock_spinner = MagicMock()
-    mock_spinner.running = True
+    mock_indicator = MagicMock(spec=StageIndicator)
 
-    with patch("cli.app.Spinner", return_value=mock_spinner), \
+    with patch("cli.app.StageIndicator", return_value=mock_indicator), \
          patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
@@ -330,5 +332,70 @@ async def test_spinner_stops_on_empty_stream():
 
         await cli._process_streaming("hello")
 
-        # Spinner.finish() must have been called
-        mock_spinner.finish.assert_called()
+        # StageIndicator.finish() must have been called
+        mock_indicator.finish.assert_called()
+
+
+# ------------------------------------------------------------------
+# Styled prompt + StageIndicator integration tests (Task 3)
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_styled_prompt_used():
+    """BrixCLI should use styled prompt with ❯ symbol."""
+    from cli.app import BrixCLI
+    from prompt_toolkit import HTML
+
+    with patch("cli.app.load_config", return_value={
+        "routing": {"default_model": "test-model"},
+        "memory": {"max_context_tokens": 8000},
+    }):
+        cli = BrixCLI()
+
+    session = MagicMock()
+    session.prompt_async = AsyncMock(side_effect=EOFError)
+
+    with patch("cli.app.PromptSession", return_value=session):
+        try:
+            await cli.run()
+        except (SystemExit, EOFError):
+            pass
+
+    # Verify the prompt contains ❯ (passed as HTML object)
+    call_args = session.prompt_async.call_args
+    prompt_arg = call_args[0][0] if call_args[0] else call_args[1].get("message", "")
+    assert "❯" in str(prompt_arg), "Prompt should contain ❯ symbol"
+
+
+@pytest.mark.asyncio
+async def test_stage_indicator_called_during_streaming():
+    """_process_streaming should create and use a StageIndicator."""
+    from cli.app import BrixCLI
+    from cli.stage_indicator import StageIndicator
+
+    async def fake_stream():
+        yield {"type": "text_delta", "text": "Hi"}
+
+    mock_indicator = MagicMock(spec=StageIndicator)
+
+    with patch("cli.app.StageIndicator", return_value=mock_indicator), \
+         patch("cli.app.load_config", return_value={
+             "routing": {"default_model": "test-model"},
+             "memory": {"max_context_tokens": 8000},
+         }), \
+         patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="chat"), \
+         patch("cli.app.evaluate_complexity", return_value="low"), \
+         patch("cli.app.select_model", return_value="test-model"):
+
+        cli = BrixCLI()
+        cli._orchestrator = MagicMock()
+        cli._orchestrator.run_stream = MagicMock(return_value=fake_stream())
+
+        await cli._process_streaming("hello")
+
+    # stage_done should have been called for memory, intent, complexity, router
+    done_calls = [c for c in mock_indicator.stage_done.call_args_list]
+    stage_names = [c[0][0] for c in done_calls]
+    assert "Memory" in stage_names
+    assert "Intent" in stage_names
+    assert "Route" in stage_names

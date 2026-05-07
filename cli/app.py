@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import HTML, PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from rich.console import Console
 
@@ -16,7 +17,7 @@ from capability.tools.calculator import CalculatorTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.weather import WeatherTool
 from cli.banner import show_banner
-from cli.spinner import Spinner
+from cli.stage_indicator import StageIndicator
 from cli.stream_renderer import StreamRenderer
 from cli.theme import BRIX_THEME
 from cli.tool_display import ToolDisplay
@@ -59,7 +60,7 @@ class BrixCLI:
 
         while True:
             try:
-                user_input = await session.prompt_async("you> ")
+                user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
             except (EOFError, KeyboardInterrupt):
                 self._console.print("\n[dim]Goodbye.[/]")
                 break
@@ -213,7 +214,10 @@ class BrixCLI:
         return response
 
     async def _process_streaming(self, user_input: str) -> None:
-        """Stream orchestrator output with spinner and markdown rendering."""
+        """Stream orchestrator output with stage indicator and markdown rendering."""
+        t0 = time.time()
+        indicator = StageIndicator(self._console)
+
         log = FlowLog(user_input)
         hooks = HookRegistry()
         hooks.bind_log(log)
@@ -225,14 +229,20 @@ class BrixCLI:
                    chars=sum(len(m.get("content", "")) for m in context_window),
                    context_window=[{"role": m.get("role"), "content": m.get("content", "")}
                                    for m in context_window])
+        indicator.stage_done("Memory", time.time() - t0)
 
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
             user_input, context_window, self._llm_client,
             default_model, hooks=hooks,
         )
+        indicator.stage_done("Intent", time.time() - t0, detail=intent)
+
         complexity = evaluate_complexity(user_input)
+        indicator.stage_done("Complexity", time.time() - t0)
+
         model = select_model(intent, complexity, self._config)
+        indicator.stage_done("Route", 0.0, detail=model)
 
         hooks.fire("complexity", result=complexity)
         hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
@@ -246,14 +256,12 @@ class BrixCLI:
             hooks=hooks,
         )
 
-        # Start spinner while waiting for first token
-        spinner = Spinner(self._console, label="Thinking...")
-        spinner.start()
+        # Show planning stage while waiting for first token
+        indicator.stage_active("Planning")
 
         renderer = None
         content_parts = []
         has_error = False
-        spinner_finished = False
         tool_display = ToolDisplay(self._console)
 
         try:
@@ -263,25 +271,15 @@ class BrixCLI:
                 if event_type == "text_delta":
                     text = event.get("text", "")
                     if text:
-                        # First text token — stop spinner, start renderer
-                        if renderer is None and not spinner_finished:
-                            spinner.finish("Response")
-                            spinner_finished = True
-                            renderer = StreamRenderer(self._console)
-                            renderer.start()
-                        elif renderer is None:
-                            # Spinner already stopped (e.g., by tool_call)
+                        if renderer is None:
+                            indicator.finish()
                             renderer = StreamRenderer(self._console)
                             renderer.start()
                         renderer.push_delta(text)
                         content_parts.append(text)
 
                 elif event_type == "tool_call":
-                    # Stop spinner before printing tool call
-                    if not spinner_finished:
-                        spinner.finish("Response")
-                        spinner_finished = True
-                    # Flush renderer before showing tool call
+                    indicator.finish()
                     if renderer is not None:
                         renderer.flush()
                         renderer = None
@@ -306,17 +304,11 @@ class BrixCLI:
             if renderer is not None:
                 renderer.flush()
                 renderer = None
-            if not spinner_finished:
-                spinner.fail("Error")
-                spinner_finished = True
             log.set_error(str(exc))
             self._console.print("[red]Error:[/] {}".format(exc))
 
         finally:
-            # Guarantee spinner is stopped even if stream yields no events
-            if not spinner_finished:
-                spinner.finish("Response")
-                spinner_finished = True
+            indicator.finish()
 
         # Flush any remaining content
         if renderer is not None:
@@ -338,6 +330,7 @@ class BrixCLI:
             saved_count += 1
         self._memory.save()
         hooks.fire("persist", saved=saved_count)
+        indicator.stage_done("Saved", time.time() - t0)
 
         try:
             flush_log(log)
