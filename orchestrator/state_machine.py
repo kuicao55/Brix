@@ -118,8 +118,12 @@ class StateMachineOrchestrator:
         # Run each tool and append results
         for tc in tool_calls:
             t0 = time.monotonic()
+            # Coerce non-dict arguments to dict for tool execution
+            args = tc["arguments"]
+            if not isinstance(args, dict):
+                args = {"raw": args}
             try:
-                result = await context.tool_runner.run(tc["name"], tc["arguments"])
+                result = await context.tool_runner.run(tc["name"], args)
             except Exception as e:
                 result = f"Error executing {tc['name']}: {e}"
             elapsed = int((time.monotonic() - t0) * 1000)
