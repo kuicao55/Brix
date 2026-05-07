@@ -146,3 +146,6 @@ engine: "state_machine"
 routing:
   default_model: "minimax/MiniMax-M2.7"
   fallback_model: "zenmux-openai/deepseek/deepseek-v4-flash"
+
+memory:
+  max_context_tokens: 8000
