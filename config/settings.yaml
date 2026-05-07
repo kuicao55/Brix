@@ -151,3 +151,6 @@ retry:
   max_retries: 3
   base_delay: 1.0
   max_delay: 30.0
+
+memory:
+  max_context_tokens: 8000
