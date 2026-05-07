@@ -262,9 +262,13 @@ class BrixCLI:
                     text = event.get("text", "")
                     if text:
                         # First text token — stop spinner, start renderer
-                        if renderer is None:
+                        if renderer is None and not spinner_finished:
                             spinner.finish("Response")
                             spinner_finished = True
+                            renderer = StreamRenderer(self._console)
+                            renderer.start()
+                        elif renderer is None:
+                            # Spinner already stopped (e.g., by tool_call)
                             renderer = StreamRenderer(self._console)
                             renderer.start()
                         renderer.push_delta(text)
