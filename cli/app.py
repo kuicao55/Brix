@@ -56,7 +56,7 @@ class BrixCLI:
         """Start the REPL loop."""
         session = PromptSession(history=InMemoryHistory())
         default_model = self._config.get("routing", {}).get("default_model", "unknown")
-        show_banner(model=default_model, version="0.1.0", cwd=str(Path.cwd()))
+        show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
         while True:
             try:

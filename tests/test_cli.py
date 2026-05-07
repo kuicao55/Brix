@@ -399,3 +399,22 @@ async def test_stage_indicator_called_during_streaming():
     assert "Memory" in stage_names
     assert "Intent" in stage_names
     assert "Route" in stage_names
+
+
+# ------------------------------------------------------------------
+# Banner tests (Task 4)
+# ------------------------------------------------------------------
+
+def test_banner_uses_rich_console():
+    """show_banner should accept a Console and use it for output."""
+    from rich.console import Console
+    from cli.banner import show_banner
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+
+    show_banner(console=console, model="test-model", version="0.1.0", cwd="/tmp")
+
+    output = buf.getvalue()
+    assert "BRIX" in output
+    assert "test-model" in output
