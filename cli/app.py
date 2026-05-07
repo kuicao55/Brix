@@ -14,6 +14,8 @@ from capability.tools.file_read import FileReadTool
 from capability.tools.weather import WeatherTool
 from cli.display import format_response
 from config.loader import load_config
+from log.flow import FlowLog
+from log.writer import flush_log, read_all, read_entry, format_compact_list, format_detail, entry_count
 from infra.llm_client import LLMClient
 from memory.storage import MemoryStorage
 from memory.strategy import MemoryStrategy
@@ -104,6 +106,31 @@ class BrixCLI:
                     print(f"  [{role}] {content[:80]}")
             return True
 
+        if cmd == "/log":
+            parts = text.split()
+            total = entry_count()
+            if total == 0:
+                print("No logs yet.")
+                return True
+
+            # /log <number> — show detail for that entry
+            if len(parts) > 1 and parts[1].isdigit():
+                idx = int(parts[1])
+                entry = read_entry(idx)
+                if entry is None:
+                    print(f"Log #{idx} not found. (1-{total})")
+                else:
+                    print(format_detail(entry))
+                return True
+
+            # /log — show compact list of last 20
+            entries = read_all()[-20:]
+            start = max(1, total - len(entries) + 1)
+            print(f"Recent logs (1-{total}):\n")
+            print(format_compact_list(entries, start))
+            print(f"\nUse /log <number> to view details")
+            return True
+
         print(f"Unknown command: {cmd}")
         return True
 
@@ -113,31 +140,66 @@ class BrixCLI:
 
     async def _process(self, user_input: str) -> str:
         """Classify, route, run orchestrator, and persist."""
+        log = FlowLog(user_input)
+
         history = self._memory.get_history()
         context_window = self._strategy.get_context_window(history)
+        log.step("memory", msgs=len(history),
+                 window=len(context_window),
+                 chars=sum(len(m.get("content", "")) for m in context_window),
+                 context_window=[{"role": m.get("role"), "content": m.get("content", "")}
+                                 for m in context_window])
 
+        default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
             user_input, context_window, self._llm_client,
-            self._config.get("routing", {}).get("default_model", ""),
+            default_model, log=log,
         )
         complexity = evaluate_complexity(user_input)
         model = select_model(intent, complexity, self._config)
+
+        log.step("complexity", result=complexity)
+        log.step("router", model=model, reason=f"{intent}->{complexity}")
+        log.set_model(model)
 
         context = OrchestratorContext(
             history=list(context_window),
             tool_runner=self._tool_runner,
             llm_client=self._llm_client,
             model=model,
+            log=log,
         )
 
-        response = await self._orchestrator.run(user_input, context)
+        try:
+            response = await self._orchestrator.run(user_input, context)
+        except Exception as exc:
+            log.set_error(str(exc))
+            try:
+                flush_log(log)
+            except Exception:
+                pass
+            raise
 
-        # Persist conversation
+        # Check for orchestrator-internal errors (returned as strings)
+        if response.startswith("Error"):
+            log.set_error(response)
+
+        # Persist conversation (skip error responses to avoid polluting context)
+        saved_count = 0
+        is_error = response.startswith("Error")
         if self._strategy.should_save({"role": "user", "content": user_input}):
             self._memory.add_message("user", user_input)
-        if self._strategy.should_save({"role": "assistant", "content": response}):
+            saved_count += 1
+        if not is_error and self._strategy.should_save({"role": "assistant", "content": response}):
             self._memory.add_message("assistant", response)
+            saved_count += 1
         self._memory.save()
+        log.step("persist", saved=saved_count)
+
+        try:
+            flush_log(log)
+        except Exception:
+            pass
 
         return response
 

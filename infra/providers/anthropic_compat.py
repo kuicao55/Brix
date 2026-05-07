@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 from anthropic import AsyncAnthropic
 
 from infra.llm_client import LLMResponse, ToolCall
@@ -25,7 +27,7 @@ class AnthropicCompatProvider:
                 if msg["role"] == "system":
                     system_msg = msg["content"]
                 else:
-                    anthropic_messages.append(msg)
+                    anthropic_messages.append(self._convert_message(msg))
 
             kwargs = {
                 "model": model,
@@ -71,3 +73,34 @@ class AnthropicCompatProvider:
                     "input_schema": func.get("parameters", {}),
                 })
         return anthropic_tools
+
+    def _convert_message(self, msg: dict) -> dict:
+        """Convert an OpenAI-format message to Anthropic format."""
+        role = msg.get("role", "")
+
+        # Assistant with tool_calls -> content blocks with tool_use
+        if role == "assistant" and msg.get("tool_calls"):
+            content = []
+            if msg.get("content"):
+                content.append({"type": "text", "text": msg["content"]})
+            for tc in msg["tool_calls"]:
+                content.append({
+                    "type": "tool_use",
+                    "id": tc.get("id", ""),
+                    "name": tc.get("name", ""),
+                    "input": tc.get("arguments", {}),
+                })
+            return {"role": "assistant", "content": content}
+
+        # Tool result -> user message with tool_result content block
+        if role == "tool":
+            return {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": msg.get("tool_call_id", ""),
+                    "content": msg.get("content", ""),
+                }],
+            }
+
+        return copy.deepcopy(msg)
