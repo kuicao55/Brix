@@ -96,9 +96,9 @@ class MemoryStrategy:
                     if truncated_content:
                         result.append({**msg, "content": truncated_content + marker})
                     break
-            # Guarantee at least one system message is always returned
+            # Guarantee at least one system message is always returned (minimal)
             if not result and system_msgs:
-                result.append({**system_msgs[0], "content": "[system prompt truncated to fit budget]"})
+                result.append({**system_msgs[0], "content": ""})
             return result
 
         # Walk backwards through non-system messages
