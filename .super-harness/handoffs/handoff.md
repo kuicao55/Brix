@@ -1,33 +1,28 @@
-# Handoff — 2026-05-08 12:30
+# Handoff — 2026-05-08 20:51
 
 ## State
 **Status:** MILESTONE_DONE
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-08-memory-system-v2.md
+- **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
 - **plan:** .super-harness/plans/2026-05-08-milestone-8.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-(no worktree — merged back to feat/memory-upgrade)
+## Worktree
+(no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-7 (COMPLETE)
-- next_milestone_id: milestone-8
-- tasks_completed: [task-1, task-2, task-3, task-4, task-5]
-
-## Milestone 7 Summary
-Built memory core infrastructure: SessionManager (atomic writes, UUID validation, fcntl locking, concurrent resume merge, monotonic index updates), SoulManager, UserMemoryManager, refactored MemoryStorage, MemoryStrategy with data-guard preambles, BrixMemoryProvider implementing MemoryProvider Protocol. 107 memory tests passing. 14 pre-existing failures (capability Python 3.8, CLI constructor, langgraph module).
+- milestone_id: milestone-8
+- task_id: null (no task started yet)
+- tasks_completed: [task-1, task-2, task-3]
 
 ## Deferred Items
-- CLI crash from MemoryStorage constructor change → deferred to milestone-8 (task 4)
+None
 
 ## Key Decisions
-- Session-level file locking for concurrent resume safety
-- base_count tracking from merged result (not in-memory messages)
-- datetime.fromisoformat for monotonic index comparison
-- Index rebuild persisted on all corruption paths
+Fixed prefix collision vulnerability in FileWriteTool/FileEditTool (startswith → is_relative_to). Fixed data_dir misalignment between MemoryProvider and file tools (config data_dir now passed to all components).
 
 ## Next Action
 /super-harness:resume

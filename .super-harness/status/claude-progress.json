@@ -1,14 +1,11 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-08T17:33:49Z",
+  "updated_at": "2026-05-08T20:51:40Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feat/memory-upgrade",
-  "worktree": {
-    "path": "worktrees/milestone-8",
-    "branch": "harness/milestone-8-memory-tools"
-  },
+  "worktree": null,
   "milestones": [
     {
       "id": "milestone-1",
@@ -96,11 +93,11 @@
       "title": "Memory Tools + CLI Integration \u2014 FileWrite/FileEdit/CLI Refactor",
       "description": "Memory Tools + CLI Integration \u2014 FileWrite/FileEdit/CLI Refactor",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-08-memory-system-v2.md",
       "plan_file": ".super-harness/plans/2026-05-08-milestone-8.md",
       "session_date": "2026-05-08T17:32:10Z",
-      "notes": null
+      "notes": "Completed 2026-05-08. 3 tasks: FileWriteTool+FileEditTool, CLI refactor, test verification. CQR found and fixed prefix collision vulnerability and data_dir misalignment. 274 tests pass."
     }
   ]
 }
