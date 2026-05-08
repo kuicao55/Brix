@@ -525,3 +525,189 @@ class TestRebuildUUIDValidation:
         sessions = sm.list_sessions()
         assert len(sessions) == 1
         assert sessions[0]["id"] == valid_sid
+
+
+# ─── Code Quality Finding: Corrupted but JSON-valid session files ──────
+
+class TestCorruptedSessionFileHandling:
+    """_rebuild_index 和 load_session 应处理 JSON-valid 但结构损坏的 session 文件。"""
+
+    def test_rebuild_skips_session_file_with_dict_content(self, tmp_path):
+        """session 文件内容是 {}（dict 而非 list）时，_rebuild_index 不应崩溃。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # 有效的 session 文件
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 损坏的 session 文件：内容是 dict 而非 list
+        corrupt_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{corrupt_sid}.json").write_text(
+            json.dumps({}),
+            encoding="utf-8",
+        )
+
+        # 删除索引触发重建
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_rebuild_skips_session_file_with_string_content(self, tmp_path):
+        """session 文件内容是 "oops"（string）时，_rebuild_index 不应崩溃。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # 有效的 session 文件
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 损坏的 session 文件：内容是字符串
+        corrupt_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{corrupt_sid}.json").write_text(
+            json.dumps("oops"),
+            encoding="utf-8",
+        )
+
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_rebuild_skips_session_file_with_list_of_strings(self, tmp_path):
+        """session 文件内容是 ["a", "b"]（list of strings）时，_rebuild_index 不应崩溃。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # 有效的 session 文件
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 损坏的 session 文件：list of strings 而非 list of dicts
+        corrupt_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{corrupt_sid}.json").write_text(
+            json.dumps(["a", "b"]),
+            encoding="utf-8",
+        )
+
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_rebuild_skips_session_file_with_list_of_ints(self, tmp_path):
+        """session 文件内容是 [1, 2, 3]（list of ints）时，_rebuild_index 不应崩溃。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        corrupt_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{corrupt_sid}.json").write_text(
+            json.dumps([1, 2, 3]),
+            encoding="utf-8",
+        )
+
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_rebuild_skips_session_file_with_nested_list(self, tmp_path):
+        """session 文件内容是 [[1], [2]]（list of lists）时，_rebuild_index 不应崩溃。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        corrupt_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{corrupt_sid}.json").write_text(
+            json.dumps([[1], [2]]),
+            encoding="utf-8",
+        )
+
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_load_session_rejects_corrupted_dict_content(self, tmp_path):
+        """load_session 对 JSON-valid 但非 list 的内容应抛出 ValueError。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        session_path = tmp_path / "sessions" / f"session-{sid}.json"
+        session_path.write_text(json.dumps({}), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="corrupted"):
+            sm.load_session(sid)
+
+    def test_load_session_rejects_corrupted_string_content(self, tmp_path):
+        """load_session 对 JSON-valid string 内容应抛出 ValueError。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        session_path = tmp_path / "sessions" / f"session-{sid}.json"
+        session_path.write_text(json.dumps("oops"), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="corrupted"):
+            sm.load_session(sid)
+
+    def test_load_session_rejects_list_of_non_dicts(self, tmp_path):
+        """load_session 对 list of non-dicts 应抛出 ValueError。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        session_path = tmp_path / "sessions" / f"session-{sid}.json"
+        session_path.write_text(json.dumps(["a", "b"]), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="corrupted"):
+            sm.load_session(sid)

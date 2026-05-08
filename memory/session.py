@@ -99,6 +99,11 @@ class SessionManager:
                 messages = json.loads(p.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
+            # 验证 messages 是否为 list[dict]；损坏文件跳过
+            if not isinstance(messages, list):
+                continue
+            if not all(isinstance(m, dict) for m in messages):
+                continue
             # 取第一条 user 消息作为预览
             preview = ""
             for msg in messages:
@@ -183,12 +188,26 @@ class SessionManager:
         self._with_index_lock(_update_index)
 
     def load_session(self, session_id: str) -> list[dict[str, Any]]:
-        """加载指定会话的消息列表，不存在则抛出 FileNotFoundError。"""
+        """加载指定会话的消息列表，不存在则抛出 FileNotFoundError。
+
+        若文件内容损坏（非 list[dict]），抛出 ValueError。
+        """
         _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
         if not session_path.exists():
             raise FileNotFoundError(f"Session {session_id} not found")
-        return json.loads(session_path.read_text(encoding="utf-8"))
+        data = json.loads(session_path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise ValueError(
+                f"Session {session_id} file is corrupted: expected list, got {type(data).__name__}"
+            )
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"Session {session_id} file is corrupted: "
+                    f"expected dict at index {i}, got {type(item).__name__}"
+                )
+        return data
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """返回所有会话的索引列表（最新在前）。
