@@ -348,3 +348,180 @@ class TestAtomicWrites:
             with pytest.raises(OSError):
                 um.save("new content that should fail")
         assert um.load() == "original content"
+
+
+# ─── Finding 1: Stale index entries not detected ──────────────────────
+
+class TestStaleIndexDetection:
+    """list_sessions 应检测索引中有但文件已删除的条目并清理。"""
+
+    def test_list_sessions_removes_stale_index_entry(self, tmp_path):
+        """索引中有某 session 但文件已删除 → 该条目应被移除。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid1 = sm.create_session()
+        sm.save_session(sid1, [{"role": "user", "content": "first"}])
+        sid2 = sm.create_session()
+        sm.save_session(sid2, [{"role": "user", "content": "second"}])
+
+        # 删除 sid1 对应的 session 文件
+        session_file = tmp_path / "sessions" / f"session-{sid1}.json"
+        session_file.unlink()
+
+        # list_sessions 应只返回 sid2
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == sid2
+
+    def test_stale_entry_persisted_to_index(self, tmp_path):
+        """清理后的索引应持久化到磁盘，后续调用不会重新出现。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid1 = sm.create_session()
+        sm.save_session(sid1, [{"role": "user", "content": "first"}])
+        sid2 = sm.create_session()
+        sm.save_session(sid2, [{"role": "user", "content": "second"}])
+
+        # 删除 sid1
+        session_file = tmp_path / "sessions" / f"session-{sid1}.json"
+        session_file.unlink()
+
+        sm.list_sessions()
+
+        # 再次调用 list_sessions，不应再出现 sid1
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == sid2
+
+
+# ─── Finding 2: Index format assumed to be a list ─────────────────────
+
+class TestIndexFormatNormalization:
+    """_load_index 应处理 { "sessions": [...] } 字典格式。"""
+
+    def test_load_index_handles_dict_with_sessions_key(self, tmp_path):
+        """index.json 使用 { "sessions": [...] } 格式时应正确解析。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        sid = str(_uuid.uuid4())
+        session_file = sessions_dir / f"session-{sid}.json"
+        session_file.write_text(
+            json.dumps([{"role": "user", "content": "hello"}]),
+            encoding="utf-8",
+        )
+
+        # 写入 dict 格式的 index
+        index_data = {
+            "sessions": [
+                {
+                    "id": sid,
+                    "created": "2026-05-08T10:00:00Z",
+                    "updated": "2026-05-08T10:00:00Z",
+                    "message_count": 1,
+                    "preview": "hello",
+                }
+            ]
+        }
+        (sessions_dir / "index.json").write_text(
+            json.dumps(index_data), encoding="utf-8"
+        )
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == sid
+
+    def test_load_index_rebuilds_on_invalid_type(self, tmp_path):
+        """index.json 既不是 list 也不是 dict-with-sessions 时应重建。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        sid = str(_uuid.uuid4())
+        session_file = sessions_dir / f"session-{sid}.json"
+        session_file.write_text(
+            json.dumps([{"role": "user", "content": "hello"}]),
+            encoding="utf-8",
+        )
+
+        # 写入无效格式的 index（纯字符串）
+        (sessions_dir / "index.json").write_text('"invalid"', encoding="utf-8")
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == sid
+
+
+# ─── Finding 3: Rebuild can emit invalid/non-UUID ids ─────────────────
+
+class TestRebuildUUIDValidation:
+    """_rebuild_index 应跳过文件名中 sid 不是合法 UUID 的文件。"""
+
+    def test_rebuild_skips_non_uuid_filename(self, tmp_path):
+        """session-notaUUID.json 不应出现在重建索引中。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # 有效的 session 文件
+        import uuid as _uuid
+        valid_sid = str(_uuid.uuid4())
+        valid_file = sessions_dir / f"session-{valid_sid}.json"
+        valid_file.write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 无效文件名（非 UUID 的 sid）
+        invalid_file = sessions_dir / "session-notaUUID.json"
+        invalid_file.write_text(
+            json.dumps([{"role": "user", "content": "invalid"}]),
+            encoding="utf-8",
+        )
+
+        # 删除索引触发重建
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_rebuild_skips_uuid_like_but_invalid_filename(self, tmp_path):
+        """近似 UUID 但不合法的文件名也应被跳过。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # 有效的 session 文件
+        import uuid as _uuid
+        valid_sid = str(_uuid.uuid4())
+        valid_file = sessions_dir / f"session-{valid_sid}.json"
+        valid_file.write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 文件名缺少最后一段 hex
+        almost_uuid = "550e8400-e29b-41d4-a716-44665544000"
+        invalid_file = sessions_dir / f"session-{almost_uuid}.json"
+        invalid_file.write_text(
+            json.dumps([{"role": "user", "content": "almost"}]),
+            encoding="utf-8",
+        )
+
+        index_path = sessions_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid

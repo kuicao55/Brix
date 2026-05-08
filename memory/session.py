@@ -55,13 +55,29 @@ class SessionManager:
             raise
 
     def _load_index(self) -> list[dict[str, Any]]:
-        """从磁盘加载 sessions 索引。损坏时从 session 文件重建。"""
+        """从磁盘加载 sessions 索引。损坏时从 session 文件重建。
+
+        支持两种格式：
+        - 格式 A（标准）：`[ {...}, {...} ]`
+        - 格式 B（spec 文档）：`{ "sessions": [ {...}, {...} ] }`
+        """
         if not self._index_path.exists():
             return self._rebuild_index()
         try:
-            return json.loads(self._index_path.read_text(encoding="utf-8"))
+            raw = json.loads(self._index_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return self._rebuild_index()
+        # 格式 B：dict 包裹
+        if isinstance(raw, dict) and "sessions" in raw:
+            sessions = raw["sessions"]
+            if isinstance(sessions, list):
+                return sessions
+            return self._rebuild_index()
+        # 格式 A：直接是 list
+        if isinstance(raw, list):
+            return raw
+        # 其他类型无法识别，重建
+        return self._rebuild_index()
 
     def _rebuild_index(self) -> list[dict[str, Any]]:
         """从 sessions 目录中的 session-*.json 文件重建索引。"""
@@ -74,6 +90,11 @@ class SessionManager:
             if not stem.startswith("session-"):
                 continue
             sid = stem[len("session-"):]
+            # 验证 sid 是否为合法 UUID，跳过非 UUID 文件名
+            try:
+                uuid.UUID(sid)
+            except ValueError:
+                continue
             try:
                 messages = json.loads(p.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
@@ -172,8 +193,9 @@ class SessionManager:
     def list_sessions(self) -> list[dict[str, Any]]:
         """返回所有会话的索引列表（最新在前）。
 
-        加载索引后交叉校验实际 session 文件：若存在未被索引覆盖的
-        session 文件（crash 导致索引未更新），自动重建索引。
+        加载索引后交叉校验实际 session 文件：
+        - 若存在未被索引覆盖的 session 文件 → 自动重建索引
+        - 若索引条目对应的 session 文件已删除 → 移除陈旧条目并持久化
         """
         index = self._load_index()
         self._ensure_dirs()
@@ -190,4 +212,16 @@ class SessionManager:
                 continue
             if sid not in indexed_ids:
                 return self._rebuild_index()
+        # 检查索引条目对应的 session 文件是否存在
+        # 只检查 message_count > 0 的条目：create_session 创建的空条目
+        # 尚无 session 文件，属于正常状态。
+        stale = [
+            e for e in index
+            if e.get("message_count", 0) > 0
+            and not (self._sessions_dir / f"session-{e['id']}.json").exists()
+        ]
+        if stale:
+            stale_ids = {e["id"] for e in stale}
+            index = [e for e in index if e["id"] not in stale_ids]
+            self._save_index(index)
         return index
