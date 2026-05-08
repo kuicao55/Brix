@@ -185,3 +185,31 @@ def test_context_window_system_exceeds_budget_exact_boundary():
     window = strategy.get_context_window(history)
     # System message should always be present
     assert any(m.get("role") == "system" for m in window)
+
+
+# --- Corrupt session file recovery ---
+
+
+def test_corrupt_session_file_falls_back_to_empty(tmp_path):
+    """MemoryStorage should recover gracefully when session file is corrupted.
+
+    SessionManager.load_session raises ValueError for structurally corrupt
+    files (e.g. top-level value is not a list). MemoryStorage must catch that
+    and fall back to an empty message list instead of crashing.
+    """
+    import uuid
+
+    sm = SessionManager(tmp_path)
+    sid = str(uuid.uuid4())
+    session_path = tmp_path / "sessions" / f"session-{sid}.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write structurally corrupt JSON (dict instead of list)
+    session_path.write_text('{"corrupt": true}', encoding="utf-8")
+
+    # Should NOT raise ValueError; should fall back to empty
+    storage = MemoryStorage(session_manager=sm, session_id=sid)
+    assert storage.get_history() == []
+
+    # Should still be able to add messages and save
+    storage.add_message("user", "hello")
+    assert len(storage.get_history()) == 1

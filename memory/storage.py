@@ -17,10 +17,10 @@ class MemoryStorage:
     def __init__(self, session_manager: SessionManager, session_id: str) -> None:
         self._session_mgr = session_manager
         self._session_id = session_id
-        # 尝试从磁盘加载已有 session 历史；若 session 文件不存在则初始化为空
+        # 尝试从磁盘加载已有 session 历史；若 session 文件不存在或损坏则初始化为空
         try:
             self._messages: list[dict[str, Any]] = session_manager.load_session(session_id)
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
             self._messages = []
 
     def add_message(self, role: str, content: str) -> None:
