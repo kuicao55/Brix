@@ -237,8 +237,10 @@ class BrixCLI:
             default_model, hooks=hooks,
         )
 
-        # Complexity + Route stages (instant — no spinner update needed)
+        # Complexity + Route stages
+        indicator.update("Complexity")
         complexity = evaluate_complexity(user_input)
+        indicator.update("Route")
         model = select_model(intent, complexity, self._config)
 
         hooks.fire("complexity", result=complexity)
