@@ -1159,3 +1159,114 @@ class TestBrixMemoryProvider:
         messages = provider.get_context_messages(prompt)
         assert len(messages) >= 1
         assert messages[0]["role"] == "system"
+
+
+class TestConcurrentResume:
+    """并发 resume 安全性测试 — 验证 session-level locking + merge。"""
+
+    def test_concurrent_save_merges_messages(self, tmp_path):
+        """两个 MemoryStorage 实例同时 resume 同一 session，各自的新增消息都应保留。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        # 初始消息
+        initial = [
+            {"role": "user", "content": "msg0", "timestamp": "2026-05-08T10:00:00Z"},
+        ]
+        sm.save_session(sid, initial)
+
+        # 两个实例同时 resume
+        store_a = MemoryStorage(sm, sid)
+        store_b = MemoryStorage(sm, sid)
+
+        # 各自添加消息
+        store_a.add_message("assistant", "reply-A")
+        store_b.add_message("assistant", "reply-B")
+
+        # 先后保存（模拟并发）
+        store_a.save()
+        store_b.save()
+
+        # 最终 session 文件应包含所有消息
+        final = sm.load_session(sid)
+        contents = [m["content"] for m in final]
+        assert "msg0" in contents
+        assert "reply-A" in contents
+        assert "reply-B" in contents
+        assert len(final) == 3
+
+    def test_save_without_base_count_overwrites(self, tmp_path):
+        """不带 base_count 的 save_session 直接写入（向后兼容）。"""
+        from memory.session import SessionManager
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "old"}])
+        sm.save_session(sid, [{"role": "user", "content": "new"}])
+        loaded = sm.load_session(sid)
+        assert len(loaded) == 1
+        assert loaded[0]["content"] == "new"
+
+    def test_save_with_base_count_no_concurrent_writes(self, tmp_path):
+        """无并发写入时，带 base_count 的 save 正常工作。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "initial"}])
+
+        store = MemoryStorage(sm, sid)
+        store.add_message("assistant", "response")
+        store.save()
+
+        final = sm.load_session(sid)
+        assert len(final) == 2
+        assert final[1]["content"] == "response"
+
+    def test_three_instances_concurrent_save(self, tmp_path):
+        """三个实例并发保存，所有消息都不丢失。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "start"}])
+
+        store_a = MemoryStorage(sm, sid)
+        store_b = MemoryStorage(sm, sid)
+        store_c = MemoryStorage(sm, sid)
+
+        store_a.add_message("assistant", "A")
+        store_b.add_message("assistant", "B")
+        store_c.add_message("assistant", "C")
+
+        store_a.save()
+        store_b.save()
+        store_c.save()
+
+        final = sm.load_session(sid)
+        contents = {m["content"] for m in final}
+        assert contents == {"start", "A", "B", "C"}
+
+    def test_save_session_with_base_count_index_reflects_merged(self, tmp_path):
+        """索引中的 message_count 反映合并后的实际消息数。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "base"}])
+
+        store_a = MemoryStorage(sm, sid)
+        store_b = MemoryStorage(sm, sid)
+        store_a.add_message("assistant", "A")
+        store_b.add_message("assistant", "B")
+        store_a.save()
+        store_b.save()
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["message_count"] == 3

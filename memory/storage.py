@@ -29,9 +29,10 @@ class MemoryStorage:
         except FileNotFoundError:
             self._messages = []
         except ValueError:
-            # 损坏文件：重命名为 .corrupt 保留现场，避免 save() 覆盖导致数据不可恢复
             self._quarantine_corrupt_file(session_manager, session_id)
             self._messages = []
+        # 记录加载时的消息数量，用于 save() 时的并发安全合并
+        self._base_count: int = len(self._messages)
 
     @staticmethod
     def _quarantine_corrupt_file(session_manager: SessionManager, session_id: str) -> None:
@@ -88,4 +89,6 @@ class MemoryStorage:
         self._messages.clear()
 
     def save(self) -> None:
-        self._session_mgr.save_session(self._session_id, self._messages)
+        self._session_mgr.save_session(
+            self._session_id, self._messages, base_count=self._base_count
+        )

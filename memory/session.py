@@ -141,6 +141,17 @@ class SessionManager:
             finally:
                 fcntl.flock(lock_f, fcntl.LOCK_UN)
 
+    def _with_session_lock(self, session_id: str, fn):
+        """在 session 文件锁保护下执行读-改-写操作。"""
+        self._ensure_dirs()
+        lock_path = self._sessions_dir / f".session-{session_id}.lock"
+        with open(lock_path, "w") as lock_f:
+            fcntl.flock(lock_f, fcntl.LOCK_EX)
+            try:
+                return fn()
+            finally:
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
+
     def create_session(self) -> str:
         """创建新会话，返回 UUID 标识符。在文件锁保护下更新索引。"""
         def _do_create() -> str:
@@ -158,16 +169,71 @@ class SessionManager:
             return sid
         return self._with_index_lock(_do_create)
 
-    def save_session(self, session_id: str, messages: list[dict[str, Any]]) -> None:
-        """保存会话消息并更新索引。在文件锁保护下更新索引。"""
+    def save_session(
+        self,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        base_count: int | None = None,
+    ) -> None:
+        """保存会话消息并更新索引。
+
+        Args:
+            session_id: 会话 UUID。
+            messages: 当前实例的完整消息列表。
+            base_count: 加载时的消息数量。提供时启用并发安全合并：
+                在 session 文件锁下重新读取磁盘状态，将本次新增的消息
+                （messages[base_count:]）追加到磁盘最新状态，避免并发
+                resume 互相覆盖。
+        """
         _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
-        self._atomic_write_json(session_path, messages)
+
+        if base_count is not None:
+            # 并发安全：在 session 文件锁下读-合并-写
+            def _merge_and_write() -> None:
+                if session_path.exists():
+                    try:
+                        existing = json.loads(session_path.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, OSError):
+                        existing = []
+                    if not isinstance(existing, list):
+                        existing = []
+                else:
+                    existing = []
+
+                # 本次新增的消息（相对于加载时的 base_count）
+                new_messages = messages[base_count:]
+                disk_has_new = len(existing) > base_count
+
+                if disk_has_new:
+                    # 其他实例已写入新消息，合并：磁盘已有 + 本次新增
+                    merged = existing + new_messages
+                else:
+                    # 无并发写入，直接使用当前消息
+                    merged = messages
+
+                self._atomic_write_json(session_path, merged)
+            self._with_session_lock(session_id, _merge_and_write)
+        else:
+            # 无 base_count，直接写入（向后兼容）
+            self._atomic_write_json(session_path, messages)
+
         def _update_index() -> None:
+            # 重新读取实际写入的消息用于索引更新
+            if base_count is not None:
+                try:
+                    final_messages = json.loads(session_path.read_text(encoding="utf-8"))
+                    if not isinstance(final_messages, list):
+                        final_messages = messages
+                except (json.JSONDecodeError, OSError):
+                    final_messages = messages
+            else:
+                final_messages = messages
+
             index = self._load_index()
             now = datetime.now(timezone.utc).isoformat()
             preview = ""
-            for msg in messages:
+            for msg in final_messages:
                 if msg.get("role") == "user":
                     preview = msg.get("content", "")[:100]
                     break
@@ -175,17 +241,16 @@ class SessionManager:
             for entry in index:
                 if entry["id"] == session_id:
                     entry["updated"] = now
-                    entry["message_count"] = len(messages)
+                    entry["message_count"] = len(final_messages)
                     entry["preview"] = preview
                     found = True
                     break
             if not found:
-                # 索引丢失该条目，重新插入
                 index.insert(0, {
                     "id": session_id,
                     "created": now,
                     "updated": now,
-                    "message_count": len(messages),
+                    "message_count": len(final_messages),
                     "preview": preview,
                 })
             self._save_index(index)
