@@ -921,3 +921,51 @@ class TestMemoryStorageRefactored:
         storage.add_message("user", "hello")
         storage.clear()
         assert len(storage.get_history()) == 0
+
+    def test_storage_loads_existing_session_history_on_init(self, tmp_path):
+        """新建 MemoryStorage 时应自动加载已有 session 的历史消息。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        # 先写入一些消息
+        messages = [
+            {"role": "user", "content": "hello", "timestamp": "2026-05-08T10:00:00Z"},
+            {"role": "assistant", "content": "hi there", "timestamp": "2026-05-08T10:00:01Z"},
+        ]
+        sm.save_session(sid, messages)
+        # 用同一 session_id 新建 MemoryStorage，应自动加载已有消息
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+        history = storage.get_history()
+        assert len(history) == 2
+        assert history[0]["role"] == "user"
+        assert history[0]["content"] == "hello"
+        assert history[1]["role"] == "assistant"
+        assert history[1]["content"] == "hi there"
+
+    def test_storage_save_after_load_preserves_loaded_messages(self, tmp_path):
+        """加载已有历史后调用 save() 不应覆盖为只包含旧消息。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        messages = [
+            {"role": "user", "content": "first", "timestamp": "2026-05-08T10:00:00Z"},
+        ]
+        sm.save_session(sid, messages)
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+        storage.add_message("assistant", "second")
+        storage.save()
+        reloaded = sm.load_session(sid)
+        assert len(reloaded) == 2
+        assert reloaded[0]["content"] == "first"
+        assert reloaded[1]["content"] == "second"
+
+    def test_storage_new_session_starts_empty(self, tmp_path):
+        """全新 session（无历史数据）的 MemoryStorage 应从空列表开始。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+        assert storage.get_history() == []
