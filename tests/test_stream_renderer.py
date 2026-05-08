@@ -6,7 +6,7 @@ import time
 from unittest.mock import patch
 
 import pytest
-from rich.console import Console
+from rich.console import Console, Group
 from rich.text import Text
 
 from cli.stream_renderer import StreamRenderer
@@ -37,12 +37,11 @@ class TestActivityIndicator:
         renderer.pending = "some text"
 
         # Simulate idle: set _last_delta_time to 1 second ago
-        renderer._last_delta_time = time.time() - 1.0
+        renderer._last_delta_time = time.monotonic() - 1.0
 
         display = renderer._build_display()
         # The display should contain the indicator text
         # We verify by checking that the Group has more than one child
-        from rich.console import Group
         assert isinstance(display, Group)
         assert len(display.renderables) == 2  # Markdown + indicator
         renderer.flush()
@@ -52,10 +51,9 @@ class TestActivityIndicator:
         renderer, _ = _make_renderer()
         renderer.start()
         renderer.pending = "some text"
-        renderer._last_delta_time = time.time()  # just now
+        renderer._last_delta_time = time.monotonic()  # just now
 
         display = renderer._build_display()
-        from rich.console import Group
         # Should only have Markdown, no indicator
         if isinstance(display, Group):
             assert len(display.renderables) == 1
@@ -66,11 +64,10 @@ class TestActivityIndicator:
         renderer, _ = _make_renderer()
         renderer.start()
         renderer.pending = ""
-        renderer._last_delta_time = time.time() - 1.0  # idle
+        renderer._last_delta_time = time.monotonic() - 1.0  # idle
 
         display = renderer._build_display()
         # No pending content, so either empty Text or single Markdown
-        from rich.console import Group
         if isinstance(display, Group):
             assert len(display.renderables) <= 1
         renderer.flush()
@@ -82,7 +79,7 @@ class TestActivityIndicator:
         old_time = renderer._last_delta_time
 
         with patch("cli.stream_renderer.time") as mock_time:
-            mock_time.time.return_value = old_time + 10.0
+            mock_time.monotonic.return_value = old_time + 10.0
             renderer.push_delta("new text")
 
         assert renderer._last_delta_time == old_time + 10.0
@@ -91,9 +88,9 @@ class TestActivityIndicator:
     def test_start_initializes_last_delta_time(self):
         """start() should set _last_delta_time to current time."""
         renderer, _ = _make_renderer()
-        before = time.time()
+        before = time.monotonic()
         renderer.start()
-        after = time.time()
+        after = time.monotonic()
         assert before <= renderer._last_delta_time <= after
         renderer.flush()
 

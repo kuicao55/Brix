@@ -76,11 +76,11 @@ class StreamRenderer:
             transient=False,
         )
         self.live.start()
-        self._last_delta_time = time.time()
+        self._last_delta_time = time.monotonic()
 
     def push_delta(self, delta: str) -> None:
         """Append a text delta and render if a safe boundary is reached."""
-        self._last_delta_time = time.time()
+        self._last_delta_time = time.monotonic()
         self.pending += delta
         boundary = self._find_safe_boundary(self.pending)
         if boundary is not None:
@@ -147,8 +147,8 @@ class StreamRenderer:
                 parts.append(Markdown(self.rendered))
 
         # Show activity indicator when idle > 0.8s with pending content
-        if self.pending and time.time() - self._last_delta_time > 0.8:
-            frame_idx = int(time.time() * 10) % len(BRAILLE_FRAMES)
+        if self.pending and time.monotonic() - self._last_delta_time > 0.8:
+            frame_idx = int(time.monotonic() * 10) % len(BRAILLE_FRAMES)
             frame = BRAILLE_FRAMES[frame_idx]
             indicator = Text()
             indicator.append("\n  {} ".format(frame), style="spinner.active")
