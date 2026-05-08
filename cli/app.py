@@ -39,8 +39,10 @@ class BrixCLI:
 
     def __init__(self, config: dict | None = None) -> None:
         self._config = config if config is not None else load_config()
+        self._data_dir = self._config.get("memory", {}).get("data_dir", "memory/data")
         max_tokens = self._config.get("memory", {}).get("max_context_tokens", 8000)
         self._memory: MemoryProvider = create_memory_provider(
+            data_dir=self._data_dir,
             max_context_tokens=max_tokens,
         )
         self._llm_client = LLMClient(self._config)
@@ -396,11 +398,12 @@ class BrixCLI:
 
     def _register_tools(self) -> None:
         """Register all built-in tools."""
+        data_root = Path(self._data_dir)
         self._tool_runner.register(CalculatorTool())
         self._tool_runner.register(WeatherTool())
         self._tool_runner.register(FileReadTool())
-        self._tool_runner.register(FileWriteTool())
-        self._tool_runner.register(FileEditTool())
+        self._tool_runner.register(FileWriteTool(allowed_root=data_root))
+        self._tool_runner.register(FileEditTool(allowed_root=data_root))
 
     def _build_orchestrator(self):
         """Build the orchestrator engine based on config."""
