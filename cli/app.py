@@ -220,7 +220,7 @@ class BrixCLI:
         hooks = HookRegistry()
         hooks.bind_log(log)
 
-        # Memory stage
+        # Memory stage (started automatically by StageIndicator constructor)
         history = self._memory.get_history()
         context_window = self._strategy.get_context_window(history)
         hooks.fire("memory", msgs=len(history),
@@ -230,17 +230,18 @@ class BrixCLI:
                                    for m in context_window])
 
         # Intent stage
+        indicator.update("Intent")
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
             user_input, context_window, self._llm_client,
             default_model, hooks=hooks,
         )
-        indicator.update("Intent")
 
         # Complexity + Route stages
+        indicator.update("Complexity")
         complexity = evaluate_complexity(user_input)
-        model = select_model(intent, complexity, self._config)
         indicator.update("Route")
+        model = select_model(intent, complexity, self._config)
 
         hooks.fire("complexity", result=complexity)
         hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
