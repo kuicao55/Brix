@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-08T00:34:57Z",
+  "updated_at": "2026-05-08T17:33:49Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "v0.1.0",
@@ -76,6 +76,28 @@
       "plan_file": ".super-harness/plans/2026-05-07-milestone-6.md",
       "session_date": "2026-05-08T01:45:00Z",
       "notes": "Completed 2026-05-08. 5 tasks: StageIndicator, theme styles, styled prompt + integration, banner upgrade, regression test. 184 tests pass. 10 pre-existing failures."
+    },
+    {
+      "id": "milestone-7",
+      "title": "Memory Core Infrastructure \u2014 Session/Soul/User/Storage/Strategy/Provider",
+      "description": "Memory Core Infrastructure \u2014 Session/Soul/User/Storage/Strategy/Provider",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-08-memory-system-v2.md",
+      "plan_file": ".super-harness/plans/2026-05-08-milestone-7.md",
+      "session_date": "2026-05-08T17:29:27Z",
+      "notes": null
+    },
+    {
+      "id": "milestone-8",
+      "title": "Memory Tools + CLI Integration \u2014 FileWrite/FileEdit/CLI Refactor",
+      "description": "Memory Tools + CLI Integration \u2014 FileWrite/FileEdit/CLI Refactor",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-08-memory-system-v2.md",
+      "plan_file": ".super-harness/plans/2026-05-08-milestone-8.md",
+      "session_date": "2026-05-08T17:32:10Z",
+      "notes": null
     }
   ]
 }
