@@ -7,10 +7,10 @@ from rich.console import Console
 from cli.spinner import Spinner
 
 STAGE_LABELS = {
-    "Memory": "Thinking...",
-    "Intent": "Thinking...",
-    "Complexity": "Thinking...",
-    "Route": "Routing...",
+    "Memory": "Loading memory...",
+    "Intent": "Classifying intent...",
+    "Complexity": "Evaluating complexity...",
+    "Route": "Selecting model...",
     "Planning": "Planning...",
 }
 
