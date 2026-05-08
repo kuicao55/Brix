@@ -260,3 +260,99 @@ def test_corrupt_session_file_is_quarantined(tmp_path, caplog):
     saved = sm.load_session(sid)
     assert len(saved) == 1
     assert saved[0]["role"] == "user"
+
+
+# --- Quarantine defense-in-depth ---
+
+
+def test_quarantine_rejects_invalid_session_id(tmp_path, caplog):
+    """_quarantine_corrupt_file should reject non-UUID session_ids.
+
+    Defense-in-depth: even though load_session validates UUID before raising
+    ValueError, the quarantine function must also validate to prevent
+    path traversal via crafted session_id strings.
+    """
+    sm = SessionManager(tmp_path)
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    # Malicious session_id that could traverse directories
+    malicious_id = "../../etc/passwd"
+
+    # Create a file that looks like the "corrupt" target to prove quarantine did NOT run
+    # (If quarantine ran with the malicious id, it would try to rename outside sessions dir)
+    with caplog.at_level(logging.WARNING, logger="memory.storage"):
+        MemoryStorage._quarantine_corrupt_file(sm, malicious_id)
+
+    # Should log a warning about invalid session_id, not attempt rename
+    assert any("invalid" in record.message.lower() or "skip" in record.message.lower()
+               for record in caplog.records), \
+        f"Expected warning about invalid session_id, got: {[r.message for r in caplog.records]}"
+
+    # No files should have been created or renamed in the sessions directory
+    quarantined_files = list(sessions_dir.glob("*.corrupt"))
+    assert quarantined_files == [], \
+        f"No files should be quarantined for invalid session_id, found: {quarantined_files}"
+
+
+def test_quarantine_rejects_path_traversal(tmp_path, caplog):
+    """_quarantine_corrupt_file should reject session_ids with path traversal.
+
+    A session_id like '../foo' is not a valid UUID and must be rejected.
+    The resolved path must stay within the sessions directory.
+    """
+    sm = SessionManager(tmp_path)
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    traversal_id = "../../../tmp/evil"
+
+    with caplog.at_level(logging.WARNING, logger="memory.storage"):
+        MemoryStorage._quarantine_corrupt_file(sm, traversal_id)
+
+    # Should log warning, not crash or rename files outside sessions dir
+    assert len(caplog.records) >= 1, "Expected at least one warning log"
+
+    # Verify sessions directory is clean
+    quarantined_files = list(sessions_dir.glob("*.corrupt"))
+    assert quarantined_files == []
+
+
+def test_quarantine_accepts_valid_uuid(tmp_path, caplog):
+    """_quarantine_corrupt_file should work normally for valid UUIDs.
+
+    This ensures the validation fix doesn't break the happy path.
+    """
+    import uuid
+
+    sm = SessionManager(tmp_path)
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_id = str(uuid.uuid4())
+    session_path = sessions_dir / f"session-{valid_id}.json"
+    corrupt_path = sessions_dir / f"session-{valid_id}.json.corrupt"
+
+    # Create a corrupt file to quarantine
+    session_path.write_text('{"corrupt": true}', encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="memory.storage"):
+        MemoryStorage._quarantine_corrupt_file(sm, valid_id)
+
+    # File should be renamed to .corrupt
+    assert corrupt_path.exists(), "Valid UUID should be quarantined"
+    assert not session_path.exists(), "Original file should be renamed"
+    assert corrupt_path.read_text(encoding="utf-8") == '{"corrupt": true}'
+
+
+def test_quarantine_rejects_empty_string(tmp_path, caplog):
+    """_quarantine_corrupt_file should reject empty string session_id."""
+    sm = SessionManager(tmp_path)
+    (tmp_path / "sessions").mkdir(parents=True, exist_ok=True)
+
+    with caplog.at_level(logging.WARNING, logger="memory.storage"):
+        MemoryStorage._quarantine_corrupt_file(sm, "")
+
+    assert len(caplog.records) >= 1
+    quarantined_files = list((tmp_path / "sessions").glob("*.corrupt"))
+    assert quarantined_files == []

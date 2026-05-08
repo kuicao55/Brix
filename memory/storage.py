@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,8 +36,30 @@ class MemoryStorage:
     @staticmethod
     def _quarantine_corrupt_file(session_manager: SessionManager, session_id: str) -> None:
         """将损坏的 session 文件重命名为 session-<id>.json.corrupt。"""
-        session_path: Path = session_manager._sessions_dir / f"session-{session_id}.json"
-        corrupt_path: Path = session_manager._sessions_dir / f"session-{session_id}.json.corrupt"
+        # 防御纵深：验证 session_id 是否为合法 UUID，防止路径穿越
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            logger.warning(
+                "Skipping quarantine: invalid session_id %r (not a valid UUID)",
+                session_id,
+            )
+            return
+
+        sessions_dir: Path = session_manager._sessions_dir
+        session_path: Path = sessions_dir / f"session-{session_id}.json"
+        corrupt_path: Path = sessions_dir / f"session-{session_id}.json.corrupt"
+
+        # 防御纵深：确认解析后的路径在 sessions 目录内
+        try:
+            session_path.resolve().relative_to(sessions_dir.resolve())
+        except ValueError:
+            logger.warning(
+                "Skipping quarantine: session path escapes sessions directory: %s",
+                session_path,
+            )
+            return
+
         try:
             session_path.rename(corrupt_path)
             logger.warning(
