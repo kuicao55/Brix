@@ -1,32 +1,79 @@
-"""JSON-backed conversation history storage."""
-
+"""会话级消息存储 — 基于 SessionManager 的实现。"""
 from __future__ import annotations
 
-import json
 import logging
-import os
-import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from memory.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryStorage:
-    """Persist conversation history to a JSON file."""
+    """会话级消息存储。
 
-    def __init__(self, path: str = "data/memory.json") -> None:
-        self._path = Path(path)
-        self._messages: list[dict[str, Any]] = []
-        self._load()
+    保持与旧版相同的公共 API（add_message, get_history, clear, save），
+    内部委托给 SessionManager。
+    """
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def __init__(self, session_manager: SessionManager, session_id: str) -> None:
+        self._session_mgr = session_manager
+        self._session_id = session_id
+        # 尝试从磁盘加载已有 session 历史；若 session 文件不存在则初始化为空；
+        # 若文件损坏则隔离（quarantine）原文件后初始化为空
+        try:
+            self._messages: list[dict[str, Any]] = session_manager.load_session(session_id)
+        except FileNotFoundError:
+            self._messages = []
+        except ValueError:
+            self._quarantine_corrupt_file(session_manager, session_id)
+            self._messages = []
+        # 记录加载时的消息数量，用于 save() 时的并发安全合并
+        self._base_count: int = len(self._messages)
+
+    @staticmethod
+    def _quarantine_corrupt_file(session_manager: SessionManager, session_id: str) -> None:
+        """将损坏的 session 文件重命名为 session-<id>.json.corrupt。"""
+        # 防御纵深：验证 session_id 是否为合法 UUID，防止路径穿越
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            logger.warning(
+                "Skipping quarantine: invalid session_id %r (not a valid UUID)",
+                session_id,
+            )
+            return
+
+        sessions_dir: Path = session_manager._sessions_dir
+        session_path: Path = sessions_dir / f"session-{session_id}.json"
+        corrupt_path: Path = sessions_dir / f"session-{session_id}.json.corrupt"
+
+        # 防御纵深：确认解析后的路径在 sessions 目录内
+        try:
+            session_path.resolve().relative_to(sessions_dir.resolve())
+        except ValueError:
+            logger.warning(
+                "Skipping quarantine: session path escapes sessions directory: %s",
+                session_path,
+            )
+            return
+
+        try:
+            session_path.rename(corrupt_path)
+            logger.warning(
+                "Corrupt session file quarantined: %s -> %s",
+                session_path.name, corrupt_path.name,
+            )
+        except OSError:
+            # rename 失败时不阻塞系统运行，仅记录日志
+            logger.warning(
+                "Failed to quarantine corrupt session file: %s", session_path.name,
+            )
 
     def add_message(self, role: str, content: str) -> None:
-        """Append a message with an ISO-8601 timestamp."""
         self._messages.append({
             "role": role,
             "content": content,
@@ -34,45 +81,20 @@ class MemoryStorage:
         })
 
     def get_history(self, limit: int | None = None) -> list[dict[str, Any]]:
-        """Return recent messages, optionally capped to *limit* entries."""
         if limit is None:
             return list(self._messages)
         return list(self._messages[-limit:])
 
     def clear(self) -> None:
-        """Empty the in-memory history."""
         self._messages.clear()
+        # 使用 -1 标记已清空状态，save 时直接写入不合并
+        self._base_count = -1
 
     def save(self) -> None:
-        """Write current history to disk using atomic temp-file-then-rename."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=self._path.parent, suffix=".tmp", prefix=".memory-"
+        # base_count=-1 表示已清空，使用 direct write 模式（不合并磁盘内容）
+        bc = self._base_count if self._base_count >= 0 else None
+        actual_count = self._session_mgr.save_session(
+            self._session_id, self._messages, base_count=bc
         )
-        try:
-            with os.fdopen(tmp_fd, 'w') as f:
-                json.dump(self._messages, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, str(self._path))
-        except Exception:
-            # Clean up temp file on failure
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _load(self) -> None:
-        """Load history from disk if the file exists."""
-        if not self._path.exists():
-            return
-        try:
-            self._messages = json.loads(self._path.read_text())
-        except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"Corrupt memory file {self._path}: {e}. Starting fresh.")
-            self._messages = []
+        # 使用合并后的实际数量，防止 stale writer 的 base_count 偏离磁盘状态
+        self._base_count = actual_count
