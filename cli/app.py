@@ -13,7 +13,9 @@ from rich.console import Console
 from capability.runner import ToolRunner
 from hooks.registry import HookRegistry
 from capability.tools.calculator import CalculatorTool
+from capability.tools.file_edit import FileEditTool
 from capability.tools.file_read import FileReadTool
+from capability.tools.file_write import FileWriteTool
 from capability.tools.weather import WeatherTool
 from cli.banner import show_banner
 from cli.stage_indicator import StageIndicator
@@ -24,8 +26,7 @@ from config.loader import load_config
 from log.flow import FlowLog
 from log.writer import flush_log, read_all, read_entry, format_compact_list, format_detail, entry_count
 from infra.llm_client import LLMClient
-from memory.storage import MemoryStorage
-from memory.strategy import MemoryStrategy
+from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
 from orchestrator.state_machine import StateMachineOrchestrator
 from router.complexity import evaluate_complexity
@@ -38,9 +39,10 @@ class BrixCLI:
 
     def __init__(self, config: dict | None = None) -> None:
         self._config = config if config is not None else load_config()
-        self._memory = MemoryStorage()
         max_tokens = self._config.get("memory", {}).get("max_context_tokens", 8000)
-        self._strategy = MemoryStrategy(max_tokens=max_tokens)
+        self._memory: MemoryProvider = create_memory_provider(
+            max_context_tokens=max_tokens,
+        )
         self._llm_client = LLMClient(self._config)
         self._tool_runner = ToolRunner()
         self._register_tools()
@@ -61,6 +63,7 @@ class BrixCLI:
             try:
                 user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
             except (EOFError, KeyboardInterrupt):
+                self._memory.save_session()
                 self._console.print("\n[dim]Goodbye.[/]")
                 break
 
@@ -89,13 +92,13 @@ class BrixCLI:
         cmd = text.split()[0].lower()
 
         if cmd == "/quit" or cmd == "/exit":
+            self._memory.save_session()
             print("Goodbye.")
             sys.exit(0)
 
         if cmd == "/clear":
-            self._memory.clear()
-            self._memory.save()
-            print("History cleared.\n")
+            sid = self._memory.create_session()
+            print(f"New session: {sid[:8]}...")
             return True
 
         if cmd == "/model":
@@ -104,14 +107,71 @@ class BrixCLI:
             return True
 
         if cmd == "/history":
-            history = self._memory.get_history()
-            if not history:
-                print("No history yet.")
+            sessions = self._memory.list_sessions()
+            if sessions:
+                sid = sessions[0]["id"]
+                msgs = self._memory.load_session(sid)
+                if not msgs:
+                    print("No history yet.")
+                else:
+                    for msg in msgs:
+                        role = msg.get("role", "?")
+                        content = msg.get("content", "")
+                        print(f"  [{role}] {content[:80]}")
             else:
-                for msg in history:
-                    role = msg.get("role", "?")
-                    content = msg.get("content", "")
-                    print(f"  [{role}] {content[:80]}")
+                print("No history yet.")
+            return True
+
+        if cmd == "/sessions":
+            sessions = self._memory.list_sessions()
+            if not sessions:
+                print("No sessions yet.")
+            else:
+                for s in sessions:
+                    sid = s.get("id", "?")[:8]
+                    count = s.get("message_count", 0)
+                    preview = s.get("preview", "")[:60]
+                    updated = s.get("updated", "")[:19]
+                    print(f"  {sid}...  {count} msgs  {updated}  {preview}")
+            return True
+
+        if cmd == "/resume":
+            parts = text.split()
+            if len(parts) < 2:
+                print("Usage: /resume <session_id>")
+                return True
+            prefix = parts[1]
+            # Find matching session
+            sessions = self._memory.list_sessions()
+            matches = [s for s in sessions if s["id"].startswith(prefix)]
+            if not matches:
+                print(f"No session matching: {prefix}")
+                return True
+            if len(matches) > 1:
+                print(f"Ambiguous prefix, {len(matches)} matches:")
+                for s in matches:
+                    print(f"  {s['id'][:8]}...")
+                return True
+            sid = matches[0]["id"]
+            try:
+                msgs = self._memory.resume_session(sid)
+                print(f"Resumed session {sid[:8]}... ({len(msgs)} messages)")
+            except FileNotFoundError:
+                print(f"Session not found: {sid[:8]}...")
+            return True
+
+        if cmd == "/soul":
+            if self._memory.soul_exists():
+                print(self._memory.load_soul())
+            else:
+                print("No soul.md yet. Start a conversation to create it.")
+            return True
+
+        if cmd == "/user":
+            if self._memory.user_memory_exists():
+                print(self._memory.load_user_memory())
+            else:
+                print("No user.md yet. Start a conversation to create it.")
             return True
 
         if cmd == "/log":
@@ -156,17 +216,16 @@ class BrixCLI:
         hooks = HookRegistry()
         hooks.bind_log(log)
 
-        history = self._memory.get_history()
-        context_window = self._strategy.get_context_window(history)
-        hooks.fire("memory", msgs=len(history),
-                 window=len(context_window),
-                 chars=sum(len(m.get("content", "")) for m in context_window),
-                 context_window=[{"role": m.get("role"), "content": m.get("content", "")}
-                                 for m in context_window])
+        dynamic_ctx = self._build_dynamic_context()
+        system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
+        context_messages = self._memory.get_context_messages(system_prompt)
+
+        hooks.fire("memory", msgs=len(context_messages),
+                 chars=sum(len(m.get("content", "")) for m in context_messages))
 
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
-            user_input, context_window, self._llm_client,
+            user_input, context_messages, self._llm_client,
             default_model, hooks=hooks,
         )
         complexity = evaluate_complexity(user_input)
@@ -177,7 +236,7 @@ class BrixCLI:
         log.set_model(model)
 
         context = OrchestratorContext(
-            history=list(context_window),
+            history=list(context_messages),
             tool_runner=self._tool_runner,
             llm_client=self._llm_client,
             model=model,
@@ -194,21 +253,14 @@ class BrixCLI:
                 pass
             raise
 
-        # Check for orchestrator-internal errors (returned as strings)
         if response.startswith("Error"):
             log.set_error(response)
 
-        # Persist conversation (skip error responses to avoid polluting context)
-        saved_count = 0
-        is_error = response.startswith("Error")
-        if self._strategy.should_save({"role": "user", "content": user_input}):
-            self._memory.add_message("user", user_input)
-            saved_count += 1
-        if not is_error and self._strategy.should_save({"role": "assistant", "content": response}):
+        self._memory.add_message("user", user_input)
+        if not response.startswith("Error"):
             self._memory.add_message("assistant", response)
-            saved_count += 1
-        self._memory.save()
-        hooks.fire("persist", saved=saved_count)
+        self._memory.save_session()
+        hooks.fire("persist", saved=2 if not response.startswith("Error") else 1)
 
         try:
             flush_log(log)
@@ -225,20 +277,18 @@ class BrixCLI:
         hooks = HookRegistry()
         hooks.bind_log(log)
 
-        # Memory stage (started automatically by StageIndicator constructor)
-        history = self._memory.get_history()
-        context_window = self._strategy.get_context_window(history)
-        hooks.fire("memory", msgs=len(history),
-                   window=len(context_window),
-                   chars=sum(len(m.get("content", "")) for m in context_window),
-                   context_window=[{"role": m.get("role"), "content": m.get("content", "")}
-                                   for m in context_window])
+        # Memory stage — build system prompt and context via MemoryProvider
+        dynamic_ctx = self._build_dynamic_context()
+        system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
+        context_messages = self._memory.get_context_messages(system_prompt)
+        hooks.fire("memory", msgs=len(context_messages),
+                   chars=sum(len(m.get("content", "")) for m in context_messages))
 
         # Intent stage (LLM call — takes time)
         indicator.update("Intent")
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
-            user_input, context_window, self._llm_client,
+            user_input, context_messages, self._llm_client,
             default_model, hooks=hooks,
         )
 
@@ -253,7 +303,7 @@ class BrixCLI:
         log.set_model(model)
 
         context = OrchestratorContext(
-            history=list(context_window),
+            history=list(context_messages),
             tool_runner=self._tool_runner,
             llm_client=self._llm_client,
             model=model,
@@ -329,15 +379,11 @@ class BrixCLI:
             log.set_error(response)
 
         # Persist conversation
-        saved_count = 0
-        if self._strategy.should_save({"role": "user", "content": user_input}):
-            self._memory.add_message("user", user_input)
-            saved_count += 1
-        if not has_error and self._strategy.should_save({"role": "assistant", "content": response}):
+        self._memory.add_message("user", user_input)
+        if not has_error:
             self._memory.add_message("assistant", response)
-            saved_count += 1
-        self._memory.save()
-        hooks.fire("persist", saved=saved_count)
+        self._memory.save_session()
+        hooks.fire("persist", saved=2 if not has_error else 1)
 
         try:
             flush_log(log)
@@ -353,6 +399,8 @@ class BrixCLI:
         self._tool_runner.register(CalculatorTool())
         self._tool_runner.register(WeatherTool())
         self._tool_runner.register(FileReadTool())
+        self._tool_runner.register(FileWriteTool())
+        self._tool_runner.register(FileEditTool())
 
     def _build_orchestrator(self):
         """Build the orchestrator engine based on config."""
@@ -364,3 +412,17 @@ class BrixCLI:
             except ModuleNotFoundError:
                 print("Warning: langgraph not installed, falling back to state_machine engine")
         return StateMachineOrchestrator()
+
+    @staticmethod
+    def _build_dynamic_context() -> str:
+        """构建动态上下文 — 日期、平台等运行时信息。"""
+        import platform
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        parts = [
+            f"Current date/time: {now}",
+            f"Platform: {platform.system()} {platform.release()}",
+            f"Working directory: {Path.cwd()}",
+        ]
+        return "\n".join(parts)

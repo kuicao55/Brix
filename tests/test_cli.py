@@ -14,6 +14,26 @@ import pytest
 from cli.display import format_response
 
 
+def _make_mock_memory():
+    """创建标准 mock MemoryProvider，供 CLI 测试使用。"""
+    mock_mem = MagicMock()
+    mock_mem.get_context_messages.return_value = [
+        {"role": "system", "content": "You are a helpful assistant."},
+    ]
+    mock_mem.build_system_prompt.return_value = "You are a helpful assistant."
+    mock_mem.save_session.return_value = None
+    mock_mem.add_message.return_value = None
+    mock_mem.create_session.return_value = "test-session-uuid"
+    mock_mem.list_sessions.return_value = []
+    mock_mem.load_session.return_value = []
+    mock_mem.resume_session.return_value = []
+    mock_mem.soul_exists.return_value = False
+    mock_mem.user_memory_exists.return_value = False
+    mock_mem.load_soul.return_value = ""
+    mock_mem.load_user_memory.return_value = ""
+    return mock_mem
+
+
 # ------------------------------------------------------------------
 # Existing display tests (passthrough — unchanged)
 # ------------------------------------------------------------------
@@ -318,12 +338,14 @@ async def test_spinner_stops_on_tool_only_stream():
         yield {"type": "tool_result", "name": "calculator", "ms": 42}
 
     mock_indicator = MagicMock(spec=StageIndicator)
+    mock_mem = _make_mock_memory()
 
     with patch("cli.app.StageIndicator", return_value=mock_indicator), \
          patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
+         patch("cli.app.create_memory_provider", return_value=mock_mem), \
          patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="tool_use"), \
          patch("cli.app.evaluate_complexity", return_value="low"), \
          patch("cli.app.select_model", return_value="test-model"):
@@ -354,12 +376,14 @@ async def test_spinner_stops_on_empty_stream():
         yield  # make it an async generator
 
     mock_indicator = MagicMock(spec=StageIndicator)
+    mock_mem = _make_mock_memory()
 
     with patch("cli.app.StageIndicator", return_value=mock_indicator), \
          patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
+         patch("cli.app.create_memory_provider", return_value=mock_mem), \
          patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="general"), \
          patch("cli.app.evaluate_complexity", return_value="low"), \
          patch("cli.app.select_model", return_value="test-model"):
@@ -384,10 +408,13 @@ async def test_styled_prompt_used():
     from cli.app import BrixCLI
     from prompt_toolkit import HTML
 
+    mock_mem = _make_mock_memory()
+
     with patch("cli.app.load_config", return_value={
         "routing": {"default_model": "test-model"},
         "memory": {"max_context_tokens": 8000},
-    }):
+    }), \
+         patch("cli.app.create_memory_provider", return_value=mock_mem):
         cli = BrixCLI()
 
     session = MagicMock()
@@ -415,12 +442,14 @@ async def test_stage_indicator_called_during_streaming():
         yield {"type": "text_delta", "text": "Hi"}
 
     mock_indicator = MagicMock(spec=StageIndicator)
+    mock_mem = _make_mock_memory()
 
     with patch("cli.app.StageIndicator", return_value=mock_indicator), \
          patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
+         patch("cli.app.create_memory_provider", return_value=mock_mem), \
          patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="chat"), \
          patch("cli.app.evaluate_complexity", return_value="low"), \
          patch("cli.app.select_model", return_value="test-model"):
