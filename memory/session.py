@@ -191,6 +191,11 @@ class SessionManager:
         if base_count is not None:
             # 并发安全：在 session 文件锁下读-合并-写
             def _merge_and_write() -> None:
+                # 清空操作（messages 为空）直接写入，不合并
+                if not messages:
+                    self._atomic_write_json(session_path, messages)
+                    return
+
                 if session_path.exists():
                     try:
                         existing = json.loads(session_path.read_text(encoding="utf-8"))
