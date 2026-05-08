@@ -879,3 +879,45 @@ class TestLoadIndexValidatesElementShape:
         index = sm._load_index()
         assert len(index) == 1
         assert index[0]["id"] == sid
+
+
+# ─── Task 2: MemoryStorage 重构为 session-based ─────────────────────────
+
+class TestMemoryStorageRefactored:
+    """MemoryStorage 重构后测试。"""
+
+    def test_storage_save_and_load_via_session(self, tmp_path):
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+        storage.add_message("user", "hello")
+        storage.add_message("assistant", "hi there")
+        storage.save()
+        # Reload via SessionManager
+        messages = sm.load_session(sid)
+        assert len(messages) == 2
+        assert messages[0]["role"] == "user"
+        assert messages[1]["content"] == "hi there"
+
+    def test_storage_get_history(self, tmp_path):
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+        for i in range(5):
+            storage.add_message("user", f"msg-{i}")
+        assert len(storage.get_history()) == 5
+        assert len(storage.get_history(limit=3)) == 3
+
+    def test_storage_clear(self, tmp_path):
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+        storage.add_message("user", "hello")
+        storage.clear()
+        assert len(storage.get_history()) == 0

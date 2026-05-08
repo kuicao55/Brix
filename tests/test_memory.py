@@ -7,33 +7,34 @@ Step 4 (GREEN): all should pass after implementation.
 
 import json
 import pytest
+from memory.session import SessionManager
 from memory.storage import MemoryStorage
 from memory.strategy import MemoryStrategy
 
 
 def test_memory_storage_save_and_load(tmp_path):
-    path = tmp_path / "memory.json"
-    storage = MemoryStorage(path=str(path))
+    sm = SessionManager(tmp_path)
+    sid = sm.create_session()
+    storage = MemoryStorage(session_manager=sm, session_id=sid)
     storage.add_message("user", "hello")
     storage.add_message("assistant", "hi there")
     storage.save()
 
-    storage2 = MemoryStorage(path=str(path))
-    history = storage2.get_history()
-    assert len(history) == 2
-    assert history[0]["role"] == "user"
-    assert history[1]["content"] == "hi there"
+    # Reload via SessionManager
+    messages = sm.load_session(sid)
+    assert len(messages) == 2
+    assert messages[0]["role"] == "user"
+    assert messages[1]["content"] == "hi there"
 
 
 def test_memory_storage_limit(tmp_path):
-    path = tmp_path / "memory.json"
-    storage = MemoryStorage(path=str(path))
+    sm = SessionManager(tmp_path)
+    sid = sm.create_session()
+    storage = MemoryStorage(session_manager=sm, session_id=sid)
     for i in range(10):
         storage.add_message("user", f"msg {i}")
-    storage.save()
 
-    storage2 = MemoryStorage(path=str(path))
-    history = storage2.get_history(limit=3)
+    history = storage.get_history(limit=3)
     assert len(history) == 3
 
 
@@ -104,24 +105,25 @@ def test_graceful_fallback_without_tiktoken():
 
 def test_clear_persists_after_restart(tmp_path):
     """Cleared state should survive creating a new MemoryStorage instance."""
-    path = tmp_path / "memory.json"
+    sm = SessionManager(tmp_path)
+    sid = sm.create_session()
     # First instance: add messages and save
-    storage = MemoryStorage(path=str(path))
+    storage = MemoryStorage(session_manager=sm, session_id=sid)
     storage.add_message("user", "hello")
     storage.add_message("assistant", "hi there")
     storage.save()
 
-    # Verify messages exist in a fresh instance
-    storage2 = MemoryStorage(path=str(path))
-    assert len(storage2.get_history()) == 2
+    # Verify messages exist on disk via SessionManager
+    messages = sm.load_session(sid)
+    assert len(messages) == 2
 
     # Clear and save (simulating /clear command)
-    storage2.clear()
-    storage2.save()
+    storage.clear()
+    storage.save()
 
-    # "Restart" — new instance should see empty history
-    storage3 = MemoryStorage(path=str(path))
-    assert len(storage3.get_history()) == 0
+    # "Restart" — reload from SessionManager should see empty history
+    messages = sm.load_session(sid)
+    assert len(messages) == 0
 
 
 # --- Quality Review edge cases ---
