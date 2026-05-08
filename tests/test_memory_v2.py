@@ -1378,3 +1378,30 @@ class TestConcurrentResume:
         assert "secret" not in contents
         # late-reply 可以保留（它是新消息），但旧的 secret 不应恢复
         assert "late-reply" in contents
+
+    def test_stale_writer_repeated_save_does_not_wipe(self, tmp_path):
+        """stale writer 的多次 save 不应清空已合并的消息。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [
+            {"role": "user", "content": "secret", "timestamp": "2026-05-08T10:00:00Z"},
+        ])
+
+        store_a = MemoryStorage(sm, sid)
+        store_b = MemoryStorage(sm, sid)
+
+        store_a.clear()
+        store_a.save()
+
+        store_b.add_message("assistant", "late-reply")
+        store_b.save()
+        # 第二次 save — 之前会因 base_count 偏离导致数据丢失
+        store_b.save()
+
+        final = sm.load_session(sid)
+        assert len(final) >= 1
+        contents = [m["content"] for m in final]
+        assert "late-reply" in contents

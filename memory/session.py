@@ -55,33 +55,42 @@ class SessionManager:
             raise
 
     def _load_index(self) -> list[dict[str, Any]]:
-        """从磁盘加载 sessions 索引。损坏时从 session 文件重建。
+        """从磁盘加载 sessions 索引。损坏时从 session 文件重建并持久化。
 
         支持两种格式：
         - 格式 A（标准）：`[ {...}, {...} ]`
         - 格式 B（spec 文档）：`{ "sessions": [ {...}, {...} ] }`
         """
         if not self._index_path.exists():
-            return self._rebuild_index()
+            return self._persist_rebuild()
         try:
             raw = json.loads(self._index_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            return self._rebuild_index()
+            return self._persist_rebuild()
         # 格式 B：dict 包裹
         if isinstance(raw, dict) and "sessions" in raw:
             sessions = raw["sessions"]
             if isinstance(sessions, list):
                 raw = sessions
             else:
-                return self._rebuild_index()
+                return self._persist_rebuild()
         # 格式 A：直接是 list
         if not isinstance(raw, list):
-            return self._rebuild_index()
+            return self._persist_rebuild()
         # 验证每个元素是 dict 且包含 "id" 键
         for entry in raw:
             if not isinstance(entry, dict) or "id" not in entry:
-                return self._rebuild_index()
+                return self._persist_rebuild()
         return raw
+
+    def _persist_rebuild(self) -> list[dict[str, Any]]:
+        """重建索引并持久化到磁盘。"""
+        rebuilt = self._rebuild_index()
+        try:
+            self._save_index(rebuilt)
+        except OSError:
+            pass  # 只读文件系统等情况，仅使用内存
+        return rebuilt
 
     def _rebuild_index(self) -> list[dict[str, Any]]:
         """从 sessions 目录中的 session-*.json 文件重建索引。"""
@@ -143,6 +152,7 @@ class SessionManager:
 
     def _with_session_lock(self, session_id: str, fn):
         """在 session 文件锁保护下执行读-改-写操作。"""
+        _validate_session_id(session_id)
         self._ensure_dirs()
         lock_path = self._sessions_dir / f".session-{session_id}.lock"
         with open(lock_path, "w") as lock_f:
@@ -174,8 +184,8 @@ class SessionManager:
         session_id: str,
         messages: list[dict[str, Any]],
         base_count: int | None = None,
-    ) -> None:
-        """保存会话消息并更新索引。
+    ) -> int:
+        """保存会话消息并更新索引。返回合并后的实际消息数量。
 
         Args:
             session_id: 会话 UUID。
@@ -184,6 +194,9 @@ class SessionManager:
                 在 session 文件锁下重新读取磁盘状态，将本次新增的消息
                 （messages[base_count:]）追加到磁盘最新状态，避免并发
                 resume 互相覆盖。
+
+        Returns:
+            合并后写入磁盘的实际消息数量，供调用方更新 base_count。
         """
         _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
@@ -265,6 +278,7 @@ class SessionManager:
                 })
             self._save_index(index)
         self._with_index_lock(_update_index)
+        return len(final_messages_ref[0])
 
     def load_session(self, session_id: str) -> list[dict[str, Any]]:
         """加载指定会话的消息列表，不存在则抛出 FileNotFoundError。
