@@ -969,3 +969,58 @@ class TestMemoryStorageRefactored:
         sid = sm.create_session()
         storage = MemoryStorage(session_manager=sm, session_id=sid)
         assert storage.get_history() == []
+
+
+# ─── Task 3: MemoryStrategy.build_system_prompt ─────────────────────────
+
+class TestMemoryStrategyBuildPrompt:
+    """MemoryStrategy.build_system_prompt 测试。"""
+
+    def _make_strategy(self, tmp_path, max_tokens=8000):
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        from memory.strategy import MemoryStrategy
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        return MemoryStrategy(soul_manager=soul, user_manager=user, max_tokens=max_tokens)
+
+    def test_onboarding_when_soul_missing(self, tmp_path):
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "Onboarding" in prompt or "soul.md" in prompt
+
+    def test_onboarding_when_user_missing(self, tmp_path):
+        from memory.soul import SoulManager
+        soul = SoulManager(tmp_path)
+        soul.save("# Soul\nI am Brix.")
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "user.md" in prompt
+
+    def test_no_onboarding_when_both_exist(self, tmp_path):
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        soul.save("# Soul")
+        user.save("# User")
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "Onboarding" not in prompt
+        assert "Memory Management" in prompt
+
+    def test_memory_management_instructions(self, tmp_path):
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        soul.save("# Soul")
+        user.save("# User")
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "file_edit" in prompt or "update" in prompt.lower()
+
+    def test_dynamic_context_included(self, tmp_path):
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt(dynamic_context="当前日期: 2026-05-08")
+        assert "2026-05-08" in prompt

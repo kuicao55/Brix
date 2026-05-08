@@ -39,13 +39,17 @@ def test_memory_storage_limit(tmp_path):
     assert len(history) == 3
 
 
-def test_memory_strategy_should_save():
-    strategy = MemoryStrategy()
+def test_memory_strategy_should_save(tmp_path):
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path))
     assert strategy.should_save({"role": "user", "content": "hello"}) is True
 
 
-def test_memory_strategy_context_window():
-    strategy = MemoryStrategy()
+def test_memory_strategy_context_window(tmp_path):
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path))
     history = [{"role": "user", "content": f"message {i}"} for i in range(100)]
     # Each "message N" is ~3 tokens; 100 messages = ~300 tokens
     # Use limit of 100 to force truncation
@@ -54,9 +58,11 @@ def test_memory_strategy_context_window():
     assert len(window) > 0
 
 
-def test_token_counting_truncation():
+def test_token_counting_truncation(tmp_path):
     """MemoryStrategy should truncate by tokens, not characters."""
-    strategy = MemoryStrategy(max_tokens=50)  # very small limit
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path), max_tokens=50)  # very small limit
 
     # Create messages that would fit in chars but not tokens
     # A 50-char message is roughly 12-15 tokens
@@ -72,9 +78,11 @@ def test_token_counting_truncation():
     assert len(window) < len(history)
 
 
-def test_system_message_preservation():
+def test_system_message_preservation(tmp_path):
     """System messages should always be preserved."""
-    strategy = MemoryStrategy(max_tokens=10)
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path), max_tokens=10)
 
     history = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -86,9 +94,11 @@ def test_system_message_preservation():
     assert any(m.get("role") == "system" for m in window)
 
 
-def test_graceful_fallback_without_tiktoken():
+def test_graceful_fallback_without_tiktoken(tmp_path):
     """Should fall back to char-based counting if tiktoken fails."""
-    strategy = MemoryStrategy(max_tokens=4000)
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path), max_tokens=4000)
 
     # Monkey-patch to simulate tiktoken failure
     original_encoder = strategy._encoder
@@ -130,24 +140,30 @@ def test_clear_persists_after_restart(tmp_path):
 # --- Quality Review edge cases ---
 
 
-def test_count_tokens_none_content():
+def test_count_tokens_none_content(tmp_path):
     """_count_tokens should return 0 for None or empty content, not crash."""
-    strategy = MemoryStrategy()
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path))
     assert strategy._count_tokens("") == 0
     assert strategy._count_tokens(None) == 0
 
 
-def test_count_tokens_none_content_fallback():
+def test_count_tokens_none_content_fallback(tmp_path):
     """_count_tokens with char-based fallback should also handle None/empty."""
-    strategy = MemoryStrategy()
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path))
     strategy._encoder = None  # force char-based fallback
     assert strategy._count_tokens("") == 0
     assert strategy._count_tokens(None) == 0
 
 
-def test_context_window_none_content_messages():
+def test_context_window_none_content_messages(tmp_path):
     """Messages with content=None (e.g. tool-call messages) should not crash."""
-    strategy = MemoryStrategy(max_tokens=1000)
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path), max_tokens=1000)
     history = [
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "Hello"},
@@ -158,9 +174,11 @@ def test_context_window_none_content_messages():
     assert len(window) == 4  # all fit within 1000 tokens
 
 
-def test_context_window_system_exceeds_budget():
+def test_context_window_system_exceeds_budget(tmp_path):
     """If system messages alone exceed the token limit, truncate to fit."""
-    strategy = MemoryStrategy(max_tokens=5)
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path), max_tokens=5)
     long_system = "You are a very helpful assistant. " * 50  # well over 5 tokens
     history = [
         {"role": "system", "content": long_system},
@@ -175,9 +193,11 @@ def test_context_window_system_exceeds_budget():
     assert len(window[0]["content"]) < len(long_system)
 
 
-def test_context_window_system_exceeds_budget_exact_boundary():
+def test_context_window_system_exceeds_budget_exact_boundary(tmp_path):
     """Edge case: system messages exactly at the budget boundary."""
-    strategy = MemoryStrategy(max_tokens=10)
+    from memory.soul import SoulManager
+    from memory.user import UserMemoryManager
+    strategy = MemoryStrategy(soul_manager=SoulManager(tmp_path), user_manager=UserMemoryManager(tmp_path), max_tokens=10)
     # System message that uses all 10 tokens
     history = [
         {"role": "system", "content": "abcdefghij"},  # ~2-3 tokens with tiktoken
