@@ -188,6 +188,9 @@ class SessionManager:
         _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
 
+        # 在 session 锁内读取最终状态，供索引更新使用
+        final_messages_ref: list[dict[str, Any]] = [messages]
+
         def _write_session() -> None:
             if base_count is not None and messages:
                 # 并发安全合并：读取磁盘最新状态，追加本次新增消息
@@ -205,10 +208,18 @@ class SessionManager:
                 disk_has_new = len(existing) > base_count
 
                 if disk_has_new:
+                    # 其他实例写入了新消息，合并
                     merged = existing + new_messages
+                elif len(existing) < base_count:
+                    # 磁盘消息少于加载时 — 其他实例已清空或截断。
+                    # 不恢复旧消息，只写入本次新增部分。
+                    merged = new_messages if new_messages else []
                 else:
+                    # 无并发写入，直接使用当前消息
                     merged = messages
+
                 self._atomic_write_json(session_path, merged)
+                final_messages_ref[0] = merged
             else:
                 # 直接写入（向后兼容 / 清空操作 / 首次保存）
                 self._atomic_write_json(session_path, messages)
@@ -216,17 +227,8 @@ class SessionManager:
         self._with_session_lock(session_id, _write_session)
 
         def _update_index() -> None:
-            # 重新读取实际写入的消息用于索引更新
-            if base_count is not None:
-                try:
-                    final_messages = json.loads(session_path.read_text(encoding="utf-8"))
-                    if not isinstance(final_messages, list):
-                        final_messages = messages
-                except (json.JSONDecodeError, OSError):
-                    final_messages = messages
-            else:
-                final_messages = messages
-
+            # 使用 session 锁内捕获的最终消息列表（避免重新读取产生竞态）
+            final_messages = final_messages_ref[0]
             index = self._load_index()
             now = datetime.now(timezone.utc).isoformat()
             preview = ""

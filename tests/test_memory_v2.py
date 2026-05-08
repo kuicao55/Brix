@@ -1349,3 +1349,32 @@ class TestConcurrentResume:
         final = sm.load_session(sid)
         assert len(final) == 1
         assert final[0]["content"] == "fresh"
+
+    def test_stale_writer_does_not_resurrect_cleared_history(self, tmp_path):
+        """clear 后，旧实例的 save 不应恢复已清空的消息。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [
+            {"role": "user", "content": "secret", "timestamp": "2026-05-08T10:00:00Z"},
+        ])
+
+        # 两个实例同时 resume
+        store_a = MemoryStorage(sm, sid)
+        store_b = MemoryStorage(sm, sid)
+
+        # 实例 A 清空并保存
+        store_a.clear()
+        store_a.save()
+
+        # 实例 B（旧的）尝试保存 — 不应恢复 secret
+        store_b.add_message("assistant", "late-reply")
+        store_b.save()
+
+        final = sm.load_session(sid)
+        contents = [m["content"] for m in final]
+        assert "secret" not in contents
+        # late-reply 可以保留（它是新消息），但旧的 secret 不应恢复
+        assert "late-reply" in contents
