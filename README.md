@@ -8,9 +8,11 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 
 - **Multi-Provider LLM** — Unified interface for OpenAI-compatible and Anthropic-compatible APIs
 - **Dual Orchestrator** — Pure Python state machine + LangGraph engine, switchable via config
+- **Streaming Output** — Real-time token-by-token rendering with safe-boundary Markdown detection
 - **Tool Calling** — Built-in tools: calculator, weather (mock), file reader
 - **Persistent Memory** — Crash-safe JSON storage with atomic writes
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
+- **Rich Terminal UI** — Animated spinner, tool execution panels, styled banner, custom theme, inline response markers
 - **Extensible Config** — Add new providers and models by editing a single YAML file
 - **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
 - **Hook System** — Event-driven architecture with `HookRegistry`; core modules fire events via `hooks.fire()`, FlowLog acts as default listener, easily extensible with custom hooks
@@ -401,6 +403,14 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  hooks/registry.py (HookRegistry + HookEvent)        |
 |  Core modules fire events → FlowLog auto-receives    |
 +-----------------------------------------------------+
+|                 Terminal UI Layer                     |
+|  cli/stream_renderer.py (Markdown stream rendering)  |
+|  cli/spinner.py (Braille animation)                  |
+|  cli/stage_indicator.py (unified loading spinner)    |
+|  cli/tool_display.py (tool execution panels)         |
+|  cli/theme.py (Rich theme)                           |
+|  cli/banner.py (startup banner)                      |
++-----------------------------------------------------+
 ```
 
 ### Data Flow
@@ -471,8 +481,14 @@ brix/
 |   +-- registry.py                 # HookRegistry + HookEvent
 |   +-- __init__.py                 # Re-exports
 +-- cli/
-|   +-- app.py                      # REPL interface
+|   +-- app.py                      # REPL interface (streaming pipeline)
 |   +-- display.py                  # Output formatting
+|   +-- stream_renderer.py          # Safe-boundary Markdown stream renderer
+|   +-- spinner.py                  # Braille dot animation spinner
+|   +-- stage_indicator.py          # Unified loading spinner (update in-place)
+|   +-- tool_display.py             # Tool execution status panels
+|   +-- theme.py                    # Rich theme (markdown, tool, spinner styles)
+|   +-- banner.py                   # Startup ASCII banner
 +-- tests/
     +-- test_config.py              # Config layer tests
     +-- test_infra.py               # Infra layer tests
@@ -512,6 +528,7 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 | Language | Python 3.11+ |
 | Async | asyncio |
 | REPL | prompt_toolkit |
+| Terminal UI | Rich (Live, Markdown, Panel, Theme) |
 | Config | PyYAML |
 | HTTP | httpx |
 | LLM (OpenAI) | openai SDK |

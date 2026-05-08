@@ -8,11 +8,14 @@
 
 - **多供应商 LLM** — 统一接口，同时支持 OpenAI 兼容和 Anthropic 兼容 API
 - **双编排引擎** — 纯 Python 状态机 + LangGraph 引擎，配置切换
+- **流式输出** — 逐 token 实时渲染，安全边界 Markdown 检测
 - **工具调用** — 内置工具：计算器、天气查询（模拟）、文件读取
 - **持久化记忆** — 原子写入的 JSON 存储，崩溃安全
 - **智能路由** — 意图分类 + 复杂度评估，自动选择模型
+- **Rich 终端 UI** — 动画 Spinner、工具执行面板、启动 Banner、自定义主题、内联响应标记
 - **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
 - **流程日志** — 每轮对话自动记录完整数据流，便于调试和审计
+- **Hook 系统** — 事件驱动架构，核心模块通过 `hooks.fire()` 触发事件，FlowLog 作为默认监听者
 
 ---
 
@@ -357,6 +360,18 @@ pip install langgraph
 |  log/flow.py (流程日志收集器)                         |
 |  log/writer.py (JSONL 文件读写)                       |
 +-----------------------------------------------------+
+|                   Hook 层                             |
+|  hooks/registry.py (HookRegistry + HookEvent)        |
+|  核心模块触发事件 → FlowLog 自动接收                  |
++-----------------------------------------------------+
+|                  终端 UI 层                           |
+|  cli/stream_renderer.py (Markdown 流式渲染)           |
+|  cli/spinner.py (Braille 点动画)                      |
+|  cli/stage_indicator.py (统一加载 Spinner)             |
+|  cli/tool_display.py (工具执行面板)                    |
+|  cli/theme.py (Rich 主题)                             |
+|  cli/banner.py (启动 Banner)                          |
++-----------------------------------------------------+
 ```
 
 ### 数据流
@@ -423,9 +438,18 @@ brix/
 +-- log/
 |   +-- flow.py                     # FlowLog 流程日志收集器
 |   +-- writer.py                   # JSONL 文件读写
++-- hooks/
+|   +-- registry.py                 # HookRegistry + HookEvent
+|   +-- __init__.py                 # Re-exports
 +-- cli/
-|   +-- app.py                      # REPL 界面
+|   +-- app.py                      # REPL 界面（流式管线）
 |   +-- display.py                  # 输出格式化
+|   +-- stream_renderer.py          # 安全边界 Markdown 流式渲染器
+|   +-- spinner.py                  # Braille 点动画 Spinner
+|   +-- stage_indicator.py          # 统一加载 Spinner (原地更新)
+|   +-- tool_display.py             # 工具执行状态面板
+|   +-- theme.py                    # Rich 主题 (markdown, tool, spinner 样式)
+|   +-- banner.py                   # 启动 ASCII Banner
 +-- tests/
     +-- test_config.py              # 配置层测试
     +-- test_infra.py               # 基础设施层测试
@@ -465,6 +489,7 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 | 语言 | Python 3.11+ |
 | 异步 | asyncio |
 | REPL | prompt_toolkit |
+| 终端 UI | Rich (Live, Markdown, Panel, Theme) |
 | 配置 | PyYAML |
 | HTTP | httpx |
 | LLM (OpenAI) | openai SDK |
