@@ -393,12 +393,11 @@ async def test_stage_indicator_called_during_streaming():
 
         await cli._process_streaming("hello")
 
-    # stage_done should have been called for memory, intent, complexity, router
-    done_calls = [c for c in mock_indicator.stage_done.call_args_list]
-    stage_names = [c[0][0] for c in done_calls]
-    assert "Memory" in stage_names
-    assert "Intent" in stage_names
-    assert "Route" in stage_names
+    # update() should have been called for intent, route, planning
+    update_calls = [c[0][0] for c in mock_indicator.update.call_args_list]
+    assert "Intent" in update_calls
+    assert "Route" in update_calls
+    assert "Planning" in update_calls
 
 
 # ------------------------------------------------------------------

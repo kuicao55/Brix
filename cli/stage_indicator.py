@@ -1,44 +1,37 @@
-"""Compact pipeline stage progress display."""
+"""Unified loading spinner — single animated line, updates in-place."""
 
 from __future__ import annotations
 
 from rich.console import Console
-from rich.markup import escape as markup_escape
 
 from cli.spinner import Spinner
 
-STAGE_ICON = "\u22b9"
+STAGE_LABELS = {
+    "Memory": "Thinking...",
+    "Intent": "Thinking...",
+    "Complexity": "Thinking...",
+    "Route": "Routing...",
+    "Planning": "Planning...",
+}
 
 
 class StageIndicator:
-    """Prints compact one-line summaries for each pipeline stage."""
+    """Single animated spinner line that updates label as stages transition.
+
+    Unlike the old multi-line approach, this shows ONE spinner line
+    (like Claude Code) that stays in-place and updates its text.
+    The line disappears when finish() is called (transient Live).
+    """
 
     def __init__(self, console: Console) -> None:
-        self.console = console
-        self._active_spinner: Spinner | None = None
+        self._spinner = Spinner(console, label="Thinking...")
+        self._spinner.start()
 
-    def _stop_spinner(self) -> None:
-        """Silently stop the active spinner without printing any output."""
-        if self._active_spinner is not None:
-            self._active_spinner.stop()
-            self._active_spinner = None
-
-    def stage_done(self, name: str, elapsed: float, detail: str = "") -> None:
-        """Print a completed stage line with icon, name, time, and optional detail."""
-        self._stop_spinner()
-        parts = ["  ", STAGE_ICON, " ", markup_escape(name), "  ", "{:.1f}s".format(elapsed)]
-        if detail:
-            parts.extend(["  ", markup_escape(detail)])
-        self.console.print("".join(parts), highlight=False)
-
-    def stage_active(self, name: str) -> Spinner:
-        """Start a Spinner for the current active stage and return it."""
-        self._stop_spinner()
-        spinner = Spinner(self.console, label=name)
-        spinner.start()
-        self._active_spinner = spinner
-        return spinner
+    def update(self, stage: str) -> None:
+        """Update spinner label for the current pipeline stage."""
+        label = STAGE_LABELS.get(stage, "Working...")
+        self._spinner.update_label(label)
 
     def finish(self) -> None:
-        """Stop any active spinner."""
-        self._stop_spinner()
+        """Stop spinner silently — line disappears (transient Live)."""
+        self._spinner.stop()

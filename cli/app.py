@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -214,14 +213,14 @@ class BrixCLI:
         return response
 
     async def _process_streaming(self, user_input: str) -> None:
-        """Stream orchestrator output with stage indicator and markdown rendering."""
-        t0 = time.time()
+        """Stream orchestrator output with unified spinner and markdown rendering."""
         indicator = StageIndicator(self._console)
 
         log = FlowLog(user_input)
         hooks = HookRegistry()
         hooks.bind_log(log)
 
+        # Memory stage
         history = self._memory.get_history()
         context_window = self._strategy.get_context_window(history)
         hooks.fire("memory", msgs=len(history),
@@ -229,20 +228,19 @@ class BrixCLI:
                    chars=sum(len(m.get("content", "")) for m in context_window),
                    context_window=[{"role": m.get("role"), "content": m.get("content", "")}
                                    for m in context_window])
-        indicator.stage_done("Memory", time.time() - t0)
 
+        # Intent stage
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
             user_input, context_window, self._llm_client,
             default_model, hooks=hooks,
         )
-        indicator.stage_done("Intent", time.time() - t0, detail=intent)
+        indicator.update("Intent")
 
+        # Complexity + Route stages
         complexity = evaluate_complexity(user_input)
-        indicator.stage_done("Complexity", time.time() - t0)
-
         model = select_model(intent, complexity, self._config)
-        indicator.stage_done("Route", 0.0, detail=model)
+        indicator.update("Route")
 
         hooks.fire("complexity", result=complexity)
         hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
@@ -256,8 +254,8 @@ class BrixCLI:
             hooks=hooks,
         )
 
-        # Show planning stage while waiting for first token
-        indicator.stage_active("Planning")
+        # Planning stage
+        indicator.update("Planning")
 
         renderer = None
         content_parts = []
@@ -330,7 +328,6 @@ class BrixCLI:
             saved_count += 1
         self._memory.save()
         hooks.fire("persist", saved=saved_count)
-        indicator.stage_done("Saved", time.time() - t0)
 
         try:
             flush_log(log)
