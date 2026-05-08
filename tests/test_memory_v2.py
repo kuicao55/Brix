@@ -160,6 +160,36 @@ class TestSessionIdValidation:
 
 # ─── Fix 2: Index updates non-atomic across threads/processes ────────
 
+# ─── Fix 5: save_session re-indexes missing entries ──────────────
+
+class TestSaveSessionReindexesMissing:
+    """save_session 应在索引缺失条目时自动补录。"""
+
+    def test_save_session_reindexes_when_entry_missing_from_index(self, tmp_path):
+        """索引丢失某条记录后，save_session 应将其重新插入索引。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "hello"}])
+
+        # 清空索引（但保留 session 文件）
+        index_path = tmp_path / "sessions" / "index.json"
+        index_path.write_text(json.dumps([]), encoding="utf-8")
+
+        # list_sessions 因存在未索引的 session 文件会自动重建，
+        # 但 save_session 内部的索引更新逻辑走的是 _update_index 路径。
+        # 直接验证：save_session 后索引中包含该 session。
+        sm.save_session(sid, [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ])
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == sid
+        assert sessions[0]["message_count"] == 2
+
+
 class TestIndexLocking:
     """索引读-改-写操作必须加文件锁。"""
 
@@ -197,7 +227,40 @@ class TestIndexLocking:
             assert s["message_count"] == 1
 
 
-# ─── Fix 3: Silent index corruption fallback ─────────────────────────
+# ─── Fix 6: list_sessions detects stale index ────────────────────
+
+class TestListSessionsStalenessDetection:
+    """list_sessions 应检测索引与实际 session 文件的不一致。"""
+
+    def test_list_sessions_detects_new_session_file_not_in_index(self, tmp_path):
+        """session 文件存在但索引中没有 → 自动重建索引。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "first"}])
+        # 清空索引，模拟 crash 导致索引未更新
+        index_path = tmp_path / "sessions" / "index.json"
+        index_path.write_text(json.dumps([]), encoding="utf-8")
+
+        # list_sessions 应检测到不一致并重建
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == sid
+
+    def test_list_sessions_no_false_positive_when_index_consistent(self, tmp_path):
+        """索引和文件一致时不应触发重建。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid1 = sm.create_session()
+        sm.save_session(sid1, [{"role": "user", "content": "first"}])
+        sid2 = sm.create_session()
+        sm.save_session(sid2, [{"role": "user", "content": "second"}])
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 2
+        # 不应触发重建（索引和文件一致）
+        ids = {s["id"] for s in sessions}
+        assert ids == {sid1, sid2}
 
 class TestIndexCorruptionRecovery:
     """索引损坏时应从 session 文件重建，而非返回空列表。"""

@@ -141,12 +141,23 @@ class SessionManager:
                 if msg.get("role") == "user":
                     preview = msg.get("content", "")[:100]
                     break
+            found = False
             for entry in index:
                 if entry["id"] == session_id:
                     entry["updated"] = now
                     entry["message_count"] = len(messages)
                     entry["preview"] = preview
+                    found = True
                     break
+            if not found:
+                # 索引丢失该条目，重新插入
+                index.insert(0, {
+                    "id": session_id,
+                    "created": now,
+                    "updated": now,
+                    "message_count": len(messages),
+                    "preview": preview,
+                })
             self._save_index(index)
         self._with_index_lock(_update_index)
 
@@ -159,5 +170,24 @@ class SessionManager:
         return json.loads(session_path.read_text(encoding="utf-8"))
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        """返回所有会话的索引列表（最新在前）。"""
-        return self._load_index()
+        """返回所有会话的索引列表（最新在前）。
+
+        加载索引后交叉校验实际 session 文件：若存在未被索引覆盖的
+        session 文件（crash 导致索引未更新），自动重建索引。
+        """
+        index = self._load_index()
+        self._ensure_dirs()
+        indexed_ids = {e["id"] for e in index}
+        # 检查是否有 session 文件未被索引覆盖
+        for p in self._sessions_dir.glob("session-*.json"):
+            stem = p.stem
+            if not stem.startswith("session-"):
+                continue
+            sid = stem[len("session-"):]
+            try:
+                uuid.UUID(sid)
+            except ValueError:
+                continue
+            if sid not in indexed_ids:
+                return self._rebuild_index()
+        return index
