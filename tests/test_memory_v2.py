@@ -1270,3 +1270,82 @@ class TestConcurrentResume:
         sessions = sm.list_sessions()
         assert len(sessions) == 1
         assert sessions[0]["message_count"] == 3
+
+    def test_repeated_save_does_not_duplicate(self, tmp_path):
+        """多次 save() 不应重复追加消息 — base_count 必须在 save 后更新。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "hello"}])
+
+        store = MemoryStorage(sm, sid)
+        store.add_message("assistant", "reply1")
+        store.save()
+        store.save()  # 第二次 save 不应重复
+
+        final = sm.load_session(sid)
+        assert len(final) == 2
+        assert final[0]["content"] == "hello"
+        assert final[1]["content"] == "reply1"
+
+    def test_add_after_save_then_save_again(self, tmp_path):
+        """save 后继续添加消息再 save，不应丢失也不重复。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "q1"}])
+
+        store = MemoryStorage(sm, sid)
+        store.add_message("assistant", "a1")
+        store.save()
+
+        store.add_message("user", "q2")
+        store.add_message("assistant", "a2")
+        store.save()
+
+        final = sm.load_session(sid)
+        assert len(final) == 4
+        contents = [m["content"] for m in final]
+        assert contents == ["q1", "a1", "q2", "a2"]
+
+    def test_clear_then_save_writes_empty(self, tmp_path):
+        """clear() + save() 应写入空消息列表，base_count 重置为 0。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "old"}])
+
+        store = MemoryStorage(sm, sid)
+        store.add_message("assistant", "reply")
+        store.save()
+
+        # clear 后 save
+        store.clear()
+        store.save()
+
+        final = sm.load_session(sid)
+        assert len(final) == 0
+
+    def test_clear_then_add_and_save(self, tmp_path):
+        """clear() 后继续添加消息再 save，只保留新消息。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "old"}])
+
+        store = MemoryStorage(sm, sid)
+        store.clear()
+        store.add_message("user", "fresh")
+        store.save()
+
+        final = sm.load_session(sid)
+        assert len(final) == 1
+        assert final[0]["content"] == "fresh"

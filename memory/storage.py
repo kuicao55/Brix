@@ -87,8 +87,14 @@ class MemoryStorage:
 
     def clear(self) -> None:
         self._messages.clear()
+        # 使用 -1 标记已清空状态，save 时直接写入不合并
+        self._base_count = -1
 
     def save(self) -> None:
+        # base_count=-1 表示已清空，使用 direct write 模式（不合并磁盘内容）
+        bc = self._base_count if self._base_count >= 0 else None
         self._session_mgr.save_session(
-            self._session_id, self._messages, base_count=self._base_count
+            self._session_id, self._messages, base_count=bc
         )
+        # 保存成功后更新 base_count，防止后续 save 重复追加
+        self._base_count = len(self._messages)
