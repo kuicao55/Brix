@@ -7,7 +7,7 @@
 **Project Name:** Brix
 **Harness Version:** 3.6.0
 **Generated:** 2026-05-07
-**Last Updated:** 2026-05-08 (milestone-6 complete)
+**Last Updated:** 2026-05-08 (milestone-8 complete)
 
 ## Tech Stack
 
@@ -27,6 +27,12 @@
 | Orchestrator | Task orchestration, state management, tool calling coordination | `orchestrator/` |
 | Capability | Tool registration, execution, schema generation | `capability/` |
 | Memory | Conversation persistence, context window management | `memory/` |
+| **MemoryProvider** | **Memory system Protocol + factory (soul, user, session, strategy)** | **`memory/__init__.py`, `memory/provider.py`** |
+| **SessionManager** | **Session CRUD, UUID validation, atomic writes, concurrent resume** | **`memory/session.py`** |
+| **SoulManager** | **Agent personality (soul.md) load/exists** | **`memory/soul.py`** |
+| **UserMemoryManager** | **User profile (user.md) load/exists** | **`memory/user.py`** |
+| **FileWriteTool** | **Write files in memory/data/ with path sandboxing** | **`capability/tools/file_write.py`** |
+| **FileEditTool** | **Edit files in memory/data/ with exact match** | **`capability/tools/file_edit.py`** |
 | CLI | User input, output display, command handling | `cli/` |
 | **Theme** | **Rich theme with BRIX_THEME styles (16 keys)** | **`cli/theme.py`** |
 | **Spinner** | **Braille animation spinner (start/finish/fail/stop)** | **`cli/spinner.py`** |
@@ -52,6 +58,12 @@
 - Spinner lifecycle: spinner_finished flag prevents double-finish in tool_call → text_delta flow
 - StageIndicator owns spinner lifecycle: _stop_spinner() silently stops before new stage or completion
 - Styled prompt: prompt_toolkit.HTML() for ❯ indicator with ANSI color styling
+- Memory system: MemoryProvider Protocol for modular replacement (cli depends only on Protocol)
+- Session isolation: each session in separate JSON file, UUID-validated, fcntl-locked
+- Soul/User managers: load-only from md files, agent writes via FileWriteTool/FileEditTool
+- File tools: path sandboxing via Path.is_relative_to(), atomic writes via tempfile+os.replace
+- CLI commands: /sessions, /resume, /soul, /user, /clear (create_session), /dream
+- Config-driven data_dir: memory.data_dir from settings.yaml, shared by MemoryProvider and file tools
 
 ## Project Structure
 
