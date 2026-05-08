@@ -260,6 +260,44 @@ def test_stream_renderer_newline_inside_fence_not_safe():
     assert "print('hello')" in renderer.rendered
 
 
+def test_stream_renderer_marker_printed_inline():
+    """StreamRenderer with marker should print it inline (end='') before Live starts."""
+    from rich.console import Console
+    from rich.text import Text
+    from cli.stream_renderer import StreamRenderer
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+    marker = Text("  ⏺ ", style="green")
+    renderer = StreamRenderer(console, marker=marker)
+
+    renderer.start()
+    renderer.push_delta("Hello world\n")
+    renderer.flush()
+
+    output = buf.getvalue()
+    # Marker and content should be in the output
+    assert "⏺" in output
+    assert "Hello world" in output
+
+
+def test_stream_renderer_no_marker_works():
+    """StreamRenderer without marker should work as before."""
+    from rich.console import Console
+    from cli.stream_renderer import StreamRenderer
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+    renderer = StreamRenderer(console)
+
+    renderer.start()
+    renderer.push_delta("Hello\n")
+    renderer.flush()
+
+    output = buf.getvalue()
+    assert "Hello" in output
+
+
 # ------------------------------------------------------------------
 # Spinner lifecycle fix tests (Issue 1: spinner stops on tool-only streams)
 # ------------------------------------------------------------------

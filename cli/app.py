@@ -121,12 +121,17 @@ class BrixCLI:
                 print("No logs yet.")
                 return True
 
-            # /log <number> — show detail for that entry
+            # /log <number> — show detail (numbering matches the reverse-sorted display)
             if len(parts) > 1 and parts[1].isdigit():
-                idx = int(parts[1])
-                entry = read_entry(idx)
+                display_idx = int(parts[1])
+                if display_idx < 1 or display_idx > total:
+                    print(f"Log #{display_idx} not found. (1-{total})")
+                    return True
+                # Display #1 = newest = last entry in file
+                file_idx = total - display_idx + 1
+                entry = read_entry(file_idx)
                 if entry is None:
-                    print(f"Log #{idx} not found. (1-{total})")
+                    print(f"Log #{display_idx} not found. (1-{total})")
                 else:
                     print(format_detail(entry))
                 return True
@@ -273,8 +278,10 @@ class BrixCLI:
                         if renderer is None:
                             indicator.finish()
                             from rich.text import Text
-                            self._console.print(Text("  ⏺", style="green"))
-                            renderer = StreamRenderer(self._console)
+                            renderer = StreamRenderer(
+                                self._console,
+                                marker=Text("  ⏺ ", style="green"),
+                            )
                             renderer.start()
                         renderer.push_delta(text)
                         content_parts.append(text)

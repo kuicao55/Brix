@@ -5,6 +5,40 @@ from __future__ import annotations
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.segment import Segment
+from rich.text import Text
+
+# Visual width of the ``  ⏺ `` marker (2 spaces + circle + 1 space).
+_MARKER_WIDTH = 4
+
+
+class _MarkerMarkdown:
+    """Renderable that places a styled marker inline with the first line
+    of a Markdown block and indents every subsequent line by
+    ``_MARKER_WIDTH`` columns so the response body aligns under the marker.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        marker_text: str,
+        marker_style: str,
+        console: Console,
+    ) -> None:
+        self._md = Markdown(source)
+        self._marker_text = marker_text
+        self._marker_style = marker_style
+        self._console = console
+
+    def __rich_console__(self, console, options):
+        style = self._console.get_style(self._marker_style)
+        # Marker on the first line, inline with content
+        yield Segment(self._marker_text, style)
+        # Render Markdown, inserting indent after every newline
+        for seg in self._md.__rich_console__(console, options):
+            yield seg
+            if seg.text == "\n":
+                yield Segment(" " * _MARKER_WIDTH)
 
 
 class StreamRenderer:
@@ -19,11 +53,12 @@ class StreamRenderer:
     then the ready portion moves to ``rendered`` and the Live display updates.
     """
 
-    def __init__(self, console: Console) -> None:
+    def __init__(self, console: Console, marker: Text | None = None) -> None:
         self.console = console
         self.pending = ""
         self.rendered = ""
         self.live = None
+        self._marker = marker
 
     def start(self) -> None:
         """Start the Rich Live display."""
@@ -82,7 +117,22 @@ class StreamRenderer:
         return last_safe if last_safe > 0 else None
 
     def _update_display(self) -> None:
-        """Re-render the accumulated content in the Live display."""
+        """Re-render the accumulated content in the Live display.
+
+        If a marker was provided, it is rendered inline on the first line
+        of the content via ``_MarkerMarkdown``.  Every subsequent line is
+        indented by ``_MARKER_WIDTH`` columns so the body aligns under the
+        marker.
+        """
         if self.live and self.rendered:
-            md = Markdown(self.rendered)
-            self.live.update(md)
+            if self._marker is not None:
+                style = self._marker.style if isinstance(self._marker.style, str) else "green"
+                renderable = _MarkerMarkdown(
+                    self.rendered,
+                    self._marker.plain,
+                    style,
+                    self.console,
+                )
+            else:
+                renderable = Markdown(self.rendered)
+            self.live.update(renderable)
