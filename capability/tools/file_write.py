@@ -48,8 +48,8 @@ class FileWriteTool(Tool):
         rel_path = params.get("path", "")
         content = params.get("content", "")
         target = (self._allowed_root / rel_path).resolve()
-        # Security: must stay within allowed_root
-        if not str(target).startswith(str(self._allowed_root.resolve())):
+        # Security: must stay within allowed_root (使用 is_relative_to 防止前缀碰撞攻击)
+        if not target.is_relative_to(self._allowed_root.resolve()):
             return "Error: 路径被拒绝 — 只能写入 memory/data/ 目录"
         # Security: reject symlinks
         if target.exists() and target.is_symlink():

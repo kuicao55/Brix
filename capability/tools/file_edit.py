@@ -53,8 +53,8 @@ class FileEditTool(Tool):
         old_text = params.get("old_text", "")
         new_text = params.get("new_text", "")
         target = (self._allowed_root / rel_path).resolve()
-        # Security checks
-        if not str(target).startswith(str(self._allowed_root.resolve())):
+        # Security checks (使用 is_relative_to 防止前缀碰撞攻击)
+        if not target.is_relative_to(self._allowed_root.resolve()):
             return "Error: 路径被拒绝 — 只能编辑 memory/data/ 目录"
         if not target.exists():
             return f"Error: 文件不存在 — {rel_path}"
