@@ -192,8 +192,8 @@ class SessionManager:
         final_messages_ref: list[dict[str, Any]] = [messages]
 
         def _write_session() -> None:
-            if base_count is not None and messages:
-                # 并发安全合并：读取磁盘最新状态，追加本次新增消息
+            if base_count is not None:
+                # 并发安全合并：在 session 锁下读取磁盘状态并合并
                 if session_path.exists():
                     try:
                         existing = json.loads(session_path.read_text(encoding="utf-8"))
@@ -204,24 +204,25 @@ class SessionManager:
                 else:
                     existing = []
 
-                new_messages = messages[base_count:]
-                disk_has_new = len(existing) > base_count
-
-                if disk_has_new:
-                    # 其他实例写入了新消息，合并
-                    merged = existing + new_messages
-                elif len(existing) < base_count:
-                    # 磁盘消息少于加载时 — 其他实例已清空或截断。
-                    # 不恢复旧消息，只写入本次新增部分。
-                    merged = new_messages if new_messages else []
+                if not messages:
+                    # 空消息（非清空路径）：保留磁盘已有内容
+                    merged = existing
                 else:
-                    # 无并发写入，直接使用当前消息
-                    merged = messages
+                    new_messages = messages[base_count:]
+                    disk_has_new = len(existing) > base_count
+
+                    if disk_has_new:
+                        merged = existing + new_messages
+                    elif len(existing) < base_count:
+                        # 磁盘被清空或截断，只写入本次新增部分
+                        merged = new_messages if new_messages else []
+                    else:
+                        merged = messages
 
                 self._atomic_write_json(session_path, merged)
                 final_messages_ref[0] = merged
             else:
-                # 直接写入（向后兼容 / 清空操作 / 首次保存）
+                # 直接写入（清空操作 — base_count=None 来自 clear 路径）
                 self._atomic_write_json(session_path, messages)
 
         self._with_session_lock(session_id, _write_session)
@@ -239,9 +240,11 @@ class SessionManager:
             found = False
             for entry in index:
                 if entry["id"] == session_id:
-                    entry["updated"] = now
-                    entry["message_count"] = len(final_messages)
-                    entry["preview"] = preview
+                    # 单调更新：只前进不回退，防止并发写入导致索引回归
+                    if now >= entry.get("updated", ""):
+                        entry["updated"] = now
+                        entry["message_count"] = len(final_messages)
+                        entry["preview"] = preview
                     found = True
                     break
             if not found:
