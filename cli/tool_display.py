@@ -31,6 +31,7 @@ class ToolDisplay:
         safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
         detail = self._format_detail(tool_name, tool_input)
+        self.console.print(Text("  ⏺ ", style="dim"))
         panel = Panel(
             detail,
             title="[tool.name]{} {}[/]".format(icon, safe_name),
@@ -50,7 +51,7 @@ class ToolDisplay:
         """Display a one-line summary when a tool call completes."""
         safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
-        status_style = "tool.error" if is_error else "tool.success"
+        status_style = "red" if is_error else "green"
         status_icon = "\u2717" if is_error else "\u2713"
         elapsed_str = "{:.0f}ms".format(elapsed_ms)
 
@@ -59,12 +60,13 @@ class ToolDisplay:
             preview += "\u2026"
 
         text = Text()
-        text.append("  {} ".format(icon), style="dim")
+        text.append("  \u23bf ", style="dim")
+        text.append("{} ".format(icon), style="dim")
         text.append(safe_name, style="tool.name")
         text.append("  {}".format(status_icon), style=status_style)
         text.append("  {}".format(elapsed_str), style="dim cyan")
         if is_error:
-            text.append("  {}".format(preview), style="tool.error")
+            text.append("  {}".format(preview), style="red")
         self.console.print(text)
 
     def _format_detail(self, tool_name: str, tool_input: dict) -> str:

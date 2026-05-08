@@ -84,5 +84,8 @@ class StreamRenderer:
     def _update_display(self) -> None:
         """Re-render the accumulated content in the Live display."""
         if self.live and self.rendered:
+            from rich.text import Text
+            from rich.console import Group
+            prefix = Text("  ⏺ ", style="green")
             md = Markdown(self.rendered)
-            self.live.update(md)
+            self.live.update(Group(prefix, md))
