@@ -1,6 +1,7 @@
 """会话管理器 — 负责 session 文件的 CRUD 和索引维护。"""
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
@@ -8,6 +9,19 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+_UUID_LEN = 36
+
+
+def _validate_session_id(session_id: str) -> None:
+    """验证 session_id 是否为合法 UUID 格式，防止路径穿越。"""
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        raise ValueError(
+            f"Invalid session_id: {session_id!r}. Must be a valid UUID."
+        )
 
 
 class SessionManager:
@@ -41,57 +55,104 @@ class SessionManager:
             raise
 
     def _load_index(self) -> list[dict[str, Any]]:
-        """从磁盘加载 sessions 索引。"""
+        """从磁盘加载 sessions 索引。损坏时从 session 文件重建。"""
         if not self._index_path.exists():
-            return []
+            return self._rebuild_index()
         try:
             return json.loads(self._index_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            return self._rebuild_index()
+
+    def _rebuild_index(self) -> list[dict[str, Any]]:
+        """从 sessions 目录中的 session-*.json 文件重建索引。"""
+        index: list[dict[str, Any]] = []
+        if not self._sessions_dir.exists():
             return []
+        for p in sorted(self._sessions_dir.glob("session-*.json")):
+            # "session-{uuid}.json" -> "{uuid}"
+            stem = p.stem  # "session-{uuid}"
+            if not stem.startswith("session-"):
+                continue
+            sid = stem[len("session-"):]
+            try:
+                messages = json.loads(p.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            # 取第一条 user 消息作为预览
+            preview = ""
+            for msg in messages:
+                if msg.get("role") == "user":
+                    preview = msg.get("content", "")[:100]
+                    break
+            mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            index.append({
+                "id": sid,
+                "created": mtime.isoformat(),
+                "updated": mtime.isoformat(),
+                "message_count": len(messages),
+                "preview": preview,
+            })
+        # 按修改时间倒序
+        index.sort(key=lambda e: e["updated"], reverse=True)
+        return index
 
     def _save_index(self, index: list[dict[str, Any]]) -> None:
         """将 sessions 索引写入磁盘。"""
         self._atomic_write_json(self._index_path, index)
 
-    def create_session(self) -> str:
-        """创建新会话，返回 UUID 标识符。"""
+    def _with_index_lock(self, fn):
+        """在文件锁保护下执行对索引的读-改-写操作。"""
         self._ensure_dirs()
-        sid = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        index = self._load_index()
-        index.insert(0, {
-            "id": sid,
-            "created": now,
-            "updated": now,
-            "message_count": 0,
-            "preview": "",
-        })
-        self._save_index(index)
-        return sid
+        lock_path = self._sessions_dir / ".index.lock"
+        with open(lock_path, "w") as lock_f:
+            fcntl.flock(lock_f, fcntl.LOCK_EX)
+            try:
+                return fn()
+            finally:
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+    def create_session(self) -> str:
+        """创建新会话，返回 UUID 标识符。在文件锁保护下更新索引。"""
+        def _do_create() -> str:
+            sid = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            index = self._load_index()
+            index.insert(0, {
+                "id": sid,
+                "created": now,
+                "updated": now,
+                "message_count": 0,
+                "preview": "",
+            })
+            self._save_index(index)
+            return sid
+        return self._with_index_lock(_do_create)
 
     def save_session(self, session_id: str, messages: list[dict[str, Any]]) -> None:
-        """保存会话消息并更新索引。"""
-        self._ensure_dirs()
+        """保存会话消息并更新索引。在文件锁保护下更新索引。"""
+        _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
         self._atomic_write_json(session_path, messages)
-        # 更新索引
-        index = self._load_index()
-        now = datetime.now(timezone.utc).isoformat()
-        preview = ""
-        for msg in messages:
-            if msg.get("role") == "user":
-                preview = msg.get("content", "")[:100]
-                break
-        for entry in index:
-            if entry["id"] == session_id:
-                entry["updated"] = now
-                entry["message_count"] = len(messages)
-                entry["preview"] = preview
-                break
-        self._save_index(index)
+        def _update_index() -> None:
+            index = self._load_index()
+            now = datetime.now(timezone.utc).isoformat()
+            preview = ""
+            for msg in messages:
+                if msg.get("role") == "user":
+                    preview = msg.get("content", "")[:100]
+                    break
+            for entry in index:
+                if entry["id"] == session_id:
+                    entry["updated"] = now
+                    entry["message_count"] = len(messages)
+                    entry["preview"] = preview
+                    break
+            self._save_index(index)
+        self._with_index_lock(_update_index)
 
     def load_session(self, session_id: str) -> list[dict[str, Any]]:
         """加载指定会话的消息列表，不存在则抛出 FileNotFoundError。"""
+        _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
         if not session_path.exists():
             raise FileNotFoundError(f"Session {session_id} not found")

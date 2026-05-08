@@ -1,6 +1,8 @@
 """用户记忆管理器 — 负责 user.md 的读写。"""
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 
@@ -24,6 +26,23 @@ class UserMemoryManager:
             return ""
 
     def save(self, content: str) -> None:
-        """保存内容到 user.md。"""
+        """原子保存内容到 user.md：临时文件 + fsync + rename。"""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(content, encoding="utf-8")
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self._path.parent), prefix=".user-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = -1  # fd 已由 os.fdopen 接管
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, str(self._path))
+        except Exception:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
