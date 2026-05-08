@@ -62,6 +62,23 @@ class BrixMemoryProvider:
         """加载指定会话的消息列表。"""
         return self._session_mgr.load_session(session_id)
 
+    def resume_session(self, session_id: str) -> list[dict[str, Any]]:
+        """恢复指定会话为当前活跃会话。
+
+        加载会话消息、切换 _current_session_id、创建新 MemoryStorage，
+        使得后续 add_message / save_session 操作写入该会话。
+
+        若 session_id 不在索引中（既非已有会话也非新建会话），
+        抛出 FileNotFoundError。
+        """
+        # 验证 session_id 是否存在于索引中
+        sessions = self._session_mgr.list_sessions()
+        if not any(s["id"] == session_id for s in sessions):
+            raise FileNotFoundError(f"Session {session_id} not found")
+        self._current_session_id = session_id
+        self._storage = MemoryStorage(self._session_mgr, session_id)
+        return self._storage.get_history()
+
     def list_sessions(self) -> list[dict[str, Any]]:
         """返回所有会话索引（最新在前）。"""
         return self._session_mgr.list_sessions()

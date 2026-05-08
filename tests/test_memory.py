@@ -376,3 +376,112 @@ def test_quarantine_rejects_empty_string(tmp_path, caplog):
     assert len(caplog.records) >= 1
     quarantined_files = list((tmp_path / "sessions").glob("*.corrupt"))
     assert quarantined_files == []
+
+
+# --- Quality Review: resume_session ---
+
+def test_resume_session_switches_active_session(tmp_path):
+    """resume_session() 应切换当前活跃会话并加载其消息。
+
+    验证：
+    1. resume 后 add_message 写入的是被恢复的会话，而非旧会话。
+    2. save + load 能读回 resume 后写入的消息。
+    """
+    from memory.provider import BrixMemoryProvider
+
+    provider = BrixMemoryProvider(data_dir=tmp_path, max_context_tokens=8000)
+    # 当前会话写一些消息
+    provider.add_message("user", "first session msg")
+    provider.save_session()
+    first_sid = provider._current_session_id
+
+    # 创建第二个会话并写消息
+    second_sid = provider.create_session()
+    provider.add_message("user", "second session msg")
+    provider.save_session()
+
+    # 恢复第一个会话
+    messages = provider.resume_session(first_sid)
+    assert len(messages) == 1
+    assert messages[0]["content"] == "first session msg"
+
+    # resume 后 add_message 应写入第一个会话
+    provider.add_message("user", "resumed msg")
+    provider.save_session()
+
+    # 验证第一个会话现在有 2 条消息
+    reloaded = provider.load_session(first_sid)
+    assert len(reloaded) == 2
+    assert reloaded[1]["content"] == "resumed msg"
+
+    # 第二个会话不受影响
+    second_msgs = provider.load_session(second_sid)
+    assert len(second_msgs) == 1
+    assert second_msgs[0]["content"] == "second session msg"
+
+
+def test_resume_session_returns_empty_for_new_session(tmp_path):
+    """resume_session() 对新创建（无消息）的会话返回空列表。"""
+    from memory.provider import BrixMemoryProvider
+
+    provider = BrixMemoryProvider(data_dir=tmp_path, max_context_tokens=8000)
+    empty_sid = provider.create_session()
+    # 切换到另一个会话再 resume 回来
+    provider.create_session()
+    messages = provider.resume_session(empty_sid)
+    assert messages == []
+
+
+def test_resume_session_raises_for_nonexistent(tmp_path):
+    """resume_session() 对不存在的 session_id 应抛出异常。"""
+    import uuid
+    from memory.provider import BrixMemoryProvider
+
+    provider = BrixMemoryProvider(data_dir=tmp_path, max_context_tokens=8000)
+    with pytest.raises(FileNotFoundError):
+        provider.resume_session(str(uuid.uuid4()))
+
+
+def test_resume_session_in_protocol():
+    """MemoryProvider Protocol 应包含 resume_session 方法。"""
+    from memory import MemoryProvider
+    assert hasattr(MemoryProvider, "resume_session")
+
+
+# --- Quality Review: factory default data_dir ---
+
+def test_factory_default_data_dir_uses_dotbrix(tmp_path, monkeypatch):
+    """create_memory_provider() 默认 data_dir 应为 CWD/.brix/data，而非包内目录。"""
+    from memory import create_memory_provider
+    monkeypatch.chdir(tmp_path)
+    provider = create_memory_provider()
+    # 验证 data_dir 是 tmp_path/.brix/data
+    assert provider._data_dir == tmp_path / ".brix" / "data"
+    assert provider._data_dir.exists()
+
+
+def test_factory_explicit_data_dir_overrides_default(tmp_path):
+    """显式传入 data_dir 时应忽略默认值。"""
+    from memory import create_memory_provider
+    custom = tmp_path / "custom"
+    provider = create_memory_provider(data_dir=custom)
+    assert provider._data_dir == custom
+
+
+def test_factory_default_raises_if_data_dir_not_writable(tmp_path, monkeypatch):
+    """当 CWD/.brix 无法创建（只读文件系统）时，应抛出明确的错误。"""
+    import os
+    from memory import create_memory_provider
+
+    # 创建一个只读目录作为 CWD
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(0o555)  # r-xr-xr-x 可以 chdir 但不能写
+    monkeypatch.chdir(readonly_dir)
+    # monkeypatch 会在测试结束时恢复 CWD
+
+    with pytest.raises((OSError, PermissionError)):
+        create_memory_provider()
+
+    # 恢复权限以便清理
+    readonly_dir.chmod(0o755)
