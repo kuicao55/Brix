@@ -1,6 +1,7 @@
 """记忆策略 — 构建系统提示词和上下文窗口。"""
 from __future__ import annotations
 
+from string import Template
 from typing import Any
 
 from memory.soul import SoulManager
@@ -9,7 +10,7 @@ from memory.user import UserMemoryManager
 _ONBOARDING_TEMPLATE = """## Onboarding Required
 
 The following memory files are missing and need to be created:
-{soul_missing}{user_missing}
+${soul_missing}${user_missing}
 
 This is your FIRST conversation with this user. You need to learn about them
 AND define your own personality. Take your time — don't rush to create files.
@@ -148,7 +149,7 @@ class MemoryStrategy:
 
         # 检查是否需要 onboarding
         if not self._soul.exists() or not self._user.exists():
-            parts.append(_ONBOARDING_TEMPLATE.format(
+            parts.append(Template(_ONBOARDING_TEMPLATE).safe_substitute(
                 soul_missing="" if self._soul.exists() else "- soul.md: Your personality definition\n",
                 user_missing="" if self._user.exists() else "- user.md: Your memory about the user\n",
             ))
