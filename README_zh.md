@@ -10,7 +10,8 @@
 - **双编排引擎** — 纯 Python 状态机 + LangGraph 引擎，配置切换
 - **流式输出** — 逐 token 实时渲染，安全边界 Markdown 检测
 - **工具调用** — 内置工具：计算器、天气查询（模拟）、文件读取
-- **持久化记忆** — 原子写入的 JSON 存储，崩溃安全
+- **记忆系统 v2** — Session 隔离对话、Agent 人格（soul.md）、用户画像（user.md）、自动 Onboarding
+- **持久化存储** — 原子写入 + fcntl 文件锁，崩溃安全
 - **智能路由** — 意图分类 + 复杂度评估，自动选择模型
 - **Rich 终端 UI** — 动画 Spinner、工具执行面板、启动 Banner、自定义主题、内联响应标记
 - **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
@@ -114,35 +115,36 @@ brix
 
 | 命令 | 说明 |
 |------|------|
-| `/quit` | 退出 Brix |
-| `/clear` | 清空对话历史 |
+| `/quit` | 保存 session 并退出 |
+| `/clear` | 开始新 session |
+| `/sessions` | 列出最近 session |
+| `/resume` | 恢复指定 session |
+| `/soul` | 查看 Agent 人格（soul.md） |
+| `/user` | 查看用户画像（user.md） |
 | `/model` | 显示当前模型 |
-| `/history` | 显示最近消息 |
-| `/log` | 显示最近 20 条流程日志列表 |
-| `/log <N>` | 查看第 N 条日志的详细信息 |
+| `/log` | 交互式日志查看器（上下箭头选择） |
 
 ---
 
 ## 流程日志
 
-Brix 会自动记录每轮对话的完整数据流，存储在 `data/logs/brix.jsonl`（JSONL 格式）。
+Brix 会自动记录每轮对话的完整数据流，存储在 `log/data/brix.jsonl`（JSONL 格式）。
 
 ### 查看日志
 
+输入 `/log` 打开交互式日志查看器，用上下箭头选择，回车查看详情：
+
 ```
 you> /log
-Recent logs (1-3):
-
-  #1  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
-  #2  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "明天上海天气如何？"
-
-Use /log <number> to view details
+Select a log entry (arrow keys + Enter):
+> #1  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "明天上海天气如何？"
+  #2  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
 ```
 
-### 查看详细日志
+选择后显示详细信息：
 
 ```
-you> /log 1
+  #1  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "明天上海天气如何？"
 ------------------------------------------------------------
   Trace:  49621c65
   Time:   2026-05-07T15:35:05
@@ -353,6 +355,11 @@ pip install langgraph
 |  config/settings.yaml                                |
 +-----------------------------------------------------+
 |                    记忆层                             |
+|  memory/__init__.py (MemoryProvider Protocol)         |
+|  memory/provider.py (BrixMemoryProvider 实现)         |
+|  memory/session.py (Session 管理 + 文件锁)            |
+|  memory/soul.py (Agent 人格)                          |
+|  memory/user.py (用户画像)                            |
 |  memory/storage.py (原子 JSON 存储)                   |
 |  memory/strategy.py (上下文窗口管理)                   |
 +-----------------------------------------------------+
@@ -432,9 +439,17 @@ brix/
 |       +-- calculator.py           # 数学表达式计算器
 |       +-- weather.py              # 天气查询（模拟）
 |       +-- file_read.py            # 本地文件读取
+|       +-- file_write.py           # 文件写入（memory/data/ 沙箱）
+|       +-- file_edit.py            # 文件编辑（memory/data/ 沙箱）
 +-- memory/
+|   +-- __init__.py                 # MemoryProvider Protocol + 工厂函数
+|   +-- provider.py                 # BrixMemoryProvider 实现
+|   +-- session.py                  # Session 管理（UUID、文件锁）
+|   +-- soul.py                     # Agent 人格（soul.md）
+|   +-- user.py                     # 用户画像（user.md）
 |   +-- storage.py                  # 原子 JSON 持久化
 |   +-- strategy.py                 # 上下文窗口管理
+|   +-- data/                       # 运行时数据（gitignore）
 +-- log/
 |   +-- flow.py                     # FlowLog 流程日志收集器
 |   +-- writer.py                   # JSONL 文件读写

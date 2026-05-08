@@ -10,7 +10,8 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Dual Orchestrator** — Pure Python state machine + LangGraph engine, switchable via config
 - **Streaming Output** — Real-time token-by-token rendering with safe-boundary Markdown detection
 - **Tool Calling** — Built-in tools: calculator, weather (mock), file reader
-- **Persistent Memory** — Crash-safe JSON storage with atomic writes
+- **Memory System v2** — Session-isolated conversations, agent personality (soul.md), user profile (user.md), auto-onboarding
+- **Persistent Storage** — Crash-safe atomic writes with fcntl locking
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
 - **Rich Terminal UI** — Animated spinner, tool execution panels, styled banner, custom theme, inline response markers
 - **Extensible Config** — Add new providers and models by editing a single YAML file
@@ -114,67 +115,33 @@ To remove, delete the `alias brix=...` line from your shell config and reload.
 
 | Command | Description |
 |---------|-------------|
-| `/quit` | Exit Brix |
-| `/clear` | Clear conversation history |
+| `/quit` | Save session and exit |
+| `/clear` | Start a new session |
+| `/sessions` | List recent sessions |
+| `/resume` | Resume a previous session |
+| `/soul` | Show agent personality (soul.md) |
+| `/user` | Show user profile (user.md) |
 | `/model` | Show current model |
-| `/history` | Show recent messages |
-| `/log` | Show recent 20 flow log entries |
-| `/log <N>` | View detailed info for log entry #N |
+| `/log` | Interactive log viewer (arrow keys to select) |
 
 ---
 
 ## Flow Log
 
-Brix automatically records the complete data flow for every conversation turn, stored in `data/logs/brix.jsonl` (JSONL format).
+Brix automatically records the complete data flow for every conversation turn, stored in `log/data/brix.jsonl` (JSONL format).
 
 ### Viewing Logs
 
+Type `/log` to open an interactive log viewer. Use arrow keys to navigate, Enter to view details:
+
 ```
 you> /log
-Recent logs (newest first, 1-3):
-
-  #1  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "What's the weather in Shanghai tomorrow?"
+Select a log entry (arrow keys + Enter):
+> #1  2026-05-07T15:36:12 [a3f8b21c]  12500ms OK  "What's the weather in Shanghai?"
   #2  2026-05-07T15:35:05 [49621c65]  7644ms  OK  "你好"
-
-Use /log <number> to view details
 ```
 
-### Viewing Detailed Logs
-
-```
-you> /log 1
-------------------------------------------------------------
-  Trace:  49621c65
-  Time:   2026-05-07T15:35:05
-  Input:  你好
-  Model:  minimax/MiniMax-M2.7
-  Status: OK
-------------------------------------------------------------
-  [1] memory  @15:35:05.203  0.2s
-      Load history from storage, trim context window
-      msgs: 0, window: 0, chars: 0
-
-  [2] intent  @15:35:09.738  4.5s
-      Call LLM to classify user intent (chat/task/tool_use)
-      result: chat | via: llm | model: minimax/MiniMax-M2.7
-      response: chat
-
-  [3] complexity  @15:35:09.738  0.0s
-      Evaluate request complexity based on keyword rules
-      result: low
-
-  [4] router  @15:35:09.738  0.0s
-      Select best model based on intent and complexity
-      model: minimax/MiniMax-M2.7
-
-  [5] orch_plan  @15:35:12.844  3.1s
-      Call LLM to generate response or decide tool calls
-      response: 你好！有什么我可以帮助你的吗？
-
-  [6] persist  @15:35:12.846  0.0s
-      Save conversation to storage
-      saved: 2
-```
+After selecting an entry, detailed info is displayed:
 
 ### Log Fields
 
@@ -392,6 +359,11 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  config/settings.yaml                                |
 +-----------------------------------------------------+
 |                   Memory Layer                       |
+|  memory/__init__.py (MemoryProvider Protocol)        |
+|  memory/provider.py (BrixMemoryProvider)             |
+|  memory/session.py (Session CRUD + locking)          |
+|  memory/soul.py (Agent personality)                  |
+|  memory/user.py (User profile)                       |
 |  memory/storage.py (Atomic JSON)                     |
 |  memory/strategy.py (Context Window)                 |
 +-----------------------------------------------------+
@@ -471,9 +443,17 @@ brix/
 |       +-- calculator.py           # Math expression evaluator
 |       +-- weather.py              # Mock weather lookup
 |       +-- file_read.py            # Local file reader
+|       +-- file_write.py           # File writer (memory/data/ sandboxed)
+|       +-- file_edit.py            # File editor (memory/data/ sandboxed)
 +-- memory/
+|   +-- __init__.py                 # MemoryProvider Protocol + factory
+|   +-- provider.py                 # BrixMemoryProvider implementation
+|   +-- session.py                  # Session manager (UUID, locking)
+|   +-- soul.py                     # Agent personality (soul.md)
+|   +-- user.py                     # User profile (user.md)
 |   +-- storage.py                  # Atomic JSON persistence
 |   +-- strategy.py                 # Context window management
+|   +-- data/                       # Runtime data (gitignored)
 +-- log/
 |   +-- flow.py                     # FlowLog step collector
 |   +-- writer.py                   # JSONL file I/O
