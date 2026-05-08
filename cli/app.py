@@ -329,7 +329,7 @@ class BrixCLI:
                     text = event.get("text", "")
                     if text:
                         if renderer is None:
-                            indicator.finish()
+                            indicator.stop_silent()
                             from rich.text import Text
                             renderer = StreamRenderer(
                                 self._console,
