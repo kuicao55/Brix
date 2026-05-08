@@ -4,13 +4,16 @@
   "updated_at": "2026-05-08T17:33:49Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
-  "version_branch": "v0.1.0",
-  "worktree": null,
+  "version_branch": "feat/memory-upgrade",
+  "worktree": {
+    "path": "worktrees/milestone-7",
+    "branch": "harness/milestone-7-memory"
+  },
   "milestones": [
     {
       "id": "milestone-1",
-      "title": "Core Chain \u2014 Pure Python Orchestrator",
-      "description": "Core Chain \u2014 Pure Python Orchestrator",
+      "title": "Core Chain — Pure Python Orchestrator",
+      "description": "Core Chain — Pure Python Orchestrator",
       "depends_on": [],
       "passed": true,
       "spec_file": ".super-harness/specs/2026-05-02-brix-mvp-design.md",
@@ -31,8 +34,8 @@
     },
     {
       "id": "milestone-3",
-      "title": "Hook \u7cfb\u7edf + FlowLog \u91cd\u6784",
-      "description": "Hook \u7cfb\u7edf + FlowLog \u91cd\u6784",
+      "title": "Hook 系统 + FlowLog 重构",
+      "description": "Hook 系统 + FlowLog 重构",
       "depends_on": [],
       "passed": true,
       "spec_file": ".super-harness/specs/2026-05-07-hook-system-design.md",
@@ -42,7 +45,7 @@
     },
     {
       "id": "milestone-4",
-      "title": "Phase 1a \u2014 Quick Wins (Retry, Token, Banner, Config)",
+      "title": "Phase 1a — Quick Wins (Retry, Token, Banner, Config)",
       "description": "Phase 1a: LLM retry with tenacity, token counting with tiktoken, startup banner, hierarchical config loader",
       "depends_on": [
         "milestone-3"
@@ -55,7 +58,7 @@
     },
     {
       "id": "milestone-5",
-      "title": "Phase 1b \u2014 Streaming Core (Providers, Orchestrator, Renderer, Tool Display)",
+      "title": "Phase 1b — Streaming Core (Providers, Orchestrator, Renderer, Tool Display)",
       "description": "Phase 1b: Streaming LLM providers, streaming orchestrator protocol, StreamRenderer + Spinner + Theme, tool display panel",
       "depends_on": [
         "milestone-4"
@@ -68,8 +71,8 @@
     },
     {
       "id": "milestone-6",
-      "title": "TUI Upgrade \u2014 Styled Prompt + Pipeline Stage Indicators",
-      "description": "TUI Upgrade \u2014 Styled Prompt + Pipeline Stage Indicators",
+      "title": "TUI Upgrade — Styled Prompt + Pipeline Stage Indicators",
+      "description": "TUI Upgrade — Styled Prompt + Pipeline Stage Indicators",
       "depends_on": [],
       "passed": true,
       "spec_file": ".super-harness/specs/2026-05-07-tui-upgrade.md",
@@ -79,8 +82,8 @@
     },
     {
       "id": "milestone-7",
-      "title": "Memory Core Infrastructure \u2014 Session/Soul/User/Storage/Strategy/Provider",
-      "description": "Memory Core Infrastructure \u2014 Session/Soul/User/Storage/Strategy/Provider",
+      "title": "Memory Core Infrastructure — Session/Soul/User/Storage/Strategy/Provider",
+      "description": "Memory Core Infrastructure — Session/Soul/User/Storage/Strategy/Provider",
       "depends_on": [],
       "passed": false,
       "spec_file": ".super-harness/specs/2026-05-08-memory-system-v2.md",
@@ -90,8 +93,8 @@
     },
     {
       "id": "milestone-8",
-      "title": "Memory Tools + CLI Integration \u2014 FileWrite/FileEdit/CLI Refactor",
-      "description": "Memory Tools + CLI Integration \u2014 FileWrite/FileEdit/CLI Refactor",
+      "title": "Memory Tools + CLI Integration — FileWrite/FileEdit/CLI Refactor",
+      "description": "Memory Tools + CLI Integration — FileWrite/FileEdit/CLI Refactor",
       "depends_on": [],
       "passed": false,
       "spec_file": ".super-harness/specs/2026-05-08-memory-system-v2.md",
