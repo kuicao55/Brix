@@ -393,10 +393,9 @@ async def test_stage_indicator_called_during_streaming():
 
         await cli._process_streaming("hello")
 
-    # update() should have been called for intent, route, planning
+    # update() should have been called for intent and planning
     update_calls = [c[0][0] for c in mock_indicator.update.call_args_list]
     assert "Intent" in update_calls
-    assert "Route" in update_calls
     assert "Planning" in update_calls
 
 

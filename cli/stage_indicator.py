@@ -23,8 +23,8 @@ class StageIndicator:
     The line disappears when finish() is called (transient Live).
     """
 
-    def __init__(self, console: Console) -> None:
-        self._spinner = Spinner(console, label="Thinking...")
+    def __init__(self, console: Console, label: str = "Thinking...") -> None:
+        self._spinner = Spinner(console, label=label)
         self._spinner.start()
 
     def update(self, stage: str) -> None:

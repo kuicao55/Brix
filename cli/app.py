@@ -229,7 +229,7 @@ class BrixCLI:
                    context_window=[{"role": m.get("role"), "content": m.get("content", "")}
                                    for m in context_window])
 
-        # Intent stage
+        # Intent stage (LLM call — takes time)
         indicator.update("Intent")
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
@@ -237,10 +237,8 @@ class BrixCLI:
             default_model, hooks=hooks,
         )
 
-        # Complexity + Route stages
-        indicator.update("Complexity")
+        # Complexity + Route stages (instant — no spinner update needed)
         complexity = evaluate_complexity(user_input)
-        indicator.update("Route")
         model = select_model(intent, complexity, self._config)
 
         hooks.fire("complexity", result=complexity)
