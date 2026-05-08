@@ -6,6 +6,7 @@ Step 4 (GREEN): all should pass after implementation.
 """
 
 import json
+import logging
 import pytest
 from memory.session import SessionManager
 from memory.storage import MemoryStorage
@@ -213,3 +214,49 @@ def test_corrupt_session_file_falls_back_to_empty(tmp_path):
     # Should still be able to add messages and save
     storage.add_message("user", "hello")
     assert len(storage.get_history()) == 1
+
+
+def test_corrupt_session_file_is_quarantined(tmp_path, caplog):
+    """Corrupt session file should be renamed to .corrupt, not silently dropped.
+
+    When MemoryStorage detects a corrupt session (ValueError from load_session),
+    it must quarantine the file by renaming it to session-<id>.json.corrupt.
+    This preserves the corrupt data for potential recovery.
+    """
+    import uuid
+    import logging
+
+    sm = SessionManager(tmp_path)
+    sid = str(uuid.uuid4())
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_path = session_dir / f"session-{sid}.json"
+    corrupt_path = session_dir / f"session-{sid}.json.corrupt"
+
+    # Write structurally corrupt JSON
+    corrupt_data = '{"corrupt": true}'
+    session_path.write_text(corrupt_data, encoding="utf-8")
+
+    # Capture log output
+    with caplog.at_level(logging.WARNING, logger="memory.storage"):
+        storage = MemoryStorage(session_manager=sm, session_id=sid)
+
+    # Corrupt file should have been renamed to .corrupt
+    assert corrupt_path.exists(), "Corrupt file should be quarantined as .corrupt"
+    assert not session_path.exists(), "Original corrupt file should be renamed away"
+    assert corrupt_path.read_text(encoding="utf-8") == corrupt_data
+
+    # Should log a warning
+    assert any("corrupt" in record.message.lower() or "quarantine" in record.message.lower()
+               for record in caplog.records)
+
+    # Storage should work normally with empty messages
+    assert storage.get_history() == []
+    storage.add_message("user", "hello")
+    storage.save()
+
+    # save() should write a fresh (non-corrupt) file at the original path
+    assert session_path.exists(), "save() should write a fresh session file"
+    saved = sm.load_session(sid)
+    assert len(saved) == 1
+    assert saved[0]["role"] == "user"
