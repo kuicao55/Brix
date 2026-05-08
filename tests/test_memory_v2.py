@@ -711,3 +711,171 @@ class TestCorruptedSessionFileHandling:
 
         with pytest.raises(ValueError, match="corrupted"):
             sm.load_session(sid)
+
+
+# ─── Code Quality Finding: list_sessions stale cleanup without lock ────
+
+class TestListSessionsStaleCleanupLocking:
+    """list_sessions 的陈旧条目清理必须在 _with_index_lock 保护下写入索引。"""
+
+    def test_list_sessions_stale_cleanup_save_is_protected_by_lock(self, tmp_path):
+        """陈旧条目清理的 _save_index 调用必须在 _with_index_lock 内执行。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+
+        sid1 = sm.create_session()
+        sm.save_session(sid1, [{"role": "user", "content": "first"}])
+        sid2 = sm.create_session()
+        sm.save_session(sid2, [{"role": "user", "content": "second"}])
+
+        # 删除 sid2 文件，制造陈旧条目
+        (tmp_path / "sessions" / f"session-{sid2}.json").unlink()
+
+        # 跟踪 _save_index 是否在 _with_index_lock 内被调用
+        lock_depth = {"value": 0}
+        save_calls_in_lock: list[bool] = []
+
+        original_lock = sm._with_index_lock
+        original_save = sm._save_index
+
+        def patched_lock(fn):
+            lock_depth["value"] += 1
+            try:
+                return original_lock(fn)
+            finally:
+                lock_depth["value"] -= 1
+
+        def patched_save(index):
+            save_calls_in_lock.append(lock_depth["value"] > 0)
+            return original_save(index)
+
+        sm._with_index_lock = patched_lock
+        sm._save_index = patched_save
+
+        sm.list_sessions()
+
+        # 陈旧清理的 _save_index 应在锁内被调用
+        assert save_calls_in_lock, "No _save_index calls detected during stale cleanup"
+        assert all(save_calls_in_lock), (
+            "list_sessions called _save_index for stale cleanup outside _with_index_lock"
+        )
+
+
+# ─── Code Quality Finding: _load_index accepts malformed entries ──────
+
+class TestLoadIndexValidatesElementShape:
+    """_load_index 应验证每个元素是带 'id' 键的 dict，否则触发重建。"""
+
+    def test_load_index_rebuilds_on_list_of_strings(self, tmp_path):
+        """index.json 是 ["a", "b"] 时应触发重建而非返回原始数据。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # 创建一个有效的 session 文件
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 写入畸形 index：list of strings
+        (sessions_dir / "index.json").write_text(
+            json.dumps(["string-entry-1", "string-entry-2"]),
+            encoding="utf-8",
+        )
+
+        sessions = sm.list_sessions()
+        # 应从 session 文件重建，只包含有效条目
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_load_index_rebuilds_on_list_of_dicts_without_id(self, tmp_path):
+        """index.json 是 [{"foo": "bar"}]（无 id 键）时应触发重建。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 畸形 index：dict without "id"
+        (sessions_dir / "index.json").write_text(
+            json.dumps([{"foo": "bar"}, {"baz": 42}]),
+            encoding="utf-8",
+        )
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_load_index_rebuilds_on_mixed_valid_and_invalid(self, tmp_path):
+        """index.json 包含部分有效、部分无效条目时应整体重建。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        # 混合：一个有效 dict + 一个非 dict
+        (sessions_dir / "index.json").write_text(
+            json.dumps([
+                {"id": valid_sid, "created": "2026-05-08T10:00:00Z",
+                 "updated": "2026-05-08T10:00:00Z", "message_count": 1, "preview": "valid"},
+                "not-a-dict",
+            ]),
+            encoding="utf-8",
+        )
+
+        sessions = sm.list_sessions()
+        # 应触发重建，从 session 文件恢复
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_load_index_rebuilds_on_list_of_ints(self, tmp_path):
+        """index.json 是 [1, 2, 3] 时应触发重建。"""
+        from memory.session import SessionManager
+        import uuid as _uuid
+        sm = SessionManager(tmp_path)
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        valid_sid = str(_uuid.uuid4())
+        (sessions_dir / f"session-{valid_sid}.json").write_text(
+            json.dumps([{"role": "user", "content": "valid"}]),
+            encoding="utf-8",
+        )
+
+        (sessions_dir / "index.json").write_text(
+            json.dumps([1, 2, 3]),
+            encoding="utf-8",
+        )
+
+        sessions = sm.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == valid_sid
+
+    def test_load_index_valid_entries_are_accepted(self, tmp_path):
+        """index.json 全部条目格式正确时不应触发重建。"""
+        from memory.session import SessionManager
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        sm.save_session(sid, [{"role": "user", "content": "hello"}])
+
+        # 直接调用 _load_index，不应触发重建
+        index = sm._load_index()
+        assert len(index) == 1
+        assert index[0]["id"] == sid

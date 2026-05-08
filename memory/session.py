@@ -71,13 +71,17 @@ class SessionManager:
         if isinstance(raw, dict) and "sessions" in raw:
             sessions = raw["sessions"]
             if isinstance(sessions, list):
-                return sessions
-            return self._rebuild_index()
+                raw = sessions
+            else:
+                return self._rebuild_index()
         # 格式 A：直接是 list
-        if isinstance(raw, list):
-            return raw
-        # 其他类型无法识别，重建
-        return self._rebuild_index()
+        if not isinstance(raw, list):
+            return self._rebuild_index()
+        # 验证每个元素是 dict 且包含 "id" 键
+        for entry in raw:
+            if not isinstance(entry, dict) or "id" not in entry:
+                return self._rebuild_index()
+        return raw
 
     def _rebuild_index(self) -> list[dict[str, Any]]:
         """从 sessions 目录中的 session-*.json 文件重建索引。"""
@@ -234,13 +238,18 @@ class SessionManager:
         # 检查索引条目对应的 session 文件是否存在
         # 只检查 message_count > 0 的条目：create_session 创建的空条目
         # 尚无 session 文件，属于正常状态。
+        # 陈旧条目清理在文件锁保护下执行，防止与并发 create/save 冲突。
         stale = [
             e for e in index
             if e.get("message_count", 0) > 0
             and not (self._sessions_dir / f"session-{e['id']}.json").exists()
         ]
         if stale:
-            stale_ids = {e["id"] for e in stale}
-            index = [e for e in index if e["id"] not in stale_ids]
-            self._save_index(index)
+            def _remove_stale() -> list[dict[str, Any]]:
+                fresh_index = self._load_index()
+                stale_ids = {e["id"] for e in stale}
+                cleaned = [e for e in fresh_index if e["id"] not in stale_ids]
+                self._save_index(cleaned)
+                return cleaned
+            return self._with_index_lock(_remove_stale)
         return index
