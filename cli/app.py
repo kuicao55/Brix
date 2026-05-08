@@ -8,6 +8,7 @@ from typing import Any
 
 from prompt_toolkit import HTML, PromptSession
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.shortcuts.choice_input import ChoiceInput
 from rich.console import Console
 
 from capability.runner import ToolRunner
@@ -75,7 +76,7 @@ class BrixCLI:
 
             # Slash commands
             if text.startswith("/"):
-                if self._handle_command(text):
+                if await self._handle_command(text):
                     continue
                 # /quit returns True from _handle_command after printing
 
@@ -89,7 +90,7 @@ class BrixCLI:
     # Command handling
     # ------------------------------------------------------------------
 
-    def _handle_command(self, text: str) -> bool:
+    async def _handle_command(self, text: str) -> bool:
         """Handle slash commands. Returns True to continue the loop."""
         cmd = text.split()[0].lower()
 
@@ -177,32 +178,32 @@ class BrixCLI:
             return True
 
         if cmd == "/log":
-            parts = text.split()
             total = entry_count()
             if total == 0:
                 print("No logs yet.")
                 return True
 
-            # /log <number> — show detail (numbering matches the reverse-sorted display)
-            if len(parts) > 1 and parts[1].isdigit():
-                display_idx = int(parts[1])
-                if display_idx < 1 or display_idx > total:
-                    print(f"Log #{display_idx} not found. (1-{total})")
-                    return True
-                # Display #1 = newest = last entry in file
-                file_idx = total - display_idx + 1
-                entry = read_entry(file_idx)
-                if entry is None:
-                    print(f"Log #{display_idx} not found. (1-{total})")
-                else:
-                    print(format_detail(entry))
-                return True
+            # Show last 20 entries as interactive selection
+            entries = read_all()[-20:][::-1]  # newest first
+            options = []
+            for i, entry in enumerate(entries, 1):
+                ts = entry.get("ts", "?")
+                trace = entry.get("trace", "?")
+                preview = entry.get("input", "")[:50].replace("\n", " ")
+                ms = entry.get("ms_total", 0)
+                error = entry.get("error")
+                status = "ERR" if error else "OK"
+                label = f"#{i}  {ts} [{trace}]  {ms}ms  {status}  \"{preview}\""
+                options.append((i, label))
 
-            # /log — show compact list of last 20, newest first
-            entries = read_all()[-20:][::-1]
-            print(f"Recent logs (newest first, 1-{total}):\n")
-            print(format_compact_list(entries, 1))
-            print(f"\nUse /log <number> to view details")
+            selector = ChoiceInput(
+                message="Select a log entry (arrow keys + Enter):",
+                options=options,
+            )
+            selected = await selector.prompt_async()
+            if selected is not None:
+                entry = entries[selected - 1]
+                print(format_detail(entry))
             return True
 
         print(f"Unknown command: {cmd}")

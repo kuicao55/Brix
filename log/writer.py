@@ -8,7 +8,7 @@ import os
 from collections import deque
 from pathlib import Path
 
-LOG_DIR = Path("data/logs")
+LOG_DIR = Path("log/data")
 JSONL_PATH = LOG_DIR / "brix.jsonl"
 
 logger = logging.getLogger(__name__)
