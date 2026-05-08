@@ -231,7 +231,8 @@ class SessionManager:
             # 使用 session 锁内捕获的最终消息列表（避免重新读取产生竞态）
             final_messages = final_messages_ref[0]
             index = self._load_index()
-            now = datetime.now(timezone.utc).isoformat()
+            now_dt = datetime.now(timezone.utc)
+            now = now_dt.isoformat()
             preview = ""
             for msg in final_messages:
                 if msg.get("role") == "user":
@@ -240,8 +241,15 @@ class SessionManager:
             found = False
             for entry in index:
                 if entry["id"] == session_id:
-                    # 单调更新：只前进不回退，防止并发写入导致索引回归
-                    if now >= entry.get("updated", ""):
+                    # 单调更新：比较 datetime 对象，避免 ISO 格式差异（Z vs +00:00）
+                    existing_updated = entry.get("updated", "")
+                    try:
+                        existing_dt = datetime.fromisoformat(
+                            existing_updated.replace("Z", "+00:00")
+                        )
+                    except (ValueError, AttributeError):
+                        existing_dt = datetime.min.replace(tzinfo=timezone.utc)
+                    if now_dt >= existing_dt:
                         entry["updated"] = now
                         entry["message_count"] = len(final_messages)
                         entry["preview"] = preview
@@ -301,7 +309,9 @@ class SessionManager:
             except ValueError:
                 continue
             if sid not in indexed_ids:
-                return self._rebuild_index()
+                rebuilt = self._rebuild_index()
+                self._with_index_lock(lambda: self._save_index(rebuilt))
+                return rebuilt
         # 检查索引条目对应的 session 文件是否存在
         # 只检查 message_count > 0 的条目：create_session 创建的空条目
         # 尚无 session 文件，属于正常状态。
