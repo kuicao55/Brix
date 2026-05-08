@@ -188,14 +188,9 @@ class SessionManager:
         _validate_session_id(session_id)
         session_path = self._sessions_dir / f"session-{session_id}.json"
 
-        if base_count is not None:
-            # 并发安全：在 session 文件锁下读-合并-写
-            def _merge_and_write() -> None:
-                # 清空操作（messages 为空）直接写入，不合并
-                if not messages:
-                    self._atomic_write_json(session_path, messages)
-                    return
-
+        def _write_session() -> None:
+            if base_count is not None and messages:
+                # 并发安全合并：读取磁盘最新状态，追加本次新增消息
                 if session_path.exists():
                     try:
                         existing = json.loads(session_path.read_text(encoding="utf-8"))
@@ -206,22 +201,19 @@ class SessionManager:
                 else:
                     existing = []
 
-                # 本次新增的消息（相对于加载时的 base_count）
                 new_messages = messages[base_count:]
                 disk_has_new = len(existing) > base_count
 
                 if disk_has_new:
-                    # 其他实例已写入新消息，合并：磁盘已有 + 本次新增
                     merged = existing + new_messages
                 else:
-                    # 无并发写入，直接使用当前消息
                     merged = messages
-
                 self._atomic_write_json(session_path, merged)
-            self._with_session_lock(session_id, _merge_and_write)
-        else:
-            # 无 base_count，直接写入（向后兼容）
-            self._atomic_write_json(session_path, messages)
+            else:
+                # 直接写入（向后兼容 / 清空操作 / 首次保存）
+                self._atomic_write_json(session_path, messages)
+
+        self._with_session_lock(session_id, _write_session)
 
         def _update_index() -> None:
             # 重新读取实际写入的消息用于索引更新
