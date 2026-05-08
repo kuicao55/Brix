@@ -1093,3 +1093,64 @@ class TestMemoryStrategyBuildPrompt:
         count = prompt.lower().count(guard_marker)
         assert count >= 4, \
             f"数据隔离声明应出现至少 4 次，实际出现 {count} 次"
+
+
+# ─── Task 4: MemoryProvider Protocol + BrixMemoryProvider ──────────────
+
+class TestBrixMemoryProvider:
+    """BrixMemoryProvider Protocol 遵从测试。"""
+
+    def test_implements_protocol(self, tmp_path):
+        from memory import MemoryProvider, create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        assert isinstance(provider, MemoryProvider)
+
+    def test_create_session(self, tmp_path):
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        sid = provider.create_session()
+        assert isinstance(sid, str)
+        assert len(sid) == 36
+
+    def test_add_message_and_save(self, tmp_path):
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        provider.add_message("user", "hello")
+        provider.add_message("assistant", "hi")
+        provider.save_session()
+        sessions = provider.list_sessions()
+        assert len(sessions) >= 1
+
+    def test_load_session(self, tmp_path):
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        provider.add_message("user", "hello")
+        provider.save_session()
+        sid = provider.list_sessions()[0]["id"]
+        messages = provider.load_session(sid)
+        assert len(messages) == 1
+        assert messages[0]["content"] == "hello"
+
+    def test_soul_and_user_defaults(self, tmp_path):
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        assert provider.soul_exists() is False
+        assert provider.user_memory_exists() is False
+        assert provider.load_soul() == ""
+        assert provider.load_user_memory() == ""
+
+    def test_build_system_prompt_onboarding(self, tmp_path):
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        prompt = provider.build_system_prompt()
+        assert "Onboarding" in prompt or "soul.md" in prompt
+
+    def test_get_context_messages(self, tmp_path):
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        provider.add_message("user", "hello")
+        provider.add_message("assistant", "hi")
+        prompt = provider.build_system_prompt()
+        messages = provider.get_context_messages(prompt)
+        assert len(messages) >= 1
+        assert messages[0]["role"] == "system"
