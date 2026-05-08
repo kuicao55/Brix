@@ -13,19 +13,23 @@
 | Agent 循环 | 状态机/LangGraph 双引擎 | AsyncGenerator 状态机 | 泛型 `ConversationRuntime<C,T>` |
 | 工具系统 | ABC 继承 + ToolRunner 注册 | 丰富接口 (权限/渲染/分类/并发) | Trait 抽象 + 静态注册表 |
 | 流式输出 | 无 | 全链路 SSE 流式 | SSE 流式 + 终端 spinner |
+| 终端 UI | print() 无格式 | React/Ink 双缓冲 + Markdown + 动画 | crossterm + Markdown 渲染 + Spinner |
 | 上下文管理 | 字符数截断 (4000 字) | 多层压缩 (auto/micro/snip/collapse) | Token 阈值自动压缩 |
 | 扩展机制 | 子类化 Tool | Hooks + Plugins + Skills + MCP | Hooks + MCP + 自定义命令 |
 | 配置 | 单 YAML 文件 | 多层级合并 (全局/项目/本地/CLI/env) | 三层 JSON 合并 |
 | 权限系统 | 文件读取有路径检查 | 完整分级权限 + 规则匹配 | 分级权限 + 交互式确认 |
 | 部署 | pip install | npm 全局安装 | cargo build 单二进制 |
 
-**核心判断**：Brix 的 7 层架构骨架设计良好，但缺少"血肉"——流式体验、上下文智能管理、扩展钩子这三个日常助手最关键的能力。下面按优先级分层给出改进方案。
+**核心判断**：Brix 的 7 层架构骨架设计良好，但缺少"血肉"——流式体验、上下文智能管理、扩展钩子、终端交互美化这四个日常助手最关键的能力。下面按优先级分层给出改进方案。
 
 ---
 
 ## 二、P0 — 必须优先改进（影响日常使用体验）
 
-### 2.1 流式输出 (Streaming Output)
+### 2.1 流式输出 (Streaming Output) ✅ 已完成
+
+> **实现位置**: `cli/stream_renderer.py` — `StreamRenderer` + `_MarkerMarkdown`，`infra/providers/openai_compat.py` + `anthropic_compat.py` — `chat_stream()`，`orchestrator/state_machine.py` — `run_stream()`
+> **集成状态**: `cli/app.py` 全链路流式 — 从 API SSE → 文本增量 → Safe Boundary 渲染 → 实时 Markdown 输出
 
 **现状问题**：Brix 当前等待 LLM 完整返回后才显示，用户看到的是"空白等待 → 一大段文字"，体感慢。
 
@@ -66,6 +70,13 @@ async for chunk in engine.run_stream(ctx):
 
 **工作量**：中等 (2-3 天)。需要改 LLM Client、Orchestrator、CLI 三层。
 **收益**：体感速度提升 3-5 倍，这是日常助手最核心的体验差距。
+
+**实际完成内容**：
+- `infra/providers/openai_compat.py` — `chat_stream()` SSE 流式
+- `infra/providers/anthropic_compat.py` — `chat_stream()` Anthropic 流式
+- `orchestrator/state_machine.py` — `run_stream()` 流式编排循环
+- `cli/stream_renderer.py` — Safe Boundary 检测 + Rich Live 实时渲染 + `_MarkerMarkdown` 内联标记
+- `cli/app.py` — `_process_streaming()` 全链路流式消费
 
 ### 2.2 上下文智能管理 (Context Compaction)
 
@@ -138,7 +149,7 @@ class AutoCompactor:
 
 **收益**：支持长对话不丢失上下文，日常助手的核心需求。
 
-### 2.3 LLM 调用重试与错误处理
+### 2.3 LLM 调用重试与错误处理 ⏳ 待实现
 
 **现状问题**：LLM 调用失败直接抛异常或走 heuristic fallback，没有重试机制。日常使用中网络波动、API 限流很常见。
 
@@ -252,7 +263,7 @@ async def run(self, tool_name, params, hook_registry=None):
 - 修改工具输入（如自动添加路径前缀）
 - 集成外部系统（如 Slack 通知）
 
-### 3.2 Skill / 快捷命令系统
+### 3.2 Skill / 快捷命令系统 ⏳ 待实现
 
 **现状问题**：Brix 只有 REPL 输入框，没有预设的快捷操作。
 
@@ -304,7 +315,7 @@ class SkillRegistry:
 
 **收益**：提升日常使用效率，Skill 文件是纯 Markdown，用户可以轻松自定义。
 
-### 3.3 层级化配置系统
+### 3.3 层级化配置系统 ⏳ 待实现
 
 **现状问题**：单个 `settings.yaml` 无法区分全局默认、项目配置、本地覆盖。
 
@@ -352,7 +363,7 @@ class ConfigLoader:
 
 ## 四、P2 — 锦上添花（提升健壮性和未来扩展）
 
-### 4.1 MCP (Model Context Protocol) 支持
+### 4.1 MCP (Model Context Protocol) 支持 ⏳ 待实现
 
 **现状问题**：工具只能通过 Python 代码添加，无法动态接入外部工具服务。
 
@@ -379,7 +390,7 @@ class MCPClient:
 **工作量**：3-5 天。
 **收益**：接入丰富的 MCP 生态（数据库、浏览器、文件系统、API 等），大幅扩展 Brix 能力而无需自己写工具。
 
-### 4.2 工具并发执行
+### 4.2 工具并发执行 ⏳ 待实现
 
 **现状问题**：工具串行执行，当 LLM 一次返回多个工具调用时会依次等待。
 
@@ -423,7 +434,7 @@ class ToolRunner:
 
 **收益**：多工具调用场景下速度提升明显（如同时读取多个文件）。
 
-### 4.3 System Prompt 动态组装
+### 4.3 System Prompt 动态组装 ⏳ 待实现
 
 **现状问题**：System prompt 是静态的，无法根据工具、上下文动态调整。
 
@@ -458,7 +469,7 @@ class SystemPromptBuilder:
 
 **收益**：让 LLM 更了解当前环境和可用工具，提升响应质量。
 
-### 4.4 权限系统
+### 4.4 权限系统 ⏳ 待实现
 
 **现状问题**：只有 `FileReadTool` 有路径检查，其他工具无权限控制。
 
@@ -490,7 +501,11 @@ class PermissionPolicy:
 
 ## 五、架构层面的改进建议
 
-### 5.1 用 AsyncGenerator 重写 Orchestrator
+### 5.1 用 AsyncGenerator 重写 Orchestrator ✅ 已完成
+
+> **实现位置**: `orchestrator/state_machine.py` — `run_stream()` + `orchestrator/engine.py` — Protocol `run_stream()`
+
+
 
 **当前**：`run()` 方法返回 `str`，阻塞式。
 **改进**：改为 `AsyncGenerator[str, None]`，支持流式输出。
@@ -510,7 +525,7 @@ class OrchestratorEngine(Protocol):
         yield "结果是 42"
 ```
 
-### 5.2 解决 `OrchestratorContext` 中的 `Any` 类型
+### 5.2 解决 `OrchestratorContext` 中的 `Any` 类型 ⏳ 待实现
 
 **当前**：为避免循环导入，`tool_runner`、`llm_client`、`log` 都是 `Any`。
 **改进**：使用 `TYPE_CHECKING` 守卫 + 前向引用。
@@ -536,7 +551,7 @@ class OrchestratorContext:
 
 **收益**：类型安全，IDE 补全更好，减少运行时错误。
 
-### 5.3 工具自动发现
+### 5.3 工具自动发现 ⏳ 待实现
 
 **当前**：新工具需要在 `cli/app.py::_register_tools()` 中手动注册。
 **改进**：扫描 `capability/tools/` 目录，自动发现并注册。
@@ -573,7 +588,7 @@ def discover_tools(tools_dir: Path) -> list[Tool]:
 | 完整的 Plugin 系统 | 过度工程化，Brix 的工具系统 + Hook 已足够 |
 | 子 Agent / Fork 机制 | 日常助手不需要多 Agent 协作，增加复杂度 |
 | Git Worktree 隔离 | 这是编码助手的需求，非日常助手 |
-| 终端 UI 框架 (React/Ink) | Python 生态用 Rich 就够，不需要引入重框架 |
+| 终端 UI 框架 (React/Ink) | Python 生态用 Rich 就够，不需要引入重框架（见第十一节 Rich 方案） |
 | MCP Server 模式 | Brix 是客户端，不需要暴露为 MCP Server |
 | 企业级权限 (MDM/策略) | 个人助手不需要 |
 | 多语言 (Rust) 重写 | Python 开发效率高，Brix 不追求极致性能 |
@@ -583,49 +598,62 @@ def discover_tools(tools_dir: Path) -> list[Tool]:
 ## 七、推荐实施路线图
 
 ```
-Phase 1 — 体验提升 (1-2 周)
-├── [P0] 流式输出 — 改 LLM Client + Orchestrator + CLI
-├── [P0] Token 计数 — 替换 MemoryStrategy
-├── [P0] LLM 重试 — 添加指数退避
-└── [P1] 层级化配置 — 改 ConfigLoader
+Phase 1 — 体验提升 (2-3 周)
+├── [P0] 流式输出 + 实时 Markdown 渲染 — StreamRenderer + engine.run_stream  ✅
+├── [P0] Spinner 进度指示器 — cli/spinner.py  ✅
+├── [P0] Token 计数 — 替换 MemoryStrategy  ⏳
+├── [P0] LLM 重试 — 添加指数退避  ⏳
+├── [P1] 工具执行状态面板 — cli/tool_display.py  ✅
+├── [P1] 启动 Banner — cli/banner.py  ✅
+├── [P1] Markdown 渲染主题 — cli/theme.py  ✅
+└── [P1] 层级化配置 — 改 ConfigLoader  ⏳
 
 Phase 2 — 扩展性基础 (1-2 周)
-├── [P1] Hook 系统 — 新增 infra/hooks.py
-├── [P1] Skill 系统 — 新增 capability/skill.py
-├── [P2] 工具自动发现 — 改 capability/runner.py
-└── [P2] System Prompt 动态组装
+├── [P1] Hook 系统 — hooks/registry.py  ✅
+├── [P1] Skill 系统 — 新增 capability/skill.py  ⏳
+├── [P2] 工具自动发现 — 改 capability/runner.py  ⏳
+└── [P2] System Prompt 动态组装  ⏳
 
 Phase 3 — 健壮性 (1 周)
-├── [P2] 上下文智能压缩 — AutoCompactor
-├── [P2] 工具并发执行
-├── [P2] 权限系统
-└── [P2] 类型安全改进
+├── [P2] 上下文智能压缩 — AutoCompactor  ⏳
+├── [P2] 工具并发执行  ⏳
+├── [P2] 权限系统  ⏳
+├── [P2] 状态报告格式化 — cli/status_display.py  ⏳
+├── [P2] 错误友好展示 — cli/error_display.py  ⏳
+└── [P2] 类型安全改进  ⏳
 
 Phase 4 — 生态接入 (2 周+)
-├── [P2] MCP 客户端 (stdio)
-├── 更多内置工具 (日历、邮件、笔记等)
-└── Web 入口 (FastAPI + WebSocket)
+├── [P2] MCP 客户端 (stdio)  ⏳
+├── 更多内置工具 (日历、邮件、笔记等)  ⏳
+└── Web 入口 (FastAPI + WebSocket)  ⏳
 ```
 
 ---
 
 ## 八、关键文件改动清单
 
-| 文件 | 改动内容 | 优先级 |
-|------|----------|--------|
-| `infra/llm_client.py` | 添加 stream 方法 + retry 逻辑 | P0 |
-| `infra/providers/openai_compat.py` | 实现 SSE 流式 | P0 |
-| `infra/providers/anthropic_compat.py` | 实现 Anthropic 流式 | P0 |
-| `orchestrator/engine.py` | 协议增加 `run_stream` | P0 |
-| `orchestrator/state_machine.py` | 实现流式执行 | P0 |
-| `memory/strategy.py` | Token 计数替代字符计数 | P0 |
-| `memory/compaction.py` | 新增：自动压缩 | P1 |
-| `config/loader.py` | 层级化配置加载 | P1 |
-| `infra/hooks.py` | 新增：Hook 注册与执行 | P1 |
-| `capability/skill.py` | 新增：Skill 注册与加载 | P1 |
-| `capability/runner.py` | 工具自动发现 + 并发执行 | P2 |
-| `cli/app.py` | 适配流式输出 + Skill 命令 | P0/P1 |
-| `cli/display.py` | 流式渲染 + 可选 Rich 美化 | P0 |
+| 文件 | 改动内容 | 优先级 | 状态 |
+|------|----------|--------|------|
+| `infra/llm_client.py` | 添加 stream 方法 + retry 逻辑 | P0 | ⏳ |
+| `infra/providers/openai_compat.py` | 实现 SSE 流式 | P0 | ✅ |
+| `infra/providers/anthropic_compat.py` | 实现 Anthropic 流式 | P0 | ✅ |
+| `orchestrator/engine.py` | 协议增加 `run_stream` | P0 | ✅ |
+| `orchestrator/state_machine.py` | 实现流式执行 | P0 | ✅ |
+| `memory/strategy.py` | Token 计数替代字符计数 | P0 | ⏳ |
+| `cli/stream_renderer.py` | 流式 Markdown 渲染器 + `_MarkerMarkdown` 内联标记 | P0 | ✅ |
+| `cli/spinner.py` | Braille 点动画 Spinner | P0 | ✅ |
+| `cli/stage_indicator.py` | **新增**：统一加载 spinner (update in-place) | P0 | ✅ |
+| `cli/tool_display.py` | 工具执行状态面板 + ⏺/⎿ 标记 | P1 | ✅ |
+| `cli/theme.py` | Brix 终端主题 (Rich Theme) | P1 | ✅ |
+| `cli/banner.py` | 启动 ASCII Banner | P1 | ✅ |
+| `cli/status_display.py` | **新增**：状态报告格式化 | P2 | ⏳ |
+| `cli/error_display.py` | **新增**：友好错误展示 | P2 | ⏳ |
+| `memory/compaction.py` | 新增：自动压缩 | P1 | ⏳ |
+| `config/loader.py` | 层级化配置加载 | P1 | ⏳ |
+| `hooks/registry.py` | Hook 注册与执行 | P1 | ✅ |
+| `capability/skill.py` | 新增：Skill 注册与加载 | P1 | ⏳ |
+| `capability/runner.py` | 工具自动发现 + 并发执行 | P2 | ⏳ |
+| `cli/app.py` | 适配流式输出 + Spinner + 标记 + Skill 命令 | P0/P1 | ✅ |
 
 ---
 
@@ -636,8 +664,9 @@ Brix 的 7 层架构骨架是好的——Protocol/ABC 的抽象、YAML 配置驱
 1. **没有流式输出** — 这是日常助手最大的体验短板
 2. **上下文管理太简单** — 字符截断无法支撑长对话
 3. **缺少 Hook 机制** — 扩展需要改核心代码
+4. **终端交互空白** — 没有 Markdown 渲染、Spinner、工具状态面板，体验粗糙
 
-这三个问题解决后，Brix 就具备了一个实用日常助手的基础能力。后续的 Skill 系统、MCP 支持、工具自动发现则是让 Brix 从"能用"变成"好用"的关键。
+这四个问题解决后，Brix 就具备了一个实用日常助手的基础能力。后续的 Skill 系统、MCP 支持、工具自动发现则是让 Brix 从"能用"变成"好用"的关键。
 
 **总原则**：借鉴 Claude Code / Claw Code 的设计思想，但保持 Brix 的轻量定位。不追求功能全面，追求每个功能都简单好用。
 
@@ -889,3 +918,607 @@ Hook 系统
 ```
 
 这就是把 FlowLog 建在 Hook 上的核心价值：**不只是改了个调用方式，而是为整个扩展体系打下地基**。
+
+---
+
+## 十一、终端美化与交互体验改进方案
+
+> 基于对 Claude Code (TypeScript + 自定义 Ink 框架) 和 Claw Code (Rust + crossterm) 的终端 UI 实现的深入分析，
+> 结合 Brix 的 Python 技术栈，设计适合 Rich 生态的终端美化方案。
+
+### 11.1 两个项目的终端 UI 架构对比
+
+| 维度 | Claude Code | Claw Code | Brix (当前) |
+|------|------------|-----------|-------------|
+| UI 框架 | 自定义 Ink (React + Yoga flexbox) | crossterm (裸 ANSI) | print() 无格式 |
+| 渲染模式 | 双缓冲 + 帧差分 + 60fps | 直接写 stdout | 无 |
+| Markdown 渲染 | marked.lexer + highlight.js + LRU 缓存 | pulldown-cmark + syntect | 无 |
+| Spinner | React 动画组件 + 闪烁检测 | Braille 点帧动画 | 无 |
+| 流式显示 | Ink dirty-node 增量更新 | MarkdownStreamState 安全边界检测 | 无 |
+| 工具状态 | 动画点 + 进度消息 + 分类器徽章 | 盒子绘制面板 + emoji 图标 | 无 |
+| 主题系统 | 6 套主题 80+ 颜色键 | ColorTheme 硬编码 | 无 |
+| 代码高亮 | highlight.js (异步 Suspense) | syntect (base16-ocean.dark) | 无 |
+| 输入编辑 | 自定义 TextInput + Vim 模式 | rustyline (Emacs 模式) | input() |
+
+**核心判断**：Claude Code 的 React/Ink 方案虽然强大但对 Brix 过重；Claw Code 的 crossterm 裸写方案灵活但维护成本高。Brix 应走 **Rich 库**路线——Python 生态最成熟的终端 UI 库，兼顾表现力和开发效率。
+
+### 11.2 技术选型：Rich 库
+
+```toml
+# pyproject.toml
+[project]
+dependencies = [
+    "rich>=13.0",       # 终端 UI 核心
+    "rich-live>=1.0",   # 实时刷新 (Rich 内置)
+]
+```
+
+Rich 提供的核心能力：
+- **Live Display**：实时刷新区域，类似 Claude Code 的双缓冲
+- **Markdown 渲染**：内置 Markdown → ANSI，支持代码块、表格、列表
+- **Syntax 高亮**：基于 Pygments，支持 300+ 语言
+- **Progress / Spinner**：多种动画样式
+- **Panel / Table / Tree**：结构化布局组件
+- **主题系统**：可自定义 Style
+
+### 11.3 流式输出 + 实时 Markdown 渲染 ✅ 已完成
+
+> **实现位置**: `cli/stream_renderer.py` — `StreamRenderer` + `_MarkerMarkdown` (内联标记 + 续行缩进)
+
+**现状问题**：Brix 等待 LLM 完整返回后一次性显示，无流式体验。
+
+**参考实现**：
+- Claude Code：Ink 的 dirty-node 增量更新，只重绘变化的子树
+- Claw Code：`MarkdownStreamState` 缓冲 token，检测安全边界（完整代码块围栏、空行）后才渲染，防止不完整 Markdown 破坏显示
+
+**改进方案**：
+
+```python
+# cli/stream_renderer.py — 新增
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+import re
+
+class StreamRenderer:
+    """流式输出渲染器，借鉴 Claw Code 的 MarkdownStreamState 设计"""
+
+    def __init__(self, console: Console):
+        self.console = console
+        self.pending = ""
+        self.rendered = ""
+        self.live: Live | None = None
+
+    def start(self):
+        self.live = Live(
+            console=self.console,
+            refresh_per_second=15,  # 15fps 足够流畅，节省 CPU
+            transient=False,        # 保留历史输出
+        )
+        self.live.start()
+
+    def push_delta(self, delta: str):
+        """接收 token 增量，检测安全边界后渲染"""
+        self.pending += delta
+        boundary = self._find_safe_boundary(self.pending)
+        if boundary is not None:
+            ready = self.pending[:boundary]
+            self.pending = self.pending[boundary:]
+            self.rendered += ready
+            self._update_display()
+
+    def flush(self):
+        """流结束，渲染剩余内容"""
+        if self.pending:
+            self.rendered += self.pending
+            self.pending = ""
+            self._update_display()
+        if self.live:
+            self.live.stop()
+
+    def _find_safe_boundary(self, text: str) -> int | None:
+        """
+        借鉴 Claw Code 的 find_stream_safe_boundary：
+        等待完整代码块围栏 (```) 或空行，避免渲染不完整的 Markdown
+        """
+        lines = text.split('\n')
+        in_fence = False
+        last_safe = 0
+
+        for i, line in enumerate(lines):
+            if line.strip().startswith('```'):
+                in_fence = not in_fence
+                if not in_fence:
+                    # 代码块闭合，这是安全点
+                    pos = sum(len(l) + 1 for l in lines[:i + 1])
+                    last_safe = pos
+            elif not in_fence and line.strip() == '' and i > 0:
+                # 空行且不在代码块内，也是安全点
+                pos = sum(len(l) + 1 for l in lines[:i + 1])
+                last_safe = pos
+
+        if last_safe > 0:
+            return last_safe
+        return None
+
+    def _update_display(self):
+        if self.live:
+            md = Markdown(self.rendered)
+            self.live.update(md)
+```
+
+**在 CLI 中集成**：
+
+```python
+# cli/app.py — 改造 _process 方法
+async def _process(self, user_input: str) -> str:
+    renderer = StreamRenderer(self.console)
+    renderer.start()
+
+    try:
+        async for chunk in engine.run_stream(ctx):
+            if isinstance(chunk, str):
+                renderer.push_delta(chunk)
+            elif isinstance(chunk, dict) and chunk.get("type") == "tool_call":
+                renderer.flush()
+                self._display_tool_call(chunk)
+    finally:
+        renderer.flush()
+```
+
+**工作量**：2-3 天（StreamRenderer + engine.run_stream 改造）
+**收益**：流式输出 + 实时 Markdown 渲染，体感速度提升 3-5 倍
+
+### 11.4 Markdown 终端渲染 ✅ 已完成
+
+> **实现位置**: `cli/theme.py` — `BRIX_THEME` (Rich Theme, markdown.* + tool.* + spinner.* + stage.* 样式)
+
+
+
+**参考实现**：
+- Claude Code：`marked.lexer` 解析 + `highlight.js` 语法高亮 + LRU 缓存 (500 条)
+- Claw Code：`pulldown-cmark` 解析 + `syntect` (base16-ocean.dark) + 暗色背景 `\x1b[48;5;236m`
+
+**Rich 内置方案**（零额外开发）：
+
+```python
+from rich.markdown import Markdown
+from rich.syntax import Syntax
+from rich.console import Console
+
+console = Console()
+
+# 直接渲染 Markdown（内置代码块高亮、表格、列表、引用）
+md = Markdown("""
+# 标题
+
+这是一个 **粗体** 和 *斜体* 的示例。
+
+```python
+def hello():
+    print("Hello, Brix!")
+```
+
+| 列1 | 列2 |
+|-----|-----|
+| A   | B   |
+""")
+console.print(md)
+```
+
+**增强：自定义 Markdown 渲染样式**
+
+```python
+# cli/theme.py — 新增
+from rich.theme import Theme
+from rich.style import Style
+
+BRIX_THEME = Theme({
+    "markdown.h1": Style(bold=True, color="cyan"),
+    "markdown.h2": Style(bold=True, color="bright_white"),
+    "markdown.h3": Style(color="blue"),
+    "markdown.code": Style(color="green"),
+    "markdown.code_block": Style(bgcolor="grey11"),
+    "markdown.link": Style(color="blue", underline=True),
+    "markdown.em": Style(italic=True, color="magenta"),       # 借鉴 Claw Code
+    "markdown.strong": Style(bold=True, color="yellow"),       # 借鉴 Claw Code
+    "markdown.blockquote": Style(color="grey50"),              # 借鉴 Claw Code
+    "tool.border": Style(color="grey50"),
+    "tool.name": Style(bold=True, color="cyan"),
+    "tool.success": Style(color="green"),
+    "tool.error": Style(color="red"),
+    "spinner.active": Style(color="blue"),
+    "spinner.done": Style(color="green"),
+    "spinner.failed": Style(color="red"),
+})
+```
+
+**工作量**：1 天（主要是主题微调）
+**收益**：代码块、表格、列表在终端中美观可读
+
+### 11.5 Spinner 与进度指示器 ✅ 已完成
+
+> **实现位置**: `cli/spinner.py` — `Spinner` (Braille 动画 + stop/finish/fail)，`cli/stage_indicator.py` — `StageIndicator` (统一 spinner，update in-place)
+
+
+
+**参考实现**：
+- Claude Code：React `SpinnerGlyph` 组件，120ms 帧率，`['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']` Braille 点动画，带闪烁检测和 stall 检测（颜色从主题色渐变到 `rgb(171,43,63)`），还有 token 计数器平滑递增动画
+- Claw Code：`Spinner` 结构体，10 帧 Braille 点，`SavePosition/RestorePosition` 原地覆盖，`tick/finish/fail` 三方法生命周期
+
+**改进方案**：
+
+```python
+# cli/spinner.py — 新增
+import sys
+import time
+import threading
+from rich.console import Console
+from rich.text import Text
+from rich.live import Live
+
+BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+class Spinner:
+    """借鉴 Claude Code + Claw Code 的 Spinner 设计"""
+
+    def __init__(self, console: Console, label: str = "Thinking..."):
+        self.console = console
+        self.label = label
+        self.frame_idx = 0
+        self.start_time = time.time()
+        self.running = False
+        self.live: Live | None = None
+        self._thread: threading.Thread | None = None
+
+    def _render_frame(self) -> Text:
+        elapsed = time.time() - self.start_time
+        frame = BRAILLE_FRAMES[self.frame_idx % len(BRAILLE_FRAMES)]
+        text = Text()
+        text.append(f"  {frame} ", style="spinner.active")
+        text.append(self.label, style="dim")
+        text.append(f"  {elapsed:.1f}s", style="dim cyan")  # 借鉴 Claude Code 的计时
+        return text
+
+    def start(self):
+        self.running = True
+        self.start_time = time.time()
+        self.live = Live(self._render_frame(), console=self.console,
+                         refresh_per_second=10, transient=True)
+        self.live.start()
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._thread.start()
+
+    def _animate(self):
+        while self.running:
+            self.frame_idx += 1
+            if self.live:
+                self.live.update(self._render_frame())
+            time.sleep(0.1)
+
+    def finish(self, label: str = "Done"):
+        self.running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        if self.live:
+            self.live.stop()
+        elapsed = time.time() - self.start_time
+        self.console.print(f"  [green]✔[/] {label}  [dim]{elapsed:.1f}s[/]")
+
+    def fail(self, label: str = "Failed"):
+        self.running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        if self.live:
+            self.live.stop()
+        elapsed = time.time() - self.start_time
+        self.console.print(f"  [red]✘[/] {label}  [dim]{elapsed:.1f}s[/]")
+
+    def update_label(self, label: str):
+        self.label = label
+```
+
+**工作量**：1 天
+**收益**：LLM 思考、工具执行时有动画反馈，不再"空白等待"
+
+### 11.6 工具执行状态面板 ✅ 已完成
+
+> **实现位置**: `cli/tool_display.py` — `ToolDisplay` (Panel 面板 + ⏺/⎿ 标记 + 颜色状态)
+
+
+
+**参考实现**：
+- Claude Code：`ToolUseLoader` 组件，黑色圆点闪烁动画 (`useBlink`)，状态分 queued/in-progress/resolved/error，工具结果通过 `tool.renderToolResultMessage()` 渲染
+- Claw Code：`format_tool_call_start` 函数，盒子绘制面板 `╭─ name ─╮ / │ detail / ╰──╯`，每种工具类型有自定义格式（bash 用暗色背景 `$ command`，edit 用红绿 diff 预览）
+
+**改进方案**：
+
+```python
+# cli/tool_display.py — 新增
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.console import Console
+from rich.table import Table
+import json
+
+class ToolDisplay:
+    """工具执行状态展示，借鉴 Claw Code 的盒子绘制风格"""
+
+    TOOL_ICONS = {
+        "file_read": "📄",
+        "file_write": "✏️",
+        "file_edit": "📝",
+        "bash": "⚡",
+        "web_search": "🔎",
+        "memory_read": "🧠",
+        "memory_write": "🧠",
+    }
+
+    def __init__(self, console: Console):
+        self.console = console
+
+    def show_tool_start(self, tool_name: str, tool_input: dict):
+        """工具开始执行 — 盒子面板"""
+        icon = self.TOOL_ICONS.get(tool_name, "🔧")
+        detail = self._format_tool_detail(tool_name, tool_input)
+
+        panel = Panel(
+            detail,
+            title=f"[tool.name]{icon} {tool_name}[/]",
+            title_align="left",
+            border_style="tool.border",
+            padding=(0, 1),
+        )
+        self.console.print(panel)
+
+    def show_tool_result(self, tool_name: str, result: str, elapsed_ms: float,
+                         is_error: bool = False):
+        """工具执行完成 — 简洁结果行"""
+        icon = self.TOOL_ICONS.get(tool_name, "🔧")
+        status_style = "tool.error" if is_error else "tool.success"
+        status_icon = "✘" if is_error else "✔"
+        elapsed_str = f"{elapsed_ms:.0f}ms"
+
+        # 截断过长结果
+        preview = result[:200].replace('\n', ' ')
+        if len(result) > 200:
+            preview += "…"
+
+        text = Text()
+        text.append(f"  {icon} ", style="dim")
+        text.append(f"{tool_name}", style="tool.name")
+        text.append(f"  {status_icon}", style=status_style)
+        text.append(f"  {elapsed_str}", style="dim cyan")
+        if is_error:
+            text.append(f"  {preview}", style="tool.error")
+
+        self.console.print(text)
+
+    def _format_tool_detail(self, tool_name: str, tool_input: dict) -> str:
+        """按工具类型格式化详情"""
+        if tool_name == "bash":
+            cmd = tool_input.get("command", "")
+            return f"[white on grey11]$ {cmd}[/]"  # 借鉴 Claw Code 暗色背景
+        elif tool_name == "file_read":
+            path = tool_input.get("path", "")
+            return f"📄 Reading [link]{path}[/]"
+        elif tool_name == "file_write":
+            path = tool_input.get("path", "")
+            content = tool_input.get("content", "")
+            lines = content.count('\n') + 1
+            return f"✏️ Writing [link]{path}[/] ({lines} lines)"
+        elif tool_name == "file_edit":
+            path = tool_input.get("path", "")
+            old = tool_input.get("old_string", "")
+            new = tool_input.get("new_string", "")
+            # 借鉴 Claw Code 的 diff 预览
+            diff_text = Text()
+            for line in old.split('\n')[:3]:
+                diff_text.append(f"- {line}\n", style="red")
+            for line in new.split('\n')[:3]:
+                diff_text.append(f"+ {line}\n", style="green")
+            return f"📝 Editing [link]{path}[/]\n{diff_text.plain}"
+        elif tool_name == "web_search":
+            query = tool_input.get("query", "")
+            return f"🔎 Searching: {query}"
+        else:
+            preview = json.dumps(tool_input, ensure_ascii=False)[:150]
+            return preview
+```
+
+**工作量**：1-2 天
+**收益**：工具执行过程可视化，用户知道 AI 在做什么、花了多久
+
+### 11.7 启动 Banner 与状态展示 ✅ 已完成
+
+> **实现位置**: `cli/banner.py` — `show_banner()` (Rich Table + ASCII art + model/cwd/version 信息)
+
+
+
+**参考实现**：
+- Claude Code：无 ASCII art，但启动时显示简洁的 model/permission/directory 信息
+- Claw Code：大幅 ASCII art "CLAW Code" + 模型/权限/目录/会话信息，两列对齐格式
+
+**改进方案**：
+
+```python
+# cli/banner.py — 新增
+from rich.console import Console
+from rich.text import Text
+from rich.panel import Panel
+
+BRIX_ASCII = r"""
+[bold cyan] ██████╗ ██████╗ ██╗██╗  ██╗[/]
+[bold cyan] ██╔══██╗██╔══██╗██║╚██╗██╔╝[/]
+[bold cyan] ██████╔╝██████╔╝██║ ╚███╔╝ [/]
+[bold cyan] ██╔══██╗██╔══██╗██║ ██╔██╗ [/]
+[bold cyan] ██████╔╝██║  ██║██║██╔╝ ██╗[/]
+[bold cyan] ╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝[/]
+"""
+
+def show_startup_banner(console: Console, model: str, cwd: str,
+                         permission: str = "full"):
+    """启动 Banner，借鉴 Claw Code 的信息展示风格"""
+    console.print(BRIX_ASCII)
+
+    info = Text()
+    info.append("  Model       ", style="dim")
+    info.append(f"{model}\n", style="bold")
+    info.append("  Directory   ", style="dim")
+    info.append(f"{cwd}\n")
+    info.append("  Permission  ", style="dim")
+    info.append(f"{permission}\n")
+    info.append("\n")
+    info.append("  Type ", style="dim")
+    info.append("/help", style="bold")
+    info.append(" for commands", style="dim")
+    info.append(" · ", style="dim")
+    info.append("Ctrl+C", style="bold")
+    info.append(" to exit", style="dim")
+
+    console.print(info)
+    console.print()
+```
+
+**工作量**：0.5 天
+**收益**：启动时有品牌感，关键信息一目了然
+
+### 11.8 状态报告格式化 ⏳ 待实现
+
+**参考实现**：
+- Claw Code：所有 slash 命令输出采用统一的两列对齐格式，标题 + 缩进键值对，session 列表用 `● current` / `○ saved` 标记
+- Claude Code：`/status` 命令显示 model、permission、messages、tokens 等信息
+
+**改进方案**：
+
+```python
+# cli/status_display.py — 新增
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
+class StatusDisplay:
+    """统一的状态报告格式，借鉴 Claw Code 的两列对齐风格"""
+
+    def __init__(self, console: Console):
+        self.console = console
+
+    def show_status(self, **kwargs):
+        """通用状态展示"""
+        for section_name, items in self._group_sections(kwargs).items():
+            self.console.print(f"\n[bold]{section_name}[/]")
+            for key, value in items.items():
+                key_text = Text(f"  {key:<18}", style="dim")
+                self.console.print(key_text, value)
+
+    def show_session_list(self, sessions: list[dict], current_id: str):
+        """会话列表，借鉴 Claw Code 的 ●/○ 标记"""
+        self.console.print("\n[bold]Sessions[/]")
+        for s in sessions:
+            marker = "●" if s["id"] == current_id else "○"
+            style = "bold green" if s["id"] == current_id else "dim"
+            self.console.print(f"  [{style}]{marker}[/{style}] {s['name']}  "
+                             f"[dim]{s['date']}[/]")
+```
+
+**工作量**：0.5 天
+**收益**：`/status`、`/sessions` 等命令输出整齐美观
+
+### 11.9 错误展示 ⏳ 待实现
+
+**参考实现**：
+- Claude Code：针对不同错误类型（上下文超限、API key 无效、余额不足、超时）有专门的友好提示，长错误支持 `Ctrl+O` 展开
+- Claw Code：`spinner.fail()` 红色 `✘` 图标 + salmon red 文本 `\x1b[38;5;203m`
+
+**改进方案**：
+
+```python
+# cli/error_display.py — 新增
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+
+ERROR_MESSAGES = {
+    "context_limit": {
+        "title": "Context Limit Reached",
+        "hint": "Try /compact to reduce context, or start a new session.",
+    },
+    "rate_limit": {
+        "title": "Rate Limited",
+        "hint": "Waiting and retrying automatically...",
+    },
+    "api_timeout": {
+        "title": "API Timeout",
+        "hint": "Check your network connection. You can increase timeout via config.",
+    },
+    "api_key_invalid": {
+        "title": "Invalid API Key",
+        "hint": "Check your API key in settings or environment variables.",
+    },
+}
+
+def show_error(console: Console, error_type: str, detail: str = ""):
+    """友好错误展示，借鉴 Claude Code 的分类提示"""
+    info = ERROR_MESSAGES.get(error_type, {"title": "Error", "hint": ""})
+
+    text = Text()
+    text.append(f"✘ {info['title']}\n", style="bold red")
+    if detail:
+        # 截断长错误
+        preview = detail[:300] + ("…" if len(detail) > 300 else "")
+        text.append(f"\n{preview}\n", style="dim")
+    if info.get("hint"):
+        text.append(f"\n💡 {info['hint']}", style="yellow")
+
+    panel = Panel(text, border_style="red", padding=(0, 1))
+    console.print(panel)
+```
+
+**工作量**：0.5 天
+**收益**：错误信息友好可操作，不再是冰冷的 traceback
+
+### 11.10 改进优先级与文件清单
+
+| 改进项 | 优先级 | 工作量 | 新增/修改文件 | 状态 |
+|--------|--------|--------|--------------|------|
+| 流式输出 + 实时 Markdown 渲染 | P0 | 2-3 天 | `cli/stream_renderer.py` (新), `cli/app.py` (改), `infra/providers/*.py` (改) | ✅ |
+| Spinner 进度指示器 | P0 | 1 天 | `cli/spinner.py` (新), `cli/stage_indicator.py` (新), `cli/app.py` (改) | ✅ |
+| 工具执行状态面板 | P1 | 1-2 天 | `cli/tool_display.py` (新), `orchestrator/state_machine.py` (改) | ✅ |
+| Markdown 渲染主题 | P1 | 1 天 | `cli/theme.py` (新), `cli/app.py` (改) | ✅ |
+| 启动 Banner | P1 | 0.5 天 | `cli/banner.py` (新), `cli/app.py` (改) | ✅ |
+| 响应标记 (⏺/⎿) | P1 | 0.5 天 | `cli/stream_renderer.py` (改), `cli/tool_display.py` (改), `cli/app.py` (改) | ✅ |
+| 状态报告格式化 | P2 | 0.5 天 | `cli/status_display.py` (新) | ⏳ |
+| 错误友好展示 | P2 | 0.5 天 | `cli/error_display.py` (新) | ⏳ |
+
+**依赖关系**：
+```
+流式输出 (P0) ──depends on──> LLM Client stream 方法 (P0)
+Spinner (P0) ──independent──> 可立即实现
+工具面板 (P1) ──depends on──> Hook 系统 (已完成) + Spinner
+Markdown 主题 (P1) ──depends on──> 流式输出
+启动 Banner (P1) ──independent──> 可立即实现
+状态报告 (P2) ──independent──> 可立即实现
+错误展示 (P2) ──independent──> 可立即实现
+```
+
+**建议实施顺序**：Spinner → 启动 Banner → 流式输出 → 工具面板 → Markdown 主题 → 状态报告 → 错误展示
+
+### 11.11 对路线图的影响
+
+将终端美化纳入路线图后，Phase 1 更新为：
+
+```
+Phase 1 — 体验提升 (2-3 周)
+├── [P0] 流式输出 + 实时 Markdown 渲染 — StreamRenderer + engine.run_stream  ✅
+├── [P0] Spinner 进度指示器 — cli/spinner.py + cli/stage_indicator.py  ✅
+├── [P0] Token 计数 — 替换 MemoryStrategy  ⏳
+├── [P0] LLM 重试 — 添加指数退避  ⏳
+├── [P1] 工具执行状态面板 — cli/tool_display.py  ✅
+├── [P1] 启动 Banner — cli/banner.py  ✅
+├── [P1] Markdown 渲染主题 — cli/theme.py  ✅
+├── [P1] 响应标记 — ⏺/⎿ 内联标记 + 颜色状态  ✅
+└── [P1] 层级化配置 — 改 ConfigLoader  ⏳
+```

@@ -7,7 +7,7 @@
 **Project Name:** Brix
 **Harness Version:** 3.6.0
 **Generated:** 2026-05-07
-**Last Updated:** 2026-05-07
+**Last Updated:** 2026-05-08 (milestone-6 complete)
 
 ## Tech Stack
 
@@ -28,6 +28,12 @@
 | Capability | Tool registration, execution, schema generation | `capability/` |
 | Memory | Conversation persistence, context window management | `memory/` |
 | CLI | User input, output display, command handling | `cli/` |
+| **Theme** | **Rich theme with BRIX_THEME styles (16 keys)** | **`cli/theme.py`** |
+| **Spinner** | **Braille animation spinner (start/finish/fail/stop)** | **`cli/spinner.py`** |
+| **StageIndicator** | **Compact pipeline stage progress display** | **`cli/stage_indicator.py`** |
+| **Banner** | **Rich Console startup banner with styled table** | **`cli/banner.py`** |
+| **StreamRenderer** | **Safe-boundary Markdown streaming renderer** | **`cli/stream_renderer.py`** |
+| **ToolDisplay** | **Tool execution status panels with Rich markup** | **`cli/tool_display.py`** |
 | Log | FlowLog event recording, JSONL persistence | `log/` |
 | **Hook** | **Event registry, observer pattern dispatch** | **`hooks/`** |
 
@@ -38,19 +44,27 @@
 - Hook system as independent top-level module (`hooks/`), parallel to `log/` and `infra/`
 - fire() uses best-effort semantics: exceptions logged via logging.warning, never break dispatch chain
 - set_model()/set_error() stay direct FlowLog calls (not routed through hooks)
+- Streaming protocol: AsyncGenerator yielding typed event dicts (text_delta, tool_call, tool_result)
+- OpenAI SDK v2.2.0 returns AsyncStream directly (no await on create)
+- Non-dict tool args normalized at construction time for consistency across history/hooks/execution
+- Rich markup escaping on all untrusted tool inputs/names to prevent injection
+- Safe-boundary rendering: code fences, blank lines, and newlines outside fences as render boundaries
+- Spinner lifecycle: spinner_finished flag prevents double-finish in tool_call → text_delta flow
+- StageIndicator owns spinner lifecycle: _stop_spinner() silently stops before new stage or completion
+- Styled prompt: prompt_toolkit.HTML() for ❯ indicator with ANSI color styling
 
 ## Project Structure
 
 ```
 Brix/
-├── cli/          # CLI interface (app.py, display.py)
+├── cli/          # CLI interface (app.py, display.py, theme.py, spinner.py, stream_renderer.py, tool_display.py, stage_indicator.py, banner.py)
 ├── config/       # Model registry, provider configs
 ├── capability/   # Tool registration and execution
 ├── hooks/        # Hook event registry (HookRegistry, HookEvent)
-├── infra/        # LLM client, provider adapters
+├── infra/        # LLM client, provider adapters (with streaming support)
 ├── log/          # FlowLog, JSONL writer
 ├── memory/       # Conversation persistence
-├── orchestrator/ # State machine + LangGraph orchestrators
+├── orchestrator/ # State machine + LangGraph orchestrators (with run_stream)
 ├── router/       # Intent classification, model routing
 ├── tests/        # pytest test suite
 └── data/         # Runtime data (memory.json, logs)

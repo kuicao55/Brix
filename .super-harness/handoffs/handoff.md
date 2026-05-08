@@ -1,27 +1,28 @@
-# Handoff — 2026-05-07 18:15
+# Handoff — 2026-05-08 00:34
 
 ## State
 **Status:** MILESTONE_DONE
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-02-brix-mvp-design.md
-- **plan:** .super-harness/plans/2026-05-07-hook-system.md
+- **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
+- **plan:** .super-harness/plans/2026-05-07-milestone-6.md
 - **progress:** .super-harness/status/claude-progress.json
+- **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
 ## Worktree
 (no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-3
+- milestone_id: milestone-6
 - task_id: null (no task started yet)
-- tasks_completed: [task-1, task-2, task-3, task-4]
+- tasks_completed: [task-1, task-2, task-3, task-4, task-5]
 
 ## Deferred Items
 None
 
 ## Key Decisions
-Hook system uses hooks/ top-level directory; fire() best-effort semantics with logging.warning; set_model/set_error stay direct FlowLog calls; binding logic inline in cli/app.py
+均衡模式: Claude subagent executor, Claude spec review, Codex adversarial CQR. StageIndicator owns spinner lifecycle (Spinner.stop() added). show_banner signature changed to require Console.
 
 ## Next Action
-/super-harness:plan (next milestone) or harness-finishing
+/super-harness:plan (next milestone)

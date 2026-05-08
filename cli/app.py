@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import HTML, PromptSession
 from prompt_toolkit.history import InMemoryHistory
+from rich.console import Console
 
 from capability.runner import ToolRunner
 from hooks.registry import HookRegistry
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.weather import WeatherTool
-from cli.display import format_response
+from cli.banner import show_banner
+from cli.stage_indicator import StageIndicator
+from cli.stream_renderer import StreamRenderer
+from cli.theme import BRIX_THEME
+from cli.tool_display import ToolDisplay
 from config.loader import load_config
 from log.flow import FlowLog
 from log.writer import flush_log, read_all, read_entry, format_compact_list, format_detail, entry_count
@@ -33,11 +39,13 @@ class BrixCLI:
     def __init__(self, config: dict | None = None) -> None:
         self._config = config if config is not None else load_config()
         self._memory = MemoryStorage()
-        self._strategy = MemoryStrategy()
+        max_tokens = self._config.get("memory", {}).get("max_context_tokens", 8000)
+        self._strategy = MemoryStrategy(max_tokens=max_tokens)
         self._llm_client = LLMClient(self._config)
         self._tool_runner = ToolRunner()
         self._register_tools()
         self._orchestrator = self._build_orchestrator()
+        self._console = Console(theme=BRIX_THEME)
 
     # ------------------------------------------------------------------
     # Public API
@@ -45,14 +53,15 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
-        session: PromptSession[str] = PromptSession(history=InMemoryHistory())
-        print("Brix — personal AI agent (type /quit to exit)")
+        session = PromptSession(history=InMemoryHistory())
+        default_model = self._config.get("routing", {}).get("default_model", "unknown")
+        show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
         while True:
             try:
-                user_input = await session.prompt_async("you> ")
+                user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
             except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye.")
+                self._console.print("\n[dim]Goodbye.[/]")
                 break
 
             text = user_input.strip()
@@ -65,13 +74,11 @@ class BrixCLI:
                     continue
                 # /quit returns True from _handle_command after printing
 
-            # Normal message — route and run
+            # Normal message — stream response
             try:
-                response = await self._process(text)
+                await self._process_streaming(text)
             except Exception as exc:
-                response = f"Error: {exc}"
-
-            print(format_response(response))
+                self._console.print("[red]Error:[/] {}".format(exc))
 
     # ------------------------------------------------------------------
     # Command handling
@@ -114,12 +121,17 @@ class BrixCLI:
                 print("No logs yet.")
                 return True
 
-            # /log <number> — show detail for that entry
+            # /log <number> — show detail (numbering matches the reverse-sorted display)
             if len(parts) > 1 and parts[1].isdigit():
-                idx = int(parts[1])
-                entry = read_entry(idx)
+                display_idx = int(parts[1])
+                if display_idx < 1 or display_idx > total:
+                    print(f"Log #{display_idx} not found. (1-{total})")
+                    return True
+                # Display #1 = newest = last entry in file
+                file_idx = total - display_idx + 1
+                entry = read_entry(file_idx)
                 if entry is None:
-                    print(f"Log #{idx} not found. (1-{total})")
+                    print(f"Log #{display_idx} not found. (1-{total})")
                 else:
                     print(format_detail(entry))
                 return True
@@ -204,6 +216,133 @@ class BrixCLI:
             pass
 
         return response
+
+    async def _process_streaming(self, user_input: str) -> None:
+        """Stream orchestrator output with unified spinner and markdown rendering."""
+        indicator = StageIndicator(self._console)
+
+        log = FlowLog(user_input)
+        hooks = HookRegistry()
+        hooks.bind_log(log)
+
+        # Memory stage (started automatically by StageIndicator constructor)
+        history = self._memory.get_history()
+        context_window = self._strategy.get_context_window(history)
+        hooks.fire("memory", msgs=len(history),
+                   window=len(context_window),
+                   chars=sum(len(m.get("content", "")) for m in context_window),
+                   context_window=[{"role": m.get("role"), "content": m.get("content", "")}
+                                   for m in context_window])
+
+        # Intent stage (LLM call — takes time)
+        indicator.update("Intent")
+        default_model = self._config.get("routing", {}).get("default_model", "")
+        intent = await classify_intent(
+            user_input, context_window, self._llm_client,
+            default_model, hooks=hooks,
+        )
+
+        # Complexity + Route stages
+        indicator.update("Complexity")
+        complexity = evaluate_complexity(user_input)
+        indicator.update("Route")
+        model = select_model(intent, complexity, self._config)
+
+        hooks.fire("complexity", result=complexity)
+        hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
+        log.set_model(model)
+
+        context = OrchestratorContext(
+            history=list(context_window),
+            tool_runner=self._tool_runner,
+            llm_client=self._llm_client,
+            model=model,
+            hooks=hooks,
+        )
+
+        # Planning stage
+        indicator.update("Planning")
+
+        renderer = None
+        content_parts = []
+        has_error = False
+        tool_display = ToolDisplay(self._console)
+
+        try:
+            async for event in self._orchestrator.run_stream(user_input, context):
+                event_type = event.get("type", "")
+
+                if event_type == "text_delta":
+                    text = event.get("text", "")
+                    if text:
+                        if renderer is None:
+                            indicator.finish()
+                            from rich.text import Text
+                            renderer = StreamRenderer(
+                                self._console,
+                                marker=Text("  ⏺ ", style="green"),
+                            )
+                            renderer.start()
+                        renderer.push_delta(text)
+                        content_parts.append(text)
+
+                elif event_type == "tool_call":
+                    indicator.finish()
+                    if renderer is not None:
+                        renderer.flush()
+                        renderer = None
+                    tool_name = event.get("name", "unknown")
+                    tool_display.show_tool_start(
+                        tool_name, event.get("input", {})
+                    )
+
+                elif event_type == "tool_result":
+                    tool_name = event.get("name", "unknown")
+                    elapsed_ms = event.get("ms", 0)
+                    is_err = event.get("is_error", False)
+                    tool_display.show_tool_result(
+                        tool_name,
+                        event.get("result", ""),
+                        elapsed_ms,
+                        is_error=is_err,
+                    )
+
+        except Exception as exc:
+            has_error = True
+            if renderer is not None:
+                renderer.flush()
+                renderer = None
+            log.set_error(str(exc))
+            self._console.print("[red]Error:[/] {}".format(exc))
+
+        finally:
+            indicator.finish()
+
+        # Flush any remaining content
+        if renderer is not None:
+            renderer.flush()
+
+        response = "".join(content_parts)
+
+        if response.startswith("Error"):
+            has_error = True
+            log.set_error(response)
+
+        # Persist conversation
+        saved_count = 0
+        if self._strategy.should_save({"role": "user", "content": user_input}):
+            self._memory.add_message("user", user_input)
+            saved_count += 1
+        if not has_error and self._strategy.should_save({"role": "assistant", "content": response}):
+            self._memory.add_message("assistant", response)
+            saved_count += 1
+        self._memory.save()
+        hooks.fire("persist", saved=saved_count)
+
+        try:
+            flush_log(log)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Tool registration
