@@ -272,6 +272,8 @@ class BrixCLI:
                     if text:
                         if renderer is None:
                             indicator.finish()
+                            from rich.text import Text
+                            self._console.print(Text("  ⏺", style="green"))
                             renderer = StreamRenderer(self._console)
                             renderer.start()
                         renderer.push_delta(text)
