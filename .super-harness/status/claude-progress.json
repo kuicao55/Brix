@@ -85,11 +85,11 @@
       "title": "Memory Core Infrastructure — Session/Soul/User/Storage/Strategy/Provider",
       "description": "Memory Core Infrastructure — Session/Soul/User/Storage/Strategy/Provider",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-08-memory-system-v2.md",
       "plan_file": ".super-harness/plans/2026-05-08-milestone-7.md",
       "session_date": "2026-05-08T17:29:27Z",
-      "notes": null
+      "notes": "Completed 2026-05-08. 5 tasks: session/soul/user modules, storage refactor, strategy refactor, provider+protocol, integration. 107 memory tests pass. 9 CQR rounds on task 4 (concurrent resume merge, index persistence, monotonic updates)."
     },
     {
       "id": "milestone-8",
