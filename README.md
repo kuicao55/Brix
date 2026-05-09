@@ -9,11 +9,11 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Multi-Provider LLM** — Unified interface for OpenAI-compatible and Anthropic-compatible APIs
 - **Dual Orchestrator** — Pure Python state machine + LangGraph engine, switchable via config
 - **Streaming Output** — Real-time token-by-token rendering with safe-boundary Markdown detection
-- **Tool Calling** — Built-in tools: calculator, weather (mock), file reader
+- **Tool Calling** — Built-in tools: calculator, weather, file reader, file writer, file editor
 - **Memory System v2** — Session-isolated conversations, agent personality (soul.md), user profile (user.md), auto-onboarding
 - **Persistent Storage** — Crash-safe atomic writes with fcntl locking
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
-- **Rich Terminal UI** — Animated spinner, tool execution panels, styled banner, custom theme, inline response markers
+- **Rich Terminal UI** — Thinking spinner during LLM gap, tool execution panels, content indentation with compact paragraph spacing, styled banner, custom theme, inline response markers
 - **Extensible Config** — Add new providers and models by editing a single YAML file
 - **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
 - **Hook System** — Event-driven architecture with `HookRegistry`; core modules fire events via `hooks.fire()`, FlowLog acts as default listener, easily extensible with custom hooks
@@ -115,10 +115,11 @@ To remove, delete the `alias brix=...` line from your shell config and reload.
 
 | Command | Description |
 |---------|-------------|
-| `/quit` | Save session and exit |
+| `/quit` | Save session and exit (also `/exit`) |
 | `/clear` | Start a new session |
 | `/sessions` | List recent sessions |
 | `/resume` | Resume a previous session |
+| `/history` | Show current session messages |
 | `/soul` | Show agent personality (soul.md) |
 | `/user` | Show user profile (user.md) |
 | `/model` | Show current model |
@@ -348,6 +349,8 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  capability/tools/calculator.py                      |
 |  capability/tools/weather.py                         |
 |  capability/tools/file_read.py                       |
+|  capability/tools/file_write.py                      |
+|  capability/tools/file_edit.py                       |
 +-----------------------------------------------------+
 |                   Infra Layer                        |
 |  infra/llm_client.py (Unified LLM Client)            |
@@ -476,9 +479,12 @@ brix/
     +-- test_langgraph.py           # LangGraph engine tests
     +-- test_router.py              # Router tests
     +-- test_capability.py          # Tool & runner tests
+    +-- test_file_tools.py          # File tool tests
     +-- test_memory.py              # Memory tests
     +-- test_cli.py                 # CLI tests
     +-- test_flow_log.py            # Flow log tests
+    +-- test_stream_renderer.py     # Stream renderer tests
+    +-- test_tool_display.py        # Tool display panel tests
 ```
 
 ---

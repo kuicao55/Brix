@@ -9,11 +9,11 @@
 - **多供应商 LLM** — 统一接口，同时支持 OpenAI 兼容和 Anthropic 兼容 API
 - **双编排引擎** — 纯 Python 状态机 + LangGraph 引擎，配置切换
 - **流式输出** — 逐 token 实时渲染，安全边界 Markdown 检测
-- **工具调用** — 内置工具：计算器、天气查询（模拟）、文件读取
+- **工具调用** — 内置工具：计算器、天气查询、文件读取、文件写入、文件编辑
 - **记忆系统 v2** — Session 隔离对话、Agent 人格（soul.md）、用户画像（user.md）、自动 Onboarding
 - **持久化存储** — 原子写入 + fcntl 文件锁，崩溃安全
 - **智能路由** — 意图分类 + 复杂度评估，自动选择模型
-- **Rich 终端 UI** — 动画 Spinner、工具执行面板、启动 Banner、自定义主题、内联响应标记
+- **Rich 终端 UI** — LLM 思考期 Spinner、工具执行面板、内容缩进与紧凑段落间距、启动 Banner、自定义主题、内联响应标记
 - **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
 - **流程日志** — 每轮对话自动记录完整数据流，便于调试和审计
 - **Hook 系统** — 事件驱动架构，核心模块通过 `hooks.fire()` 触发事件，FlowLog 作为默认监听者
@@ -115,10 +115,11 @@ brix
 
 | 命令 | 说明 |
 |------|------|
-| `/quit` | 保存 session 并退出 |
+| `/quit` | 保存 session 并退出（也可用 `/exit`） |
 | `/clear` | 开始新 session |
 | `/sessions` | 列出最近 session |
 | `/resume` | 恢复指定 session |
+| `/history` | 查看当前 session 消息 |
 | `/soul` | 查看 Agent 人格（soul.md） |
 | `/user` | 查看用户画像（user.md） |
 | `/model` | 显示当前模型 |
@@ -344,6 +345,8 @@ pip install langgraph
 |  capability/tools/calculator.py                      |
 |  capability/tools/weather.py                         |
 |  capability/tools/file_read.py                       |
+|  capability/tools/file_write.py                      |
+|  capability/tools/file_edit.py                       |
 +-----------------------------------------------------+
 |                   基础设施层                          |
 |  infra/llm_client.py (统一 LLM 客户端)               |
@@ -472,9 +475,12 @@ brix/
     +-- test_langgraph.py           # LangGraph 引擎测试
     +-- test_router.py              # 路由层测试
     +-- test_capability.py          # 工具 & runner 测试
+    +-- test_file_tools.py          # 文件工具测试
     +-- test_memory.py              # 记忆层测试
     +-- test_cli.py                 # CLI 测试
     +-- test_flow_log.py            # 流程日志测试
+    +-- test_stream_renderer.py     # 流式渲染器测试
+    +-- test_tool_display.py        # 工具显示面板测试
 ```
 
 ---
