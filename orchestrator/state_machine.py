@@ -125,6 +125,7 @@ class StateMachineOrchestrator:
             except Exception as e:
                 result = f"Error executing {tc['name']}: {e}"
             elapsed = int((time.monotonic() - t0) * 1000)
+            is_error = str(result).startswith("Error")
 
             if context.hooks:
                 context.hooks.fire(
@@ -211,8 +212,8 @@ class StateMachineOrchestrator:
                     result = await context.tool_runner.run(tc["name"], tc["arguments"])
                 except Exception as e:
                     result = "Error executing {}: {}".format(tc["name"], e)
-                    is_error = True
                 elapsed = int((time.monotonic() - t0) * 1000)
+                is_error = str(result).startswith("Error")
 
                 if context.hooks:
                     context.hooks.fire(

@@ -52,6 +52,11 @@ class FileEditTool(Tool):
         rel_path = params.get("path", "")
         old_text = params.get("old_text", "")
         new_text = params.get("new_text", "")
+        # 兼容 LLM 传入 "memory/data/user.md" 的情况，去掉前缀
+        for prefix in ("memory/data/", "memory\\data\\"):
+            if rel_path.startswith(prefix):
+                rel_path = rel_path[len(prefix):]
+                break
         target = (self._allowed_root / rel_path).resolve()
         # Security checks (使用 is_relative_to 防止前缀碰撞攻击)
         if not target.is_relative_to(self._allowed_root.resolve()):

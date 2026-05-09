@@ -47,6 +47,11 @@ class FileWriteTool(Tool):
     async def execute(self, **params) -> str:
         rel_path = params.get("path", "")
         content = params.get("content", "")
+        # 兼容 LLM 传入 "memory/data/user.md" 的情况，去掉前缀
+        for prefix in ("memory/data/", "memory\\data\\"):
+            if rel_path.startswith(prefix):
+                rel_path = rel_path[len(prefix):]
+                break
         target = (self._allowed_root / rel_path).resolve()
         # Security: must stay within allowed_root (使用 is_relative_to 防止前缀碰撞攻击)
         if not target.is_relative_to(self._allowed_root.resolve()):
