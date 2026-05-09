@@ -87,7 +87,8 @@ class StreamRenderer:
             ready = self.pending[:boundary]
             self.pending = self.pending[boundary:]
             self.rendered += ready
-            self._update_display()
+        # Always update display so activity indicator can appear during idle.
+        self._update_display()
 
     def flush(self) -> None:
         """Render all remaining buffered content and stop the Live display."""
