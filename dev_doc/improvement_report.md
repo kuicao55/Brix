@@ -1522,3 +1522,824 @@ Phase 1 — 体验提升 (2-3 周)
 ├── [P1] 响应标记 — ⏺/⎿ 内联标记 + 颜色状态  ✅
 └── [P1] 层级化配置 — 改 ConfigLoader  ⏳
 ```
+
+---
+
+## 十二、工具调用期间 Spinner 空白问题 ✅ 已完成
+
+> **发现日期**: 2026-05-08
+> **严重程度**: 高 — 直接影响用户对"AI 在干什么"的感知
+
+### 12.1 问题描述
+
+当 Agent 的文本响应结束后、工具调用开始执行前，终端没有任何视觉反馈。用户看到的是：
+
+```
+  ⏺ 好了，让我把这些信息记下来——        ← 文本渲染结束，StreamRenderer 停止
+                                          ← 空白！没有任何动画！持续数秒
+╭─ ✏️ file_write ────────────────────────╮  ← 工具面板突然出现
+│ ✏️ Writing soul.md (25 lines)
+╰─────────────────────────────────────────╯
+```
+
+这个"空白期"发生在 LLM 完成文本生成、开始生成 tool_call 参数的过程中，通常持续 1-3 秒。用户不知道 AI 在做什么，体验很差。
+
+### 12.2 根因分析
+
+问题出在 `cli/app.py` 的 `_process_streaming()` 方法（第 275-395 行）的事件处理逻辑：
+
+```python
+# 当前代码（简化）
+async for event in self._orchestrator.run_stream(user_input, context):
+    if event_type == "text_delta":
+        if renderer is None:
+            indicator.finish()          # ← Spinner 在这里被终止！
+            renderer = StreamRenderer(...)
+            renderer.start()
+        renderer.push_delta(text)
+
+    elif event_type == "tool_call":
+        indicator.finish()              # ← 此时 indicator 早已 finish，这是空操作
+        if renderer is not None:
+            renderer.flush()
+            renderer = None
+        tool_display.show_tool_start(...)
+```
+
+**关键问题**：
+1. 第一个 `text_delta` 到达时，`indicator.finish()` 被调用，Spinner 永久停止
+2. 文本流结束后，LLM 开始生成 `tool_call` 的 JSON 参数（这部分由 `infra/providers/*.py` 的 `chat_stream()` 解析）
+3. 在 `text_delta` 结束和 `tool_call` 事件到达之间，没有任何事件产生
+4. 此时终端完全静默——Spinner 已停止，StreamRenderer 没有新内容，ToolDisplay 还没开始
+
+### 12.3 参考实现
+
+#### Claude Code 的方案
+
+Claude Code 有 5 种 `SpinnerMode`：`requesting`、`responding`、`thinking`、`tool-use`、`tool-input`。
+
+在 `src/utils/messages.ts` 的 `handleMessageFromStream` 中，模式切换非常频繁：
+- `text_delta` 到达 → `responding` 模式（Shimmer 动画扫过动词文本）
+- `tool_call` 开始 → `tool-use` 模式（正弦波脉冲动画，颜色在 messageColor 和 shimmerColor 之间交替）
+- `tool_input` 增量到达 → `tool-input` 模式
+
+关键：**Claude Code 的 Spinner 永远不会在文本流期间停止**。它只是切换模式。Spinner 只在整个 turn 结束时才停止。
+
+#### Claw Code (Rust) 的方案
+
+Claw Code 更简单但同样有效：
+- 文本流期间：Spinner 保持活跃（虽然 label 不变）
+- 工具调用时：Spinner 继续活跃，同时显示工具面板
+- 整个 turn 结束时：`spinner.finish("✨ Done")`
+
+### 12.4 改进方案
+
+#### 方案 A：文本流期间保持 Spinner 活跃（推荐，最小改动）
+
+**核心思路**：不要在第一个 `text_delta` 时终止 Spinner，而是在 `tool_call` 或流结束时才终止。
+
+```python
+# cli/app.py — _process_streaming() 改进
+async for event in self._orchestrator.run_stream(user_input, context):
+    event_type = event.get("type", "")
+
+    if event_type == "text_delta":
+        text = event.get("text", "")
+        if text:
+            if renderer is None:
+                # 不再在这里 finish indicator！
+                # indicator.finish()  ← 删除这行
+                indicator.update("Responding")  # 更新 label 即可
+                from rich.text import Text
+                renderer = StreamRenderer(
+                    self._console,
+                    marker=Text("  ⏺ ", style="green"),
+                )
+                renderer.start()
+            renderer.push_delta(text)
+            content_parts.append(text)
+
+    elif event_type == "tool_call":
+        # 工具调用开始 — 此时才真正停止 spinner
+        if renderer is not None:
+            renderer.flush()
+            renderer = None
+        indicator.update("Tool")  # 显示 "Executing tool..."
+        tool_name = event.get("name", "unknown")
+        tool_display.show_tool_start(
+            tool_name, event.get("input", {})
+        )
+
+    elif event_type == "tool_result":
+        # 工具执行完成
+        tool_name = event.get("name", "unknown")
+        elapsed_ms = event.get("ms", 0)
+        is_err = event.get("is_error", False)
+        tool_display.show_tool_result(
+            tool_name,
+            event.get("result", ""),
+            elapsed_ms,
+            is_error=is_err,
+        )
+```
+
+**问题**：这会导致 Spinner 和 StreamRenderer 同时输出到终端，产生冲突。因为两者都使用 Rich 的 `Live` display。
+
+#### 方案 B：引入 ToolSpinner（推荐，干净的架构）
+
+**核心思路**：在文本流和工具调用之间，用一个独立的轻量 Spinner 填充空白期。
+
+```python
+# cli/stage_indicator.py — 扩展
+
+STAGE_LABELS = {
+    "Memory": "Loading memory...",
+    "Intent": "Classifying intent...",
+    "Complexity": "Evaluating complexity...",
+    "Route": "Selecting model...",
+    "Planning": "Planning...",
+    "Responding": "Generating response...",   # 新增
+    "Tool": "Executing tool...",              # 新增
+}
+
+class StageIndicator:
+    def __init__(self, console: Console, label: str = "Thinking...") -> None:
+        self._spinner = Spinner(console, label=label)
+        self._spinner.start()
+        self._finished = False               # 新增：跟踪状态
+
+    def update(self, stage: str) -> None:
+        label = STAGE_LABELS.get(stage, "Working...")
+        if not self._finished:               # 只有未 finish 时才更新
+            self._spinner.update_label(label)
+
+    def finish(self) -> None:
+        if not self._finished:               # 防止重复 finish
+            self._finished = True
+            self._spinner.stop()
+
+    def finish_with_label(self, label: str) -> None:
+        """带标签的 finish，用于显示完成状态"""
+        if not self._finished:
+            self._finished = True
+            self._spinner.finish(label)
+```
+
+然后在 `_process_streaming()` 中：
+
+```python
+# cli/app.py — 改进后的事件处理
+
+# 1. 不在 text_delta 时 finish indicator
+# 2. 在 tool_call 时用 indicator 显示 "Executing tool..."
+# 3. 在流结束时才 finish indicator
+
+async for event in self._orchestrator.run_stream(user_input, context):
+    event_type = event.get("type", "")
+
+    if event_type == "text_delta":
+        text = event.get("text", "")
+        if text:
+            if renderer is None:
+                # 第一个 text_delta — 不 finish indicator，只更新 label
+                indicator.update("Responding")
+                from rich.text import Text
+                renderer = StreamRenderer(
+                    self._console,
+                    marker=Text("  ⏺ ", style="green"),
+                )
+                renderer.start()
+            renderer.push_delta(text)
+            content_parts.append(text)
+
+    elif event_type == "tool_call":
+        # 工具调用 — flush renderer，indicator 保持活跃
+        if renderer is not None:
+            renderer.flush()
+            renderer = None
+        indicator.update("Tool")
+        tool_display.show_tool_start(
+            event.get("name", "unknown"),
+            event.get("input", {}),
+        )
+
+    elif event_type == "tool_result":
+        tool_display.show_tool_result(
+            event.get("name", "unknown"),
+            event.get("result", ""),
+            event.get("ms", 0),
+            is_error=event.get("is_error", False),
+        )
+        # 工具执行完成，indicator 继续等待下一个 LLM 响应
+        indicator.update("Planning")  # 回到 planning 状态
+
+# 流结束 — 此时才 finish
+if renderer is not None:
+    renderer.flush()
+indicator.finish()
+```
+
+**但是**：这里有一个架构冲突——`StreamRenderer` 使用 `Rich Live(transient=False)` 来保留输出，而 `StageIndicator` 使用 `Rich Live(transient=True)` 来实现消失效果。两者同时活跃会互相覆盖终端行。
+
+#### 方案 C：StreamRenderer 内嵌 Spinner（最佳方案）
+
+**核心思路**：让 `StreamRenderer` 自己管理一个内嵌的 Spinner 状态，当没有新内容时显示动画。
+
+```python
+# cli/stream_renderer.py — 扩展
+
+class StreamRenderer:
+    """流式输出渲染器，带内嵌 activity indicator"""
+
+    def __init__(self, console: Console, marker: Text | None = None):
+        self.console = console
+        self.pending = ""
+        self.rendered = ""
+        self.live: Live | None = None
+        self.marker = marker
+        self._last_delta_time = 0.0        # 最后一次收到 delta 的时间
+        self._show_indicator = False        # 是否显示 activity indicator
+
+    def push_delta(self, delta: str):
+        self.pending += delta
+        self._last_delta_time = time.time()
+        self._show_indicator = False        # 收到新内容，隐藏 indicator
+        # ... 原有的 safe boundary 检测和渲染逻辑 ...
+
+    def _render_content(self):
+        """渲染内容，如果最近无新 delta 则显示 activity indicator"""
+        parts = []
+        if self.rendered:
+            parts.append(Markdown(self.rendered))
+
+        # 如果超过 0.5 秒没有新内容，显示 activity indicator
+        if time.time() - self._last_delta_time > 0.5 and self.pending:
+            frame = BRAILLE_FRAMES[int(time.time() * 10) % len(BRAILLE_FRAMES)]
+            indicator = Text()
+            indicator.append(f"\n  {frame} ", style="spinner.active")
+            indicator.append("Waiting for tool call...", style="dim")
+            parts.append(indicator)
+
+        if self.live:
+            self.live.update(Group(*parts) if parts else Text(""))
+```
+
+**这个方案最优雅**，但改动量较大，且需要处理 `StreamRenderer` 和 `StageIndicator` 的生命周期协调。
+
+#### 方案 D：最小可行方案 — StageIndicator 延迟 finish（推荐实施）
+
+**核心思路**：在第一个 `text_delta` 时不 finish `StageIndicator`，而是将其移到 `StreamRenderer.start()` 之后。当 `StreamRenderer` 接管输出后，`StageIndicator` 的 `Live(transient=True)` 会被 `StreamRenderer` 的 `Live(transient=False)` 自然覆盖。
+
+实际上，经过仔细分析，`StageIndicator` 使用的是 `Live(transient=True)`，当它 stop 时会清除自己画的那行。而 `StreamRenderer` 使用的是 `Live(transient=False)`，它的输出会保留。两者不冲突——它们画的是不同的行。
+
+**真正的问题是**：`indicator.finish()` 在第一个 `text_delta` 时被调用，导致 Spinner 消失。之后文本流可能持续几秒，然后 LLM 开始生成 tool_call 参数（又几秒），这段时间没有任何动画。
+
+**最小改动方案**：
+
+```python
+# cli/app.py — _process_streaming() 最小改动
+
+async for event in self._orchestrator.run_stream(user_input, context):
+    event_type = event.get("type", "")
+
+    if event_type == "text_delta":
+        text = event.get("text", "")
+        if text:
+            if renderer is None:
+                # 改动点：用 stop() 代替 finish()，不打印 "Done" 消息
+                # 这样 Spinner 静默消失，不会干扰 StreamRenderer
+                indicator._spinner.stop()  # 静默停止，不打印任何东西
+                from rich.text import Text
+                renderer = StreamRenderer(
+                    self._console,
+                    marker=Text("  ⏺ ", style="green"),
+                )
+                renderer.start()
+            renderer.push_delta(text)
+            content_parts.append(text)
+
+    elif event_type == "tool_call":
+        # 改动点：在工具调用前，如果 indicator 还活着，更新 label
+        # 但实际上此时 indicator 已经 stop 了
+        # 所以我们需要一个新机制来填补空白
+
+        if renderer is not None:
+            renderer.flush()
+            renderer = None
+        tool_display.show_tool_start(...)
+```
+
+**这仍然没有解决问题**——空白期依然存在。
+
+### 12.5 最终推荐方案：StreamRenderer 内嵌 activity indicator
+
+经过分析所有方案，**方案 C（StreamRenderer 内嵌 Spinner）** 是最佳方案，理由：
+
+1. **不引入新的 UI 组件**——复用已有的 StreamRenderer
+2. **生命周期自然**——StreamRenderer 在文本流开始时创建，在 tool_call 或流结束时销毁
+3. **视觉连续**——用户看到的是同一个渲染区域，不会出现"Spinner 消失 → 空白 → 工具面板"的断裂感
+4. **参考 Claude Code**——Claude Code 的 Spinner 就是内嵌在消息渲染组件中的，不是独立的全局 Spinner
+
+#### 实现细节
+
+```python
+# cli/stream_renderer.py — 改进版
+
+import time
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.console import Console
+from rich.text import Text
+from rich.group import Group
+
+BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+class StreamRenderer:
+    """流式输出渲染器，带内嵌 activity indicator 填充空白期。"""
+
+    def __init__(self, console: Console, marker: Text | None = None) -> None:
+        self.console = console
+        self.pending = ""
+        self.rendered = ""
+        self.live: Live | None = None
+        self.marker = marker
+        self._last_delta_time = 0.0
+        self._indicator_label = "Waiting for tool call..."
+
+    def start(self) -> None:
+        self._last_delta_time = time.time()
+        self.live = Live(
+            self._build_display(),
+            console=self.console,
+            refresh_per_second=10,
+            transient=False,
+        )
+        self.live.start()
+
+    def push_delta(self, delta: str) -> None:
+        """接收 token 增量，检测安全边界后渲染。"""
+        self.pending += delta
+        self._last_delta_time = time.time()
+        boundary = self._find_safe_boundary(self.pending)
+        if boundary is not None:
+            ready = self.pending[:boundary]
+            self.pending = self.pending[boundary:]
+            self.rendered += ready
+            self._update_display()
+
+    def flush(self) -> None:
+        """流结束，渲染剩余内容。"""
+        if self.pending:
+            self.rendered += self.pending
+            self.pending = ""
+        self._update_display()
+        if self.live:
+            self.live.stop()
+
+    def _build_display(self):
+        """构建显示内容：已渲染的 Markdown + 可选的 activity indicator。"""
+        parts = []
+        if self.rendered:
+            parts.append(Markdown(self.rendered))
+
+        # 如果超过 0.8 秒没有新 delta，且有待渲染内容，显示 activity indicator
+        # 这意味着 LLM 正在生成 tool_call 的 JSON 参数
+        if (self.pending and
+            time.time() - self._last_delta_time > 0.8):
+            frame_idx = int(time.time() * 10) % len(BRAILLE_FRAMES)
+            frame = BRAILLE_FRAMES[frame_idx]
+            indicator = Text()
+            indicator.append(f"\n  {frame} ", style="spinner.active")
+            indicator.append(self._indicator_label, style="dim")
+            parts.append(indicator)
+
+        return Group(*parts) if parts else Text("")
+
+    def _update_display(self) -> None:
+        if self.live:
+            self.live.update(self._build_display())
+
+    def _find_safe_boundary(self, text: str) -> int | None:
+        # ... 保持原有逻辑不变 ...
+```
+
+#### 配合 StageIndicator 的改动
+
+```python
+# cli/app.py — _process_streaming() 改进
+
+# 构造 StageIndicator 时，不在 text_delta 时 finish
+# 而是在 StreamRenderer 创建时静默 stop StageIndicator
+
+async for event in self._orchestrator.run_stream(user_input, context):
+    event_type = event.get("type", "")
+
+    if event_type == "text_delta":
+        text = event.get("text", "")
+        if text:
+            if renderer is None:
+                # StageIndicator 静默消失（不打印 "Done"）
+                indicator._spinner.stop()
+                indicator._finished = True
+
+                from rich.text import Text
+                renderer = StreamRenderer(
+                    self._console,
+                    marker=Text("  ⏺ ", style="green"),
+                )
+                renderer.start()
+            renderer.push_delta(text)
+            content_parts.append(text)
+
+    elif event_type == "tool_call":
+        # StreamRenderer flush（会停止内嵌的 activity indicator）
+        if renderer is not None:
+            renderer.flush()
+            renderer = None
+        tool_display.show_tool_start(...)
+
+    elif event_type == "tool_result":
+        tool_display.show_tool_result(...)
+        # 工具执行完成后，LLM 会开始新一轮的 text_delta
+        # 如果下一轮有 text_delta，会创建新的 StreamRenderer
+
+# finally
+if renderer is not None:
+    renderer.flush()
+indicator.finish()
+```
+
+### 12.6 用户体验对比
+
+**改进前**：
+```
+  ⏺ 好了，让我把这些信息记下来——
+                                          ← 空白 1-3 秒
+╭─ ✏️ file_write ────────────────────────╮
+│ ✏️ Writing soul.md (25 lines)
+╰─────────────────────────────────────────╯
+```
+
+**改进后**：
+```
+  ⏺ 好了，让我把这些信息记下来——
+  ⠋ Waiting for tool call...              ← 活动指示器自动出现
+╭─ ✏️ file_write ────────────────────────╮
+│ ✏️ Writing soul.md (25 lines)
+╰─────────────────────────────────────────╯
+```
+
+### 12.7 改动文件清单
+
+| 文件 | 改动内容 | 改动量 |
+|------|---------|--------|
+| `cli/stream_renderer.py` | 添加 `_last_delta_time`、`_indicator_label`、`_build_display()` 方法，支持内嵌 activity indicator | ~30 行 |
+| `cli/app.py` | 将 `indicator.finish()` 从第一个 `text_delta` 移到 StreamRenderer 创建时的 `indicator._spinner.stop()` | ~5 行 |
+| `cli/stage_indicator.py` | 添加 `_finished` 状态跟踪，防止重复 finish | ~5 行 |
+
+**工作量**：0.5 天
+**收益**：消除工具调用前的空白期，用户体验显著提升
+
+---
+
+## 十三、Onboarding 问答深度不足 ✅ 已完成
+
+> **发现日期**: 2026-05-08
+> **严重程度**: 高 — 影响 user.md 和 soul.md 的质量，进而影响所有后续对话的个性化程度
+
+### 13.1 问题描述
+
+当前 `_ONBOARDING_TEMPLATE`（`memory/strategy.py` 第 9-25 行）指导 Agent 只问 3 个问题：
+
+```
+1. Introduce yourself
+2. Ask what they'd like to be called (name)
+3. Ask about their role/tech background (brief)
+```
+
+实际测试中，Agent 只问了称呼和角色就急着创建文件，导致：
+
+**user.md 内容过于单薄**：
+```markdown
+# User - Ju老大
+## 基本信息
+- **称呼**：Ju老大
+- **角色**：创业者 + 开发者
+```
+
+**soul.md 内容过于模板化**：
+```markdown
+# Soul - AI 助手性格定义
+## 核心性格
+- 友好且专业
+- 高效直接
+- 好奇心强
+- 务实派
+```
+
+缺少的关键信息：
+- **用户端**：年龄范围、性别、沟通语言偏好、技术水平细节、工作节奏、兴趣领域
+- **Agent 端**：说话风格（幽默/严肃/毒舌）、人称（你/您）、回复长度偏好、是否有口头禅
+
+### 13.2 参考分析：OpenClaw 的 Onboarding 设计
+
+OpenClaw 的 `BOOTSTRAP.md` 设计了两个维度的问答：
+
+**Agent 人格维度**（IDENTITY.md + SOUL.md）：
+1. 你的名字 — 用户给 Agent 取名
+2. 你的本质 — AI？机器人？精灵？
+3. 你的气质 — 正式？随意？毒舌？温暖？
+4. 你的标志 emoji
+
+**用户画像维度**（USER.md）：
+1. 用户的名字
+2. 用户希望怎么被称呼
+3. 代词（可选）
+4. 时区
+5. 备注 — 关心什么、在做什么、讨厌什么、什么让他们开心
+
+OpenClaw 的核心理念：
+- "Don't interrogate. Don't be robotic. Just... talk."（不要审讯，不要机械，就是聊天）
+- "you're learning about a person, not building a dossier"（你在了解一个人，不是在建档案）
+- Agent 有自主权决定怎么问、问多少
+
+### 13.3 改进方案
+
+#### 13.3.1 扩展 `_ONBOARDING_TEMPLATE`
+
+```python
+# memory/strategy.py — 改进版 _ONBOARDING_TEMPLATE
+
+_ONBOARDING_TEMPLATE = """## Onboarding Required
+
+The following memory files are missing and need to be created:
+{soul_missing}{user_missing}
+
+This is your FIRST conversation with this user. You need to learn about them
+AND define your own personality. Take your time — don't rush to create files.
+
+### Phase 1: Get to know each other (自然聊天，不要审讯)
+
+Start by introducing yourself briefly, then learn about the user through conversation.
+Ask these questions **one or two at a time**, in a natural conversational flow:
+
+**About the user (for user.md):**
+1. What should I call you? / 你希望我怎么称呼你？
+2. What do you do? (role, industry, daily work) / 你是做什么的？
+3. About how old are you? (rough range is fine, e.g., 20s, 30s) / 大概年纪？（范围就行）
+4. What's your gender? (for better communication style) / 性别？（方便调整沟通方式）
+5. What programming languages / tech stack do you use most? / 最常用的技术栈？
+6. How do you prefer to communicate? (concise/detailed, casual/formal) / 沟通风格偏好？
+
+**About yourself — define your personality (for soul.md):**
+After learning about the user, propose a personality for yourself based on
+their vibe. Ask them:
+1. What kind of tone do you want from me? (direct, warm, witty, serious...) / 你希望我什么语气？
+2. Should I be more like a colleague, a friend, or a professional assistant? / 同事/朋友/专业助手？
+3. Any specific communication style? (e.g., "少废话直接给方案", "多解释为什么") / 具体沟通偏好？
+
+### Phase 2: Create the files
+
+After gathering enough information (at least 4-5 exchanges), use file_write to create:
+
+**soul.md** — Your personality definition, including:
+- Core personality traits (based on conversation tone)
+- Communication style (language, tone, length, formality)
+- Expertise areas
+- Behavioral guidelines
+- A characteristic phrase or greeting style that feels natural
+
+**user.md** — What you know about the user, including:
+- Basic info (name, preferred address, approximate age, gender)
+- Background (role, industry, tech stack)
+- Communication preferences (concise/detailed, language, formality)
+- Personality notes (humor style, interests, work patterns)
+
+### Guidelines:
+- Keep it natural — this is a friendly introduction, not an interrogation
+- Use the user's language — if they speak Chinese, respond in Chinese
+- Don't ask all questions at once — 1-2 per turn, react to their answers
+- It's OK to have fun with it — personality definition should feel collaborative
+- You need AT LEAST 4 user responses before creating files
+- When you propose your personality, let the user adjust it
+"""
+```
+
+#### 13.3.2 扩展 user.md 模板
+
+```markdown
+# User - {name}
+
+## 基本信息
+- **称呼**：{preferred_name}
+- **性别**：{gender}
+- **年龄段**：{age_range}
+- **角色**：{role}
+- **行业**：{industry}
+
+## 技术背景
+- **主要技术栈**：{tech_stack}
+- **技术水平**：{skill_level} (初学者/中级/高级/专家)
+- **工作内容**：{daily_work}
+
+## 沟通偏好
+- **语言**：{language} (中文/英文/混合)
+- **风格**：{style} (简洁直接/详细解释/轻松随意/正式专业)
+- **回复长度**：{length} (尽量简短/适中/详细说明)
+
+## 性格特点
+- {personality_notes}
+
+## 备注
+- {additional_notes}
+- 初次交流于 {date}
+```
+
+#### 13.3.3 扩展 soul.md 模板
+
+```markdown
+# Soul - {agent_name}
+
+## 核心性格
+- {trait_1}
+- {trait_2}
+- {trait_3}
+
+## 沟通风格
+- **语言**：{language}
+- **语气**：{tone} (直接/温暖/幽默/毒舌/专业)
+- **人称**：{pronoun} (你/您)
+- **回复长度**：{length}
+- **口头禅/特征表达**：{signature}
+
+## 专长领域
+- {expertise_1}
+- {expertise_2}
+
+## 行为准则
+- {guideline_1}
+- {guideline_2}
+- {guideline_3}
+
+## 与用户的关系定位
+- {relationship} (同事/朋友/专业助手/导师)
+```
+
+#### 13.3.4 `_MEMORY_MGMT_TEMPLATE` 也需要更新
+
+```python
+# memory/strategy.py — 改进版 _MEMORY_MGMT_TEMPLATE（部分）
+
+_MEMORY_MGMT_TEMPLATE = """## Memory Management
+
+You have persistent memory files:
+- `memory/data/soul.md` — your personality definition (read-only in normal conversation)
+- `memory/data/user.md` — what you know about the user
+
+### When to update user.md:
+Update user.md when the user EXPLICITLY shares:
+- Name or how they want to be called
+- Age, gender, or demographic info
+- Role, job title, or professional identity
+- Tech stack, programming languages, tools they use
+- Communication preferences (verbose/concise, language, formality)
+- Current projects, goals, or priorities
+- Feedback about your behavior ("don't do X", "I prefer Y")
+- Personality traits, interests, work patterns
+
+Signaling phrases to watch for:
+- "我是...", "我做...", "我用...", "我喜欢...", "叫我..."
+- "I am...", "I work on...", "I use...", "I prefer...", "call me..."
+- "以后...", "不要...", "请...", "别...", "你能不能..."
+- "太长了", "太啰嗦", "直接点", "详细说说"
+
+Use the file_edit tool to update specific sections. Don't overwrite the whole file.
+
+### When to update soul.md:
+- User explicitly asks to change your personality or communication style
+- User gives feedback like "你太正式了", "别那么客气", "说话直接点"
+- Use file_edit to update specific sections
+
+### When NOT to update:
+- Temporary information (current task details, debugging state)
+- Information that belongs in session history, not long-term memory
+- Speculative inferences — only record what the user explicitly stated
+"""
+```
+
+### 13.4 用户体验对比
+
+**改进前**（实际测试结果）：
+```
+Agent: 你好！你希望我怎么称呼你？方便告诉我你的角色或技术背景吗？
+User: 叫我Ju老大，我是一个创业者+开发者。
+Agent: 好的！让我记下来——
+       [创建 soul.md: 通用模板]
+       [创建 user.md: 只有称呼和角色]
+```
+
+**改进后**（预期效果）：
+```
+Agent: 你好！我是你的 AI 助手，先认识一下——你希望我怎么称呼你？
+User: 叫我Ju老大就行。
+Agent: Ju老大好！你是做什么的？看你的工作内容我好调整我的风格。
+User: 我是个创业者，也写代码，主要做 Python 和 Go。
+Agent: 创业+开发，忙啊。方便问下大概年纪吗？（好决定用"你"还是"您"）
+User: 30出头，用"你"就行。
+Agent: 了解。那你希望我是什么风格？直接给方案不废话？还是多聊聊思路？
+User: 直接点，别啰嗦，给方案就行。
+Agent: 明白了。那我给自己定个风格：简洁直接，技术范儿，不废话。你觉得行吗？
+User: 行，就这样。
+Agent: 好，我来把这些都记下来——
+       [创建 soul.md: 简洁直接、技术范儿、不废话、用"你"、中文为主]
+       [创建 user.md: Ju老大、30出头、创业者+开发者、Python/Go、直接沟通风格]
+```
+
+### 13.5 改动文件清单
+
+| 文件 | 改动内容 | 改动量 |
+|------|---------|--------|
+| `memory/strategy.py` | 重写 `_ONBOARDING_TEMPLATE`，扩展问答维度 | ~60 行 |
+| `memory/strategy.py` | 更新 `_MEMORY_MGMT_TEMPLATE`，增加 soul.md 可更新条件 | ~15 行 |
+
+**工作量**：0.5 天（纯 prompt 工程，不涉及代码架构改动）
+**收益**：user.md 和 soul.md 信息量提升 3-5 倍，后续对话个性化程度显著提高
+
+### 13.6 注意事项
+
+1. **不要过度追问**：OpenClaw 的理念是"了解一个人，不是建档案"。年龄和性别是可选的，如果用户不想回答就跳过
+2. **语言跟随用户**：如果用户用中文，所有问题都用中文
+3. **Agent 人格应该是协商的**：Agent 提议 → 用户确认/调整，而不是 Agent 单方面决定
+4. **至少 4 轮对话**：在创建文件前，确保有足够的信息交换
+5. **Onboarding 后的首次使用**：创建文件后，Agent 应该自然地过渡到正常对话，而不是突然切换模式
+
+---
+
+## 十四、max_iterations 限制过严 ⚡ 最高优先级
+
+> **发现日期**: 2026-05-08
+> **严重程度**: 高 — 复杂任务（如多文件读取 + 编辑）会在第 5 次 LLM 调用后被截断，用户收到"I was unable to complete the request within the allowed steps"
+
+### 14.1 问题描述
+
+Brix 当前 `StateMachineOrchestrator.__init__` 中 `max_iterations=5`，计算的是 **每次 LLM 调用**（plan 阶段），而非单个工具调用。当 Agent 需要多次"读取→分析→编辑"循环时，5 次 LLM 调用很快耗尽。
+
+**实际案例**：Agent 执行 5 个独立的 file_read，每次 LLM 调用带 1 个工具调用，第 5 次后触发 max_iterations 上限，任务被强制终止。
+
+### 14.2 对比参考
+
+| 项目 | max_iterations 策略 | 说明 |
+|------|---------------------|------|
+| Claude Code | 无限制（未定义上限） | 主 REPL 不设上限，依赖 token 预算自然终止 |
+| Claw-code | `usize::MAX`（主循环），子 Agent 限制 32 | 主循环无限制，子 Agent 有安全上限 |
+| Brix (当前) | 5 | 过于保守 |
+
+### 14.3 解决方案
+
+参考 Claude Code（无上限）和 Claw-code（`usize::MAX`）的做法：
+
+1. 将默认 `max_iterations` 从 5 改为 **100**（安全兜底，防止无限循环，实际不会触及）
+2. 对子 Agent（如果未来支持）限制为 32（与 Claw-code 一致）
+3. 在 fallback 消息中加入已执行 iteration 数量，方便 debug
+
+**工作量**：0.1 天（改一行默认值 + fallback 消息优化）
+**收益**：消除复杂任务被截断的问题，用户体验显著提升
+
+---
+
+## 十五、工具执行期间无持续 Spinner ⚡ 最高优先级
+
+> **发现日期**: 2026-05-08
+> **严重程度**: 中 — 工具执行期间用户看到的是静态文本面板，缺少"AI 仍在工作"的动态反馈
+
+### 15.1 问题描述
+
+当前工具执行流程：
+1. `tool_call` 事件 → 显示 `⏺ Calling tools...` + 工具面板
+2. 工具执行中 → **无任何动态指示**
+3. `tool_result` 事件 → 显示结果摘要
+
+步骤 2 中用户看到的是静态面板，不知道工具是否仍在运行。对比 Claude Code 和 Claw-code：
+
+| 项目 | 工具执行期间 Spinner 行为 |
+|------|---------------------------|
+| Claude Code | 模式切换 Spinner：requesting → responding → tool-use → thinking，每个阶段持续旋转 |
+| Claw-code | per-tool Spinner：每个工具调用有自己的 Spinner（tick/finish/fail 生命周期） |
+| Brix (当前) | 无 Spinner，静态面板 |
+
+### 15.2 解决方案
+
+借鉴 Claude Code 的**模式切换 Spinner** 设计：
+
+1. 在 `ToolDisplay.show_tool_start()` 启动一个 Rich Live Spinner（Braille 动画）
+2. Spinner 持续旋转直到 `show_tool_result()` 被调用
+3. 使用 `threading` 或 `asyncio` 驱动 Spinner 动画，不阻塞工具执行
+4. Spinner 文案统一为 `Calling tools...`（已实现的静态文案改为动态）
+
+**关键实现细节**：
+- `show_tool_start()` 创建 `Live` 上下文，启动 Spinner 线程
+- `show_tool_result()` 停止 Spinner，打印最终结果
+- 需要处理异常路径：工具抛出异常时 Spinner 也要正确停止
+
+**工作量**：0.3 天
+**收益**：工具执行期间有持续动态反馈，用户感知"AI 仍在工作"

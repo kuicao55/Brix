@@ -62,3 +62,34 @@ class TestFinish:
         indicator, _ = _make_indicator()
         indicator.finish()
         indicator.finish()  # should not raise
+
+    def test_finish_respects_finished_flag(self):
+        """finish() should not call spinner.stop() if already finished."""
+        indicator, _ = _make_indicator()
+        indicator._finished = True
+        # finish() should not raise even though spinner may still be running
+        indicator.finish()
+
+
+class TestStopSilent:
+    def test_stop_silent_stops_spinner(self):
+        """stop_silent() stops the spinner without printing."""
+        indicator, _ = _make_indicator()
+        indicator.stop_silent()
+        assert indicator._spinner.running is False
+        assert indicator._finished is True
+
+    def test_stop_silent_prevents_update(self):
+        """After stop_silent(), update() should be a no-op."""
+        indicator, _ = _make_indicator()
+        indicator.stop_silent()
+        indicator.update("Planning")  # should not raise
+        # label should not change since _finished is True
+        assert indicator._finished is True
+
+    def test_stop_silent_prevents_finish(self):
+        """After stop_silent(), finish() should be a no-op."""
+        indicator, _ = _make_indicator()
+        indicator.stop_silent()
+        indicator.finish()  # should not raise, should be no-op
+        assert indicator._finished is True

@@ -169,7 +169,7 @@ def format_detail(entry: dict) -> str:
         "intent": "调用 LLM 分类用户意图 (chat/task/tool_use)",
         "complexity": "基于关键词规则评估请求复杂度",
         "router": "根据意图和复杂度选择最佳模型",
-        "orch_plan": "调用 LLM 生成回复或决定调用哪些工具",
+        "orch_plan": "调用 LLM 生成回复 (streaming)",
         "tool_exec": "执行工具调用并返回结果",
         "persist": "将本轮对话保存到存储",
     }

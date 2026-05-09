@@ -290,8 +290,10 @@ class BrixCLI:
         # Intent stage (LLM call — takes time)
         indicator.update("Intent")
         default_model = self._config.get("routing", {}).get("default_model", "")
+        # 只传最近 6 条非 system 消息，避免 intent 分类加载完整 soul.md
+        trimmed = [m for m in context_messages if m.get("role") != "system"][-6:]
         intent = await classify_intent(
-            user_input, context_messages, self._llm_client,
+            user_input, trimmed, self._llm_client,
             default_model, hooks=hooks,
         )
 
@@ -329,7 +331,7 @@ class BrixCLI:
                     text = event.get("text", "")
                     if text:
                         if renderer is None:
-                            indicator.finish()
+                            indicator.stop_silent()
                             from rich.text import Text
                             renderer = StreamRenderer(
                                 self._console,

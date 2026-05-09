@@ -1100,6 +1100,78 @@ class TestMemoryStrategyBuildPrompt:
             f"数据隔离声明应出现 3 次（不含 soul），实际出现 {count} 次"
 
 
+# ─── Task 2b: Onboarding template depth tests ──────────────────────────
+
+class TestOnboarding:
+    """Onboarding 模板深度测试 — 验证多阶段对话引导。"""
+
+    def _make_strategy(self, tmp_path, max_tokens=8000):
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        from memory.strategy import MemoryStrategy
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        return MemoryStrategy(soul_manager=soul, user_manager=user, max_tokens=max_tokens)
+
+    def test_onboarding_template_has_phases(self, tmp_path):
+        """Onboarding template should describe multi-phase conversation."""
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        # Should mention phases or stages of conversation
+        assert "Phase" in prompt or "阶段" in prompt
+
+    def test_onboarding_template_has_minimum_exchanges(self, tmp_path):
+        """Onboarding template should require minimum user responses."""
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "4" in prompt  # minimum 4 user responses
+
+    def test_onboarding_template_has_user_md_structure(self, tmp_path):
+        """Onboarding template should describe user.md expected structure."""
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "基本信息" in prompt or "Basic Info" in prompt
+        assert "沟通偏好" in prompt or "Communication" in prompt
+
+    def test_onboarding_template_has_soul_md_structure(self, tmp_path):
+        """Onboarding template should describe soul.md expected structure."""
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "核心性格" in prompt or "Core Personality" in prompt
+        assert "沟通风格" in prompt or "Communication Style" in prompt
+
+    def test_onboarding_template_has_personality_negotiation(self, tmp_path):
+        """Onboarding template should include personality negotiation phase."""
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        assert "personality" in prompt.lower() or "性格" in prompt or "人格" in prompt
+
+
+class TestMemoryMgmtSoulSignals:
+    """Memory management 模板应包含 soul.md 更新信号短语。"""
+
+    def _make_strategy(self, tmp_path, max_tokens=8000):
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        from memory.strategy import MemoryStrategy
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        return MemoryStrategy(soul_manager=soul, user_manager=user, max_tokens=max_tokens)
+
+    def test_memory_mgmt_has_soul_update_signals(self, tmp_path):
+        """Memory management template should include soul.md update signal phrases."""
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        soul.save("# Soul")
+        user.save("# User")
+        strategy = self._make_strategy(tmp_path)
+        prompt = strategy.build_system_prompt()
+        # Should mention signal phrases for soul.md updates
+        assert "太正式" in prompt or "别那么客气" in prompt or "直接点" in prompt
+
+
 # ─── Task 4: MemoryProvider Protocol + BrixMemoryProvider ──────────────
 
 class TestBrixMemoryProvider:

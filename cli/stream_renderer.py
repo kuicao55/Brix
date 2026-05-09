@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import time
+
 from rich.console import Console
+from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.segment import Segment
 from rich.text import Text
+
+# Braille frames reused from spinner.py for the embedded activity indicator.
+BRAILLE_FRAMES = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
 
 # Visual width of the ``  ⏺ `` marker (2 spaces + circle + 1 space).
 _MARKER_WIDTH = 4
@@ -59,6 +65,8 @@ class StreamRenderer:
         self.rendered = ""
         self.live = None
         self._marker = marker
+        self._last_delta_time = 0.0
+        self._indicator_label = "Waiting for tool call..."
 
     def start(self) -> None:
         """Start the Rich Live display."""
@@ -68,16 +76,19 @@ class StreamRenderer:
             transient=False,
         )
         self.live.start()
+        self._last_delta_time = time.monotonic()
 
     def push_delta(self, delta: str) -> None:
         """Append a text delta and render if a safe boundary is reached."""
+        self._last_delta_time = time.monotonic()
         self.pending += delta
         boundary = self._find_safe_boundary(self.pending)
         if boundary is not None:
             ready = self.pending[:boundary]
             self.pending = self.pending[boundary:]
             self.rendered += ready
-            self._update_display()
+        # Always update display so activity indicator can appear during idle.
+        self._update_display()
 
     def flush(self) -> None:
         """Render all remaining buffered content and stop the Live display."""
@@ -116,23 +127,42 @@ class StreamRenderer:
                 last_safe = pos
         return last_safe if last_safe > 0 else None
 
-    def _update_display(self) -> None:
-        """Re-render the accumulated content in the Live display.
+    def _build_display(self):
+        """Build display content: rendered Markdown + optional activity indicator.
 
-        If a marker was provided, it is rendered inline on the first line
-        of the content via ``_MarkerMarkdown``.  Every subsequent line is
-        indented by ``_MARKER_WIDTH`` columns so the body aligns under the
-        marker.
+        Returns a Rich renderable (Group when multiple parts, Text when empty).
+        The activity indicator appears when idle > 0.8s with pending content,
+        filling the visual gap between text stream end and tool call generation.
         """
-        if self.live and self.rendered:
+        parts = []
+        if self.rendered:
             if self._marker is not None:
                 style = self._marker.style if isinstance(self._marker.style, str) else "green"
-                renderable = _MarkerMarkdown(
+                parts.append(_MarkerMarkdown(
                     self.rendered,
                     self._marker.plain,
                     style,
                     self.console,
-                )
+                ))
             else:
-                renderable = Markdown(self.rendered)
-            self.live.update(renderable)
+                parts.append(Markdown(self.rendered))
+
+        # Show activity indicator when idle > 0.8s with pending content
+        if self.pending and time.monotonic() - self._last_delta_time > 0.8:
+            frame_idx = int(time.monotonic() * 10) % len(BRAILLE_FRAMES)
+            frame = BRAILLE_FRAMES[frame_idx]
+            indicator = Text()
+            indicator.append("\n  {} ".format(frame), style="spinner.active")
+            indicator.append(self._indicator_label, style="dim")
+            parts.append(indicator)
+
+        return Group(*parts) if parts else Text("")
+
+    def _update_display(self) -> None:
+        """Re-render the accumulated content in the Live display.
+
+        Delegates to ``_build_display()`` which assembles rendered Markdown
+        and an optional activity indicator into a single renderable.
+        """
+        if self.live:
+            self.live.update(self._build_display())
