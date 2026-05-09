@@ -1,4 +1,4 @@
-# Handoff — 2026-05-09 22:20
+# Handoff — 2026-05-09 23:45
 
 ## State
 **Status:** ALL_DONE
@@ -32,6 +32,12 @@
 ## Key Decisions
 - Engine: 均衡模式 (Spec Review: Claude, CQR: Codex)
 - Tests adapted to use _themed_console(buf) helper for BRIX_THEME compatibility
+
+## Post-Milestone Fixes (4 commits after milestone-10 merge)
+- `07f07bf` fix: is_error detection (error strings now flagged) + file path double-nesting bug (strip `memory/data/` prefix)
+- `e8f1005` fix: spinner moved to LLM thinking gap (after tool_result, before next event)
+- `343950f` fix: content indentation (reduce available width for Rich wrapping) + entry spacing
+- `6552097` fix: spacing between Q&A rounds, ❯→⏺ gap, and tool call entries
 
 ## Next Action
 All milestones complete. Project ready for next feature or milestone planning.
