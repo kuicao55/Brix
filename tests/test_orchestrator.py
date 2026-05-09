@@ -397,3 +397,46 @@ async def test_run_stream_handles_tool_calls():
         assert isinstance(tr["ms"], (int, float)), f"'ms' must be numeric, got {type(tr['ms'])}"
         assert "is_error" in tr, f"tool_result must contain 'is_error', got keys: {list(tr.keys())}"
         assert isinstance(tr["is_error"], bool), f"'is_error' must be bool, got {type(tr['is_error'])}"
+
+
+# ---------------------------------------------------------------------------
+# Test 10: Default max_iterations is 100
+# ---------------------------------------------------------------------------
+
+
+def test_default_max_iterations():
+    """验证 max_iterations 默认值为 100"""
+    from orchestrator.state_machine import StateMachineOrchestrator
+
+    orch = StateMachineOrchestrator()
+    assert orch.max_iterations == 100
+
+
+# ---------------------------------------------------------------------------
+# Test 11: Fallback message includes iteration count
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fallback_message_includes_iteration_count():
+    """验证 fallback 消息包含迭代数信息"""
+    from orchestrator.state_machine import StateMachineOrchestrator
+
+    tool_call = ToolCall(name="loop", arguments={})
+    always_tool = LLMResponse(
+        content="",
+        tool_calls=[tool_call],
+        finish_reason="tool_calls",
+    )
+
+    llm = AsyncMock()
+    llm.chat = AsyncMock(return_value=always_tool)
+
+    mock_runner = AsyncMock()
+    mock_runner.run = AsyncMock(return_value="ok")
+
+    ctx = _make_context(llm, tool_runner=mock_runner)
+    orchestrator = StateMachineOrchestrator(max_iterations=3)
+    result = await orchestrator.run("loop forever", ctx)
+
+    assert "3 steps" in result

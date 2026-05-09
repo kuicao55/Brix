@@ -38,7 +38,7 @@ class StateMachineOrchestrator:
         REVIEWING -> RESPONDING (task complete)
     """
 
-    def __init__(self, max_iterations: int = 5) -> None:
+    def __init__(self, max_iterations: int = 100) -> None:
         self.max_iterations = max_iterations
         self._current_iter = 0
 
@@ -62,7 +62,7 @@ class StateMachineOrchestrator:
             await self._execute(context, response)
 
         # Exhausted iterations — return a fallback
-        fallback = "I was unable to complete the request within the allowed steps."
+        fallback = f"I was unable to complete the request within {self.max_iterations} steps."
         context.history.append({"role": "assistant", "content": fallback})
         return fallback
 
@@ -240,7 +240,7 @@ class StateMachineOrchestrator:
                 })
 
         # Exhausted iterations — yield a fallback
-        fallback = "I was unable to complete the request within the allowed steps."
+        fallback = f"I was unable to complete the request within {self.max_iterations} steps."
         context.history.append({"role": "assistant", "content": fallback})
         yield {"type": "text_delta", "text": fallback}
 
