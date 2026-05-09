@@ -85,6 +85,7 @@ class BrixCLI:
                 # /quit returns True from _handle_command after printing
 
             # Normal message — stream response
+            self._console.print()  # ❯ 和 ⏺ 之间的间隔
             try:
                 await self._process_streaming(text)
             except Exception as exc:
@@ -351,6 +352,7 @@ class BrixCLI:
                     if renderer is not None:
                         renderer.flush()
                         renderer = None
+                    self._console.print()  # 工具调用前的间隔
                     tool_name = event.get("name", "unknown")
                     tool_display.show_tool_start(
                         tool_name, event.get("input", {})
@@ -366,6 +368,7 @@ class BrixCLI:
                         elapsed_ms,
                         is_error=is_err,
                     )
+                    self._console.print()  # 工具结果后的间隔
 
         except Exception as exc:
             has_error = True
