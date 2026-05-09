@@ -40,8 +40,11 @@ class _MarkerMarkdown:
         style = self._console.get_style(self._marker_style)
         # Marker on the first line, inline with content
         yield Segment(self._marker_text, style)
-        # Render Markdown, inserting indent after every newline
-        for seg in self._md.__rich_console__(console, options):
+        # Reduce available width so Rich wraps content within the indented zone
+        inner_width = max(20, options.max_width - _MARKER_WIDTH)
+        inner_options = options.update_width(inner_width)
+        # Render Markdown with reduced width, inserting indent after every newline
+        for seg in self._md.__rich_console__(console, inner_options):
             yield seg
             if seg.text == "\n":
                 yield Segment(" " * _MARKER_WIDTH)

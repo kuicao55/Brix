@@ -62,7 +62,11 @@ class BrixCLI:
         default_model = self._config.get("routing", {}).get("default_model", "unknown")
         show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
+        first_turn = True
         while True:
+            if not first_turn:
+                self._console.print()
+            first_turn = False
             try:
                 user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
             except (EOFError, KeyboardInterrupt):
