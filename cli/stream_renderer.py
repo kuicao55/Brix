@@ -18,6 +18,29 @@ BRAILLE_FRAMES = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\
 _MARKER_WIDTH = 4
 
 
+class _CompactMarkdown:
+    """Markdown renderable that filters out blank-line segments for tighter
+    paragraph spacing.
+
+    Rich's Markdown renderer adds a blank-line ``Segment('\n')`` between block
+    elements (paragraphs, headings, code blocks).  This wrapper removes those
+    consecutive newlines so paragraphs appear single-spaced.
+    """
+
+    def __init__(self, source: str, console: Console) -> None:
+        self._md = Markdown(source)
+        self._console = console
+
+    def __rich_console__(self, console, options):
+        prev_was_newline = False
+        for seg in self._md.__rich_console__(console, options):
+            is_newline = seg.text == "\n" and seg.control is None
+            if is_newline and prev_was_newline:
+                continue  # skip blank-line segment
+            prev_was_newline = is_newline
+            yield seg
+
+
 class _MarkerMarkdown:
     """Renderable that places a styled marker inline with the first line
     of a Markdown block and indents every subsequent line by
@@ -31,7 +54,7 @@ class _MarkerMarkdown:
         marker_style: str,
         console: Console,
     ) -> None:
-        self._md = Markdown(source)
+        self._md = _CompactMarkdown(source, console)
         self._marker_text = marker_text
         self._marker_style = marker_style
         self._console = console
@@ -148,7 +171,7 @@ class StreamRenderer:
                     self.console,
                 ))
             else:
-                parts.append(Markdown(self.rendered))
+                parts.append(_CompactMarkdown(self.rendered, self.console))
 
         # Show activity indicator when idle > 0.8s with pending content
         if self.pending and time.monotonic() - self._last_delta_time > 0.8:

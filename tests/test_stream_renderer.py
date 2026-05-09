@@ -1,4 +1,4 @@
-"""Tests for StreamRenderer embedded activity indicator."""
+"""Tests for StreamRenderer embedded activity indicator and compact Markdown."""
 from __future__ import annotations
 
 import io
@@ -7,9 +7,10 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console, Group
+from rich.segment import Segment
 from rich.text import Text
 
-from cli.stream_renderer import StreamRenderer
+from cli.stream_renderer import StreamRenderer, _CompactMarkdown
 
 
 def _make_renderer():
@@ -98,3 +99,40 @@ class TestActivityIndicator:
         """Default indicator label should be 'Waiting for tool call...'."""
         renderer, _ = _make_renderer()
         assert renderer._indicator_label == "Waiting for tool call..."
+
+
+# ------------------------------------------------------------------
+# _CompactMarkdown tests
+# ------------------------------------------------------------------
+
+
+def _compact_segments(source: str, width: int = 80) -> list[Segment]:
+    """Render _CompactMarkdown to a list of Segments."""
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=width)
+    cm = _CompactMarkdown(source, console)
+    return list(cm.__rich_console__(console, console.options))
+
+
+class TestCompactMarkdown:
+    def test_no_blank_line_between_paragraphs(self):
+        """Paragraphs should be single-spaced (no blank-line segment)."""
+        segments = _compact_segments("第一段。\n\n第二段。")
+        # Collect all \n segments
+        newlines = [s for s in segments if s.text == "\n"]
+        # Should have exactly 2 newlines: end of paragraph 1 + end of content.
+        # No blank-line segment between paragraphs.
+        assert len(newlines) == 2
+
+    def test_single_paragraph_unchanged(self):
+        """A single paragraph should render normally."""
+        segments = _compact_segments("只有一段。")
+        texts = [s.text for s in segments if s.text and s.text.strip()]
+        assert any("只有一段" in t for t in texts)
+
+    def test_code_block_preserved(self):
+        """Code blocks should still render correctly."""
+        segments = _compact_segments("段一。\n\n```python\nprint(1)\n```\n\n段三。")
+        all_text = "".join(s.text or "" for s in segments)
+        assert "print" in all_text
+        assert "段三" in all_text
