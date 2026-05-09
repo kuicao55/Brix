@@ -153,6 +153,7 @@ class StateMachineOrchestrator:
 
             content_parts = []
             tool_calls = []
+            t0 = time.monotonic()
 
             try:
                 async for event in context.llm_client.chat_stream(
@@ -177,6 +178,20 @@ class StateMachineOrchestrator:
                 return
 
             content = "".join(content_parts)
+
+            # Fire orch_plan hook — streaming LLM call completed
+            elapsed = int((time.monotonic() - t0) * 1000)
+            tc_names = [tc["name"] for tc in tool_calls]
+            if context.hooks:
+                context.hooks.fire(
+                    "orch_plan",
+                    iter=iteration,
+                    tools=tc_names,
+                    ms=elapsed,
+                    msg_count=len(context.history),
+                    prompt=_summarize_history(context.history),
+                    response=content[:200] if content else "",
+                )
 
             if not tool_calls:
                 context.history.append({"role": "assistant", "content": content})

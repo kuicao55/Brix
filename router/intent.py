@@ -61,6 +61,7 @@ async def classify_intent(
                 hooks.fire("intent", result=first_token, via="llm",
                            model=model, response=raw_content.strip(),
                            ms=elapsed, prompt_msgs=len(messages),
+                           user_input=user_input,
                            prompt=_summarize_msgs(messages))
             return first_token
     except Exception:
@@ -80,5 +81,6 @@ async def classify_intent(
         hooks.fire("intent", result=result, via="heuristic",
                    model=model,
                    ms=elapsed, prompt_msgs=len(messages),
+                   user_input=user_input,
                    prompt=_summarize_msgs(messages))
     return result
