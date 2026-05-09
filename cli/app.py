@@ -331,6 +331,7 @@ class BrixCLI:
                     text = event.get("text", "")
                     if text:
                         if renderer is None:
+                            tool_display.stop_thinking()
                             indicator.stop_silent()
                             from rich.text import Text
                             renderer = StreamRenderer(

@@ -47,9 +47,6 @@ class ToolDisplay:
             padding=(0, 1),
         )
         self.console.print(panel)
-        # 启动 spinner，提示工具正在执行
-        self._active_spinner = Spinner(self.console, label="Calling tools...")
-        self._active_spinner.start()
 
     def show_tool_result(
         self,
@@ -59,10 +56,8 @@ class ToolDisplay:
         is_error: bool = False,
     ) -> None:
         """Display a one-line summary when a tool call completes."""
-        # 停止 spinner
-        if self._active_spinner is not None:
-            self._active_spinner.stop()
-            self._active_spinner = None
+        # 停止之前的 thinking spinner（如果有）
+        self.stop_thinking()
         safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
         status_style = "red" if is_error else "green"
@@ -82,6 +77,20 @@ class ToolDisplay:
         if is_error:
             text.append("  {}".format(preview), style="red")
         self.console.print(text)
+        # 工具执行完毕，启动 thinking spinner 等待 LLM 响应
+        self.start_thinking()
+
+    def start_thinking(self) -> None:
+        """启动 thinking spinner，在 LLM 思考期间显示动画。"""
+        if self._active_spinner is None:
+            self._active_spinner = Spinner(self.console, label="Thinking...")
+            self._active_spinner.start()
+
+    def stop_thinking(self) -> None:
+        """停止 thinking spinner。"""
+        if self._active_spinner is not None:
+            self._active_spinner.stop()
+            self._active_spinner = None
 
     def _format_detail(self, tool_name: str, tool_input: dict) -> str:
         """Return tool-specific detail string for the panel body."""
@@ -118,6 +127,4 @@ class ToolDisplay:
 
     def cleanup(self) -> None:
         """安全清理：异常路径调用，确保 spinner 不泄漏"""
-        if self._active_spinner is not None:
-            self._active_spinner.stop()
-            self._active_spinner = None
+        self.stop_thinking()

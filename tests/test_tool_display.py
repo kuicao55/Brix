@@ -198,30 +198,39 @@ def test_tool_display_has_tool_icons():
 # ------------------------------------------------------------------
 
 
-def test_show_tool_start_starts_spinner():
-    """验证 show_tool_start 启动 spinner"""
+def test_show_tool_start_no_spinner():
+    """验证 show_tool_start 不再启动 spinner（spinner 改为 LLM 思考时显示）"""
     from cli.tool_display import ToolDisplay
 
     buf = io.StringIO()
     console = _themed_console(buf)
     display = ToolDisplay(console)
     display.show_tool_start("file_read", {"path": "/tmp/test.txt"})
+    assert display._active_spinner is None
+
+
+def test_show_tool_result_starts_thinking():
+    """验证 show_tool_result 后启动 thinking spinner"""
+    from cli.tool_display import ToolDisplay
+
+    buf = io.StringIO()
+    console = _themed_console(buf)
+    display = ToolDisplay(console)
+    display.show_tool_result("file_read", "content", 100.0)
     assert display._active_spinner is not None
     assert display._active_spinner.running is True
-    # 清理
-    display._active_spinner.stop()
+    display.stop_thinking()
 
 
-def test_show_tool_result_stops_spinner():
-    """验证 show_tool_result 停止 spinner"""
+def test_stop_thinking_clears_spinner():
+    """验证 stop_thinking 停止并清除 spinner"""
     from cli.tool_display import ToolDisplay
 
     buf = io.StringIO()
-    console = _themed_console(buf)
-    display = ToolDisplay(console)
-    display.show_tool_start("file_read", {"path": "/tmp/test.txt"})
+    display = ToolDisplay(_themed_console(buf))
+    display.start_thinking()
     assert display._active_spinner is not None
-    display.show_tool_result("file_read", "content", 100.0)
+    display.stop_thinking()
     assert display._active_spinner is None
 
 
@@ -235,12 +244,12 @@ def test_cleanup_when_no_active_spinner():
 
 
 def test_cleanup_stops_active_spinner():
-    """验证 cleanup 停止活跃的 spinner"""
+    """验证 cleanup 停止活跃的 thinking spinner"""
     from cli.tool_display import ToolDisplay
 
     buf = io.StringIO()
     display = ToolDisplay(_themed_console(buf))
-    display.show_tool_start("bash", {"command": "ls"})
+    display.start_thinking()
     assert display._active_spinner is not None
     display.cleanup()
     assert display._active_spinner is None
