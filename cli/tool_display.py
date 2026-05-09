@@ -9,6 +9,8 @@ from rich.markup import escape as markup_escape
 from rich.panel import Panel
 from rich.text import Text
 
+from cli.spinner import Spinner
+
 
 class ToolDisplay:
     """Formatted panels for tool call start and result display."""
@@ -25,6 +27,7 @@ class ToolDisplay:
 
     def __init__(self, console: Console) -> None:
         self.console = console
+        self._active_spinner: Spinner | None = None
 
     def show_tool_start(self, tool_name: str, tool_input: dict) -> None:
         """Display a formatted panel when a tool call begins."""
@@ -44,6 +47,9 @@ class ToolDisplay:
             padding=(0, 1),
         )
         self.console.print(panel)
+        # 启动 spinner，提示工具正在执行
+        self._active_spinner = Spinner(self.console, label="Calling tools...")
+        self._active_spinner.start()
 
     def show_tool_result(
         self,
@@ -53,6 +59,10 @@ class ToolDisplay:
         is_error: bool = False,
     ) -> None:
         """Display a one-line summary when a tool call completes."""
+        # 停止 spinner
+        if self._active_spinner is not None:
+            self._active_spinner.stop()
+            self._active_spinner = None
         safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
         status_style = "red" if is_error else "green"
@@ -105,3 +115,9 @@ class ToolDisplay:
             except (TypeError, ValueError):
                 preview = repr(tool_input)[:150]
             return markup_escape(preview)
+
+    def cleanup(self) -> None:
+        """安全清理：异常路径调用，确保 spinner 不泄漏"""
+        if self._active_spinner is not None:
+            self._active_spinner.stop()
+            self._active_spinner = None
