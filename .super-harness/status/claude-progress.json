@@ -1,10 +1,10 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-08T22:59:14Z",
+  "updated_at": "2026-05-08T23:45:00Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
-  "version_branch": "feat/memory-upgrade",
+  "version_branch": "feat/spinner-and-onboarding-upgrade",
   "worktree": null,
   "milestones": [
     {
@@ -104,11 +104,11 @@
       "title": "Spinner \u7a7a\u767d\u4fee\u590d + Onboarding \u6df1\u5ea6\u6539\u8fdb",
       "description": "Spinner \u7a7a\u767d\u4fee\u590d + Onboarding \u6df1\u5ea6\u6539\u8fdb",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-08-spinner-and-onboarding-design.md",
       "plan_file": ".super-harness/plans/2026-05-08-milestone-9.md",
       "session_date": "2026-05-08T22:57:02Z",
-      "notes": null
+      "notes": "Completed 2026-05-08. 2 tasks: StreamRenderer activity indicator (Braille spinner after 0.8s idle, time.monotonic(), stop_silent()), onboarding template rewrite (multi-phase conversation, minimum 4 exchanges, Template.safe_substitute). CQR: 2 rounds on task 1 (monotonic clock, Group imports), 2 rounds on task 2 (safe_substitute). 291 tests pass, 22 pre-existing failures."
     }
   ]
 }
