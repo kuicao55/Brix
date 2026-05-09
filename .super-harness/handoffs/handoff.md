@@ -1,33 +1,28 @@
-# Handoff — 2026-05-08 23:45
+# Handoff — 2026-05-09 21:39
 
 ## State
-**Status:** MILESTONE_DONE
+**Status:** PLANNING
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-08-spinner-and-onboarding-design.md
-- **plan:** .super-harness/plans/2026-05-08-milestone-9.md
+- **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
+- **plan:** .super-harness/plans/2026-05-09-milestone-10.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-(no worktree — working on branch feat/spinner-and-onboarding-upgrade)
+## Worktree
+(no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-9
-- task_id: all complete
-- tasks_completed: [1, 2]
-
-## Milestone 9 Summary
-- **Task 1: StreamRenderer Embedded Activity Indicator** — Braille spinner appears after 0.8s idle during text→tool_call gap. Uses time.monotonic() for clock safety. StageIndicator gains stop_silent() and _finished guard.
-- **Task 2: Onboarding Template Rewrite** — Multi-phase conversation with natural Q&A (name, age, gender, tech stack, communication style) + personality negotiation. Minimum 4 exchanges before file creation. Template.safe_substitute for injection safety.
+- milestone_id: milestone-10
+- task_id: null (no task started yet)
+- tasks_completed: []
 
 ## Deferred Items
 None
 
 ## Key Decisions
-- time.monotonic() instead of time.time() for idle detection (CQR finding)
-- string.Template.safe_substitute instead of .format() for prompt templates (CQR finding)
-- BRAILLE_FRAMES duplicated (not imported from spinner.py) — acceptable tradeoff
+None
 
 ## Next Action
-/super-harness:resume — start next milestone
+/super-harness:resume
