@@ -1,7 +1,7 @@
-# Handoff — 2026-05-09 22:15
+# Handoff — 2026-05-09 22:20
 
 ## State
-**Status:** MILESTONE_DONE
+**Status:** ALL_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-09-iteration-limit-and-tool-spinner-design.md
@@ -10,11 +10,12 @@
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-(no worktree — merged and cleaned up)
+(no worktree — merged to main and cleaned up)
 
 ## Current Position
 - milestone_id: milestone-10 — COMPLETE
 - tasks_completed: [task-1, task-2]
+- Integration: Merged to main (commit 182156e)
 
 ## Milestone-10 Summary
 - **Task 1:** max_iterations default 5→100, fallback messages include iteration count
@@ -22,6 +23,7 @@
 - **Executor:** claude-subagent (both tasks)
 - **Spec Review:** claude-subagent (both tasks) — SPEC_COMPLIANT on first try
 - **CQR:** codex-adversarial-review (both tasks) — PASS with Minor notes
+- **Tests:** 297 passed, 22 failed (all pre-existing)
 
 ## Deferred Items
 - Blast radius concern: consider adding wall-clock budget or tool-call cap in future milestone
@@ -32,4 +34,4 @@
 - Tests adapted to use _themed_console(buf) helper for BRIX_THEME compatibility
 
 ## Next Action
-/super-harness:resume
+All milestones complete. Project ready for next feature or milestone planning.
