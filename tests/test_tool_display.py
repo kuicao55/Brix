@@ -191,3 +191,56 @@ def test_tool_display_has_tool_icons():
     assert "file_read" in ToolDisplay.TOOL_ICONS
     assert "file_write" in ToolDisplay.TOOL_ICONS
     assert "web_search" in ToolDisplay.TOOL_ICONS
+
+
+# ------------------------------------------------------------------
+# Spinner integration tests
+# ------------------------------------------------------------------
+
+
+def test_show_tool_start_starts_spinner():
+    """验证 show_tool_start 启动 spinner"""
+    from cli.tool_display import ToolDisplay
+
+    buf = io.StringIO()
+    console = _themed_console(buf)
+    display = ToolDisplay(console)
+    display.show_tool_start("file_read", {"path": "/tmp/test.txt"})
+    assert display._active_spinner is not None
+    assert display._active_spinner.running is True
+    # 清理
+    display._active_spinner.stop()
+
+
+def test_show_tool_result_stops_spinner():
+    """验证 show_tool_result 停止 spinner"""
+    from cli.tool_display import ToolDisplay
+
+    buf = io.StringIO()
+    console = _themed_console(buf)
+    display = ToolDisplay(console)
+    display.show_tool_start("file_read", {"path": "/tmp/test.txt"})
+    assert display._active_spinner is not None
+    display.show_tool_result("file_read", "content", 100.0)
+    assert display._active_spinner is None
+
+
+def test_cleanup_when_no_active_spinner():
+    """验证 cleanup 在无活跃 spinner 时安全调用"""
+    from cli.tool_display import ToolDisplay
+
+    buf = io.StringIO()
+    display = ToolDisplay(_themed_console(buf))
+    display.cleanup()  # 不应抛异常
+
+
+def test_cleanup_stops_active_spinner():
+    """验证 cleanup 停止活跃的 spinner"""
+    from cli.tool_display import ToolDisplay
+
+    buf = io.StringIO()
+    display = ToolDisplay(_themed_console(buf))
+    display.show_tool_start("bash", {"command": "ls"})
+    assert display._active_spinner is not None
+    display.cleanup()
+    assert display._active_spinner is None

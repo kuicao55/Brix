@@ -371,6 +371,7 @@ class BrixCLI:
             self._console.print("[red]Error:[/] {}".format(exc))
 
         finally:
+            tool_display.cleanup()  # 确保异常时 spinner 被清理
             indicator.finish()
 
         # Flush any remaining content
