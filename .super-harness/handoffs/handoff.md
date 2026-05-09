@@ -1,7 +1,7 @@
-# Handoff — 2026-05-09 21:50
+# Handoff — 2026-05-09 22:15
 
 ## State
-**Status:** IN_PROGRESS
+**Status:** MILESTONE_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-09-iteration-limit-and-tool-spinner-design.md
@@ -10,25 +10,26 @@
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-- **path:** worktrees/milestone-10
-- **branch:** harness/milestone-10-iteration-limit
+(no worktree — merged and cleaned up)
 
 ## Current Position
-- milestone_id: milestone-10
-- task_id: task-2
-- tasks_completed: [task-1]
+- milestone_id: milestone-10 — COMPLETE
+- tasks_completed: [task-1, task-2]
 
-## Task 1 Summary
-- max_iterations default changed from 5 to 100
-- Fallback messages in run() and run_stream() now include iteration count
-- Codex flagged blast radius concern (Minor, deferred)
-- Executor: claude-subagent, Spec Review: claude-subagent, CQR: codex-adversarial-review
+## Milestone-10 Summary
+- **Task 1:** max_iterations default 5→100, fallback messages include iteration count
+- **Task 2:** Spinner embedded in ToolDisplay (start/stop/cleanup), cleanup() in app.py finally block
+- **Executor:** claude-subagent (both tasks)
+- **Spec Review:** claude-subagent (both tasks) — SPEC_COMPLIANT on first try
+- **CQR:** codex-adversarial-review (both tasks) — PASS with Minor notes
 
 ## Deferred Items
 - Blast radius concern: consider adding wall-clock budget or tool-call cap in future milestone
+- Spinner defensive guard: stop existing spinner before starting new one (for future multi-spinner architectures)
 
 ## Key Decisions
 - Engine: 均衡模式 (Spec Review: Claude, CQR: Codex)
+- Tests adapted to use _themed_console(buf) helper for BRIX_THEME compatibility
 
 ## Next Action
 /super-harness:resume
