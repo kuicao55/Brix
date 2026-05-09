@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-08T23:45:00Z",
+  "updated_at": "2026-05-09T21:39:03Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feat/spinner-and-onboarding-upgrade",
@@ -109,6 +109,17 @@
       "plan_file": ".super-harness/plans/2026-05-08-milestone-9.md",
       "session_date": "2026-05-08T22:57:02Z",
       "notes": "Completed 2026-05-08. 2 tasks: StreamRenderer activity indicator (Braille spinner after 0.8s idle, time.monotonic(), stop_silent()), onboarding template rewrite (multi-phase conversation, minimum 4 exchanges, Template.safe_substitute). CQR: 2 rounds on task 1 (monotonic clock, Group imports), 2 rounds on task 2 (safe_substitute). 291 tests pass, 22 pre-existing failures."
+    },
+    {
+      "id": "milestone-10",
+      "title": "max_iterations \u8c03\u6574 + \u5de5\u5177\u6267\u884c Spinner",
+      "description": "max_iterations \u8c03\u6574 + \u5de5\u5177\u6267\u884c Spinner",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-09-iteration-limit-and-tool-spinner-design.md",
+      "plan_file": ".super-harness/plans/2026-05-09-milestone-10.md",
+      "session_date": "2026-05-09T21:39:03Z",
+      "notes": null
     }
   ]
 }
