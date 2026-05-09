@@ -31,7 +31,13 @@ class ToolDisplay:
         safe_name = markup_escape(str(tool_name))
         icon = self.TOOL_ICONS.get(tool_name, "\U0001f527")
         detail = self._format_detail(tool_name, tool_input)
-        self.console.print(Text("  ⏺ ", style="dim"))
+        # Loading indicator: ⏺ file_read... — shows tool is running
+        loading = Text()
+        loading.append("  ⏺ ", style="dim")
+        loading.append("{} ".format(icon), style="dim")
+        loading.append("{}".format(safe_name), style="tool.name")
+        loading.append("...", style="dim")
+        self.console.print(loading)
         panel = Panel(
             detail,
             title="[tool.name]{} {}[/]".format(icon, safe_name),
