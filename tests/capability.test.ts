@@ -265,23 +265,19 @@ describe('CalculatorTool', () => {
   })
 
   it('应返回除零错误', async () => {
-    const result = await calc.execute({ expression: '1/0' })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: '1/0' })).rejects.toThrow()
   })
 
   it('应拒绝无效表达式', async () => {
-    const result = await calc.execute({ expression: '2++' })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: '2++' })).rejects.toThrow()
   })
 
   it('应拒绝缺少 expression 参数', async () => {
-    const result = await calc.execute({})
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({})).rejects.toThrow()
   })
 
   it('应拒绝非字符串 expression', async () => {
-    const result = await calc.execute({ expression: 123 })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: 123 })).rejects.toThrow()
   })
 
   it('DoS 保护: 指数 <= 1000 时正常计算', async () => {
@@ -289,8 +285,7 @@ describe('CalculatorTool', () => {
   })
 
   it('DoS 保护: 指数 > 1000 时返回错误', async () => {
-    const result = await calc.execute({ expression: '2**1001' })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: '2**1001' })).rejects.toThrow()
   })
 
   it('应通过 ToolRunner 注册和执行', async () => {
@@ -303,19 +298,16 @@ describe('CalculatorTool', () => {
 
   it('DoS 保护: 超长表达式应返回错误', async () => {
     const longExpr = '1' + '+1'.repeat(1000) // 2001 字符
-    const result = await calc.execute({ expression: longExpr })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: longExpr })).rejects.toThrow()
   })
 
   it('DoS 保护: 过深嵌套括号应返回错误', async () => {
     const deepExpr = '(' .repeat(200) + '1' + ')'.repeat(200)
-    const result = await calc.execute({ expression: deepExpr })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: deepExpr })).rejects.toThrow()
   })
 
   it('应拒绝畸形数字字面量 "1.2.3"', async () => {
-    const result = await calc.execute({ expression: '1.2.3' })
-    expect(result).toMatch(/^Error:/)
+    await expect(calc.execute({ expression: '1.2.3' })).rejects.toThrow()
   })
 })
 
@@ -379,24 +371,20 @@ describe('WeatherTool', () => {
     expect(result).toBe('hangzhou: 24°C, Overcast, Humidity: 65%')
   })
 
-  it('未知城市应返回不可用提示', async () => {
-    const result = await weather.execute({ city: 'tokyo' })
-    expect(result).toBe('Weather data not available for tokyo')
+  it('未知城市应抛出不可用错误', async () => {
+    await expect(weather.execute({ city: 'tokyo' })).rejects.toThrow('Weather data not available')
   })
 
-  it('缺少 city 参数应返回清晰错误', async () => {
-    const result = await weather.execute({})
-    expect(result).toBe('Error: city parameter is required and must be a non-empty string')
+  it('缺少 city 参数应抛出清晰错误', async () => {
+    await expect(weather.execute({})).rejects.toThrow('city parameter is required')
   })
 
-  it('city 为空字符串应返回清晰错误', async () => {
-    const result = await weather.execute({ city: '' })
-    expect(result).toBe('Error: city parameter is required and must be a non-empty string')
+  it('city 为空字符串应抛出清晰错误', async () => {
+    await expect(weather.execute({ city: '' })).rejects.toThrow('city parameter is required')
   })
 
-  it('city 为非字符串类型应返回清晰错误', async () => {
-    const result = await weather.execute({ city: 123 })
-    expect(result).toBe('Error: city parameter is required and must be a non-empty string')
+  it('city 为非字符串类型应抛出清晰错误', async () => {
+    await expect(weather.execute({ city: 123 })).rejects.toThrow('city parameter is required')
   })
 
   it('大写城市名应不区分大小写', async () => {

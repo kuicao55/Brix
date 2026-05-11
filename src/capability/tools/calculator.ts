@@ -18,19 +18,14 @@ export class CalculatorTool extends BaseTool {
   }
 
   async execute(params: Record<string, unknown>): Promise<string> {
-    try {
-      const expr = params.expression
-      if (typeof expr !== 'string') {
-        return 'Error: expression 参数必须是字符串'
-      }
-
-      const parser = new ExpressionParser(expr)
-      const result = parser.parse()
-      return String(result)
-    } catch (e) {
-      const message = e instanceof Error ? e.message : '未知错误'
-      return `Error: ${message}`
+    const expr = params.expression
+    if (typeof expr !== 'string') {
+      throw new Error('expression 参数必须是字符串')
     }
+
+    const parser = new ExpressionParser(expr)
+    const result = parser.parse()
+    return String(result)
   }
 }
 
