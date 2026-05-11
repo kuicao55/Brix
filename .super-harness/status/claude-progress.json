@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-11T15:38:45Z",
+  "updated_at": "2026-05-11T17:33:47Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feat/spinner-and-onboarding-upgrade",
