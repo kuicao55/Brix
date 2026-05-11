@@ -14,6 +14,7 @@
 - **持久化存储** — 原子写入 + fcntl 文件锁，崩溃安全
 - **智能路由** — 意图分类 + 复杂度评估，自动选择模型
 - **Rich 终端 UI** — LLM 思考期 Spinner、工具执行面板、内容缩进与紧凑段落间距、启动 Banner、自定义主题、内联响应标记
+- **斜杠自动补全** — 输入 `/` 弹出命令建议，支持模糊匹配；Tab 接受，上下键导航
 - **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
 - **流程日志** — 每轮对话自动记录完整数据流，便于调试和审计
 - **Hook 系统** — 事件驱动架构，核心模块通过 `hooks.fire()` 触发事件，FlowLog 作为默认监听者
@@ -115,15 +116,17 @@ brix
 
 | 命令 | 说明 |
 |------|------|
+| `/help` | 列出所有可用命令 |
 | `/quit` | 保存 session 并退出（也可用 `/exit`） |
-| `/clear` | 开始新 session |
-| `/sessions` | 列出最近 session |
-| `/resume` | 恢复指定 session |
+| `/clear` | 清空当前会话，重新开始 |
+| `/resume` | 浏览并恢复历史会话（交互式 TUI，支持分页和键盘导航） |
 | `/history` | 查看当前 session 消息 |
 | `/soul` | 查看 Agent 人格（soul.md） |
 | `/user` | 查看用户画像（user.md） |
 | `/model` | 显示当前模型 |
 | `/log` | 交互式日志查看器（上下箭头选择） |
+
+输入 `/` 触发自动补全 — 模糊匹配过滤命令。Tab 接受，上下键导航，Escape 关闭。
 
 ---
 
@@ -342,6 +345,8 @@ pip install langgraph
 +-----------------------------------------------------+
 |                   能力层                              |
 |  capability/runner.py (ToolRunner)                   |
+|  capability/basics/ (可复用 Agent 功能)               |
+|    sessions.py, memory_files.py, logs.py, commands.py|
 |  capability/tools/calculator.py                      |
 |  capability/tools/weather.py                         |
 |  capability/tools/file_read.py                       |
@@ -379,6 +384,9 @@ pip install langgraph
 |  cli/spinner.py (Braille 点动画)                      |
 |  cli/stage_indicator.py (统一加载 Spinner)             |
 |  cli/tool_display.py (工具执行面板)                    |
+|  cli/completer.py (斜杠命令自动补全)                   |
+|  cli/paginated_selector.py (通用分页 TUI 选择器)       |
+|  cli/display.py (历史记录渲染)                         |
 |  cli/theme.py (Rich 主题)                             |
 |  cli/banner.py (启动 Banner)                          |
 +-----------------------------------------------------+
@@ -438,6 +446,11 @@ brix/
 +-- capability/
 |   +-- base.py                     # Tool 抽象基类
 |   +-- runner.py                   # ToolRunner 注册表
+|   +-- basics/                     # 可复用 Agent 功能（UI 无关）
+|   |   +-- sessions.py             # 会话列表、恢复、前缀匹配
+|   |   +-- memory_files.py         # Soul & User 文件加载
+|   |   +-- logs.py                 # 日志检索与格式化
+|   |   +-- commands.py             # 命令注册表（/help 和自动补全）
 |   +-- tools/
 |       +-- calculator.py           # 数学表达式计算器
 |       +-- weather.py              # 天气查询（模拟）
@@ -461,7 +474,9 @@ brix/
 |   +-- __init__.py                 # Re-exports
 +-- cli/
 |   +-- app.py                      # REPL 界面（流式管线）
-|   +-- display.py                  # 输出格式化
+|   +-- completer.py                # 斜杠命令自动补全 (prompt_toolkit)
+|   +-- paginated_selector.py       # 通用分页 TUI 选择器
+|   +-- display.py                  # 输出格式化 & 历史记录渲染
 |   +-- stream_renderer.py          # 安全边界 Markdown 流式渲染器
 |   +-- spinner.py                  # Braille 点动画 Spinner
 |   +-- stage_indicator.py          # 统一加载 Spinner (原地更新)
@@ -477,7 +492,11 @@ brix/
     +-- test_capability.py          # 工具 & runner 测试
     +-- test_file_tools.py          # 文件工具测试
     +-- test_memory.py              # 记忆层测试
+    +-- test_memory_v2.py           # Memory v2 协议 & provider 测试
+    +-- test_basics.py              # capability/basics 模块测试
     +-- test_cli.py                 # CLI 测试
+    +-- test_completer.py           # 斜杠命令自动补全测试
+    +-- test_paginated_selector.py  # 分页 TUI 选择器测试
     +-- test_flow_log.py            # 流程日志测试
     +-- test_stream_renderer.py     # 流式渲染器测试
     +-- test_tool_display.py        # 工具显示面板测试

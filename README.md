@@ -14,6 +14,7 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Persistent Storage** — Crash-safe atomic writes with fcntl locking
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
 - **Rich Terminal UI** — Thinking spinner during LLM gap, tool execution panels, content indentation with compact paragraph spacing, styled banner, custom theme, inline response markers
+- **Slash Autocomplete** — Type `/` to see command suggestions with fuzzy matching; Tab to accept, Up/Down to navigate
 - **Extensible Config** — Add new providers and models by editing a single YAML file
 - **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
 - **Hook System** — Event-driven architecture with `HookRegistry`; core modules fire events via `hooks.fire()`, FlowLog acts as default listener, easily extensible with custom hooks
@@ -115,15 +116,17 @@ To remove, delete the `alias brix=...` line from your shell config and reload.
 
 | Command | Description |
 |---------|-------------|
+| `/help` | List all available commands |
 | `/quit` | Save session and exit (also `/exit`) |
-| `/clear` | Start a new session |
-| `/sessions` | List recent sessions |
-| `/resume` | Resume a previous session |
+| `/clear` | Clear current session and start fresh |
+| `/resume` | Browse and resume previous sessions (interactive TUI with pagination) |
 | `/history` | Show current session messages |
 | `/soul` | Show agent personality (soul.md) |
 | `/user` | Show user profile (user.md) |
 | `/model` | Show current model |
 | `/log` | Interactive log viewer (arrow keys to select) |
+
+Type `/` to trigger autocomplete — fuzzy matching filters commands as you type. Tab accepts, Up/Down navigates, Escape dismisses.
 
 ---
 
@@ -346,6 +349,8 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 +-----------------------------------------------------+
 |                  Capability Layer                     |
 |  capability/runner.py (ToolRunner)                   |
+|  capability/basics/ (reusable agent features)        |
+|    sessions.py, memory_files.py, logs.py, commands.py|
 |  capability/tools/calculator.py                      |
 |  capability/tools/weather.py                         |
 |  capability/tools/file_read.py                       |
@@ -383,6 +388,9 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  cli/spinner.py (Braille animation)                  |
 |  cli/stage_indicator.py (unified loading spinner)    |
 |  cli/tool_display.py (tool execution panels)         |
+|  cli/completer.py (slash command autocomplete)       |
+|  cli/paginated_selector.py (generic TUI selector)    |
+|  cli/display.py (history rendering)                  |
 |  cli/theme.py (Rich theme)                           |
 |  cli/banner.py (startup banner)                      |
 +-----------------------------------------------------+
@@ -442,6 +450,11 @@ brix/
 +-- capability/
 |   +-- base.py                     # Tool abstract base class
 |   +-- runner.py                   # ToolRunner registry
+|   +-- basics/                     # Reusable agent features (UI-independent)
+|   |   +-- sessions.py             # Session list, resume, prefix match
+|   |   +-- memory_files.py         # Soul & user file loaders
+|   |   +-- logs.py                 # Log retrieval & formatting
+|   |   +-- commands.py             # Command registry for /help & autocomplete
 |   +-- tools/
 |       +-- calculator.py           # Math expression evaluator
 |       +-- weather.py              # Mock weather lookup
@@ -465,7 +478,9 @@ brix/
 |   +-- __init__.py                 # Re-exports
 +-- cli/
 |   +-- app.py                      # REPL interface (streaming pipeline)
-|   +-- display.py                  # Output formatting
+|   +-- completer.py                # Slash command autocomplete (prompt_toolkit)
+|   +-- paginated_selector.py       # Generic paginated TUI selector
+|   +-- display.py                  # Output formatting & history rendering
 |   +-- stream_renderer.py          # Safe-boundary Markdown stream renderer
 |   +-- spinner.py                  # Braille dot animation spinner
 |   +-- stage_indicator.py          # Unified loading spinner (update in-place)
@@ -481,7 +496,11 @@ brix/
     +-- test_capability.py          # Tool & runner tests
     +-- test_file_tools.py          # File tool tests
     +-- test_memory.py              # Memory tests
+    +-- test_memory_v2.py           # Memory v2 protocol & provider tests
+    +-- test_basics.py              # capability/basics module tests
     +-- test_cli.py                 # CLI tests
+    +-- test_completer.py           # Slash command autocomplete tests
+    +-- test_paginated_selector.py  # Paginated TUI selector tests
     +-- test_flow_log.py            # Flow log tests
     +-- test_stream_renderer.py     # Stream renderer tests
     +-- test_tool_display.py        # Tool display panel tests
