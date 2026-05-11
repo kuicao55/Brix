@@ -180,3 +180,138 @@ describe('classifyIntent', () => {
     })
   })
 })
+
+// ============================================================
+// evaluateComplexity 测试
+// ============================================================
+const { evaluate_complexity } = await import('../src/router/complexity.js')
+
+describe('evaluateComplexity', () => {
+  describe('低复杂度', () => {
+    it('短输入（<=30 词）应返回 low', () => {
+      expect(evaluate_complexity('Hello, how are you?')).toBe('low')
+    })
+
+    it('单个单词应返回 low', () => {
+      expect(evaluate_complexity('hello')).toBe('low')
+    })
+
+    it('空字符串应返回 low', () => {
+      expect(evaluate_complexity('')).toBe('low')
+    })
+
+    it('恰好 30 词应返回 low', () => {
+      const input = Array(30).fill('word').join(' ')
+      expect(evaluate_complexity(input)).toBe('low')
+    })
+  })
+
+  describe('中等复杂度', () => {
+    it('31-100 词且无关键词应返回 medium', () => {
+      const input = Array(50).fill('word').join(' ')
+      expect(evaluate_complexity(input)).toBe('medium')
+    })
+
+    it('恰好 31 词应返回 medium', () => {
+      const input = Array(31).fill('word').join(' ')
+      expect(evaluate_complexity(input)).toBe('medium')
+    })
+
+    it('恰好 100 词且无关键词应返回 medium', () => {
+      const input = Array(100).fill('word').join(' ')
+      expect(evaluate_complexity(input)).toBe('medium')
+    })
+  })
+
+  describe('高复杂度', () => {
+    it('超过 100 词应返回 high', () => {
+      const input = Array(101).fill('word').join(' ')
+      expect(evaluate_complexity(input)).toBe('high')
+    })
+
+    it('包含 "complex" 关键词应返回 high', () => {
+      expect(evaluate_complexity('This is a complex problem')).toBe('high')
+    })
+
+    it('包含 "difficult" 关键词应返回 high', () => {
+      expect(evaluate_complexity('This is a difficult task')).toBe('high')
+    })
+
+    it('包含 "advanced" 关键词应返回 high', () => {
+      expect(evaluate_complexity('advanced configuration')).toBe('high')
+    })
+
+    it('包含 "enterprise" 关键词应返回 high', () => {
+      expect(evaluate_complexity('enterprise solution')).toBe('high')
+    })
+
+    it('包含 "scale" 关键词应返回 high', () => {
+      expect(evaluate_complexity('scale the application')).toBe('high')
+    })
+
+    it('包含 "performance" 关键词应返回 high', () => {
+      expect(evaluate_complexity('performance optimization')).toBe('high')
+    })
+
+    it('包含 "security" 关键词应返回 high', () => {
+      expect(evaluate_complexity('security audit')).toBe('high')
+    })
+
+    it('关键词匹配应不区分大小写', () => {
+      expect(evaluate_complexity('COMPLEX')).toBe('high')
+      expect(evaluate_complexity('Performance')).toBe('high')
+    })
+
+    it('短输入但有关键词应返回 high', () => {
+      expect(evaluate_complexity('complex')).toBe('high')
+    })
+  })
+})
+
+// ============================================================
+// selectModel 测试
+// ============================================================
+const { selectModel } = await import('../src/router/model-router.js')
+
+describe('selectModel', () => {
+  const defaultModel = 'gpt-4o-mini'
+  const fallbackModel = 'gpt-3.5-turbo'
+
+  describe('高复杂度路由', () => {
+    it('high 复杂度应返回 opus 模型，忽略 intent', () => {
+      expect(selectModel('chat', 'high', defaultModel, fallbackModel)).toBe('claude-3-opus-20240229')
+      expect(selectModel('task', 'high', defaultModel, fallbackModel)).toBe('claude-3-opus-20240229')
+      expect(selectModel('tool_use', 'high', defaultModel, fallbackModel)).toBe('claude-3-opus-20240229')
+    })
+  })
+
+  describe('任务路由', () => {
+    it('task 意图且非 high 复杂度应返回 sonnet 模型', () => {
+      expect(selectModel('task', 'low', defaultModel, fallbackModel)).toBe('claude-3-sonnet-20240229')
+      expect(selectModel('task', 'medium', defaultModel, fallbackModel)).toBe('claude-3-sonnet-20240229')
+    })
+  })
+
+  describe('默认路由', () => {
+    it('chat 意图且 low 复杂度应返回 defaultModel', () => {
+      expect(selectModel('chat', 'low', defaultModel, fallbackModel)).toBe(defaultModel)
+    })
+
+    it('chat 意图且 medium 复杂度应返回 defaultModel', () => {
+      expect(selectModel('chat', 'medium', defaultModel, fallbackModel)).toBe(defaultModel)
+    })
+
+    it('tool_use 意图且 low 复杂度应返回 defaultModel', () => {
+      expect(selectModel('tool_use', 'low', defaultModel, fallbackModel)).toBe(defaultModel)
+    })
+
+    it('tool_use 意图且 medium 复杂度应返回 defaultModel', () => {
+      expect(selectModel('tool_use', 'medium', defaultModel, fallbackModel)).toBe(defaultModel)
+    })
+
+    it('应返回传入的 defaultModel 参数', () => {
+      const custom = 'my-custom-model'
+      expect(selectModel('chat', 'low', custom, fallbackModel)).toBe(custom)
+    })
+  })
+})
