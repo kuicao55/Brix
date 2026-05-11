@@ -7,15 +7,19 @@
 **Project Name:** Brix
 **Harness Version:** 3.6.0
 **Generated:** 2026-05-07
-**Last Updated:** 2026-05-08 (milestone-8 complete)
+**Last Updated:** 2026-05-11 (milestone-11 complete)
 
 ## Tech Stack
 
-- **Language:** Python 3.11+
-- **Test Framework:** pytest
-- **Data Models:** dataclasses
+- **Language:** Python 3.11+ (legacy) / TypeScript (migration target)
+- **Runtime:** Bun (TypeScript)
+- **Module System:** ESM (type: "module")
+- **TypeScript:** Strict mode, bundler module resolution
+- **Test Framework:** pytest (Python) / bun:test (TypeScript)
+- **Data Models:** dataclasses (Python) / TypeScript interfaces (TS)
 - **Orchestrator:** Pure Python state machine + LangGraph (switchable)
 - **LLM Integration:** OpenAI-compatible + Anthropic-compatible providers
+- **TypeScript Packages:** @anthropic-ai/sdk, openai, chalk, js-yaml, js-tiktoken, marked, ora, dotenv
 
 ## Functional Modules
 
@@ -42,6 +46,13 @@
 | **ToolDisplay** | **Tool execution status panels with Rich markup** | **`cli/tool_display.py`** |
 | Log | FlowLog event recording, JSONL persistence | `log/` |
 | **Hook** | **Event registry, observer pattern dispatch** | **`hooks/`** |
+| **TS: Types** | **Global type definitions (Message, ToolCallData, LLMResponse, StreamEvent)** | **`src/types.ts`** |
+| **TS: Config Loader** | **YAML config loading with deep merge + prototype pollution prevention** | **`src/config/loader.ts`** |
+| **TS: Model Registry** | **Model lookup by ID/purpose with defensive guards** | **`src/config/model-registry.ts`** |
+| **TS: OpenAI Provider** | **OpenAI-compatible chat + streaming with tool call accumulation** | **`src/infra/providers/openai-compat.ts`** |
+| **TS: Anthropic Provider** | **Anthropic-compatible chat + streaming with message conversion** | **`src/infra/providers/anthropic-compat.ts`** |
+| **TS: LLM Client** | **Unified LLM client with retry, provider abstraction, lazy init** | **`src/infra/llm-client.ts`** |
+| **TS: CLI Entry** | **Minimal Bun CLI entry point** | **`src/entrypoints/cli.ts`** |
 
 ## Key Architectural Decisions
 
@@ -69,16 +80,21 @@
 
 ```
 Brix/
-├── cli/          # CLI interface (app.py, display.py, theme.py, spinner.py, stream_renderer.py, tool_display.py, stage_indicator.py, banner.py)
-├── config/       # Model registry, provider configs
-├── capability/   # Tool registration and execution
-├── hooks/        # Hook event registry (HookRegistry, HookEvent)
-├── infra/        # LLM client, provider adapters (with streaming support)
-├── log/          # FlowLog, JSONL writer
-├── memory/       # Conversation persistence
-├── orchestrator/ # State machine + LangGraph orchestrators (with run_stream)
-├── router/       # Intent classification, model routing
-├── tests/        # pytest test suite
+├── cli/          # CLI interface (Python: app.py, display.py, theme.py, spinner.py, stream_renderer.py, tool_display.py, stage_indicator.py, banner.py)
+├── config/       # Model registry, provider configs (Python)
+├── capability/   # Tool registration and execution (Python)
+├── hooks/        # Hook event registry (Python)
+├── infra/        # LLM client, provider adapters (Python)
+├── log/          # FlowLog, JSONL writer (Python)
+├── memory/       # Conversation persistence (Python)
+├── orchestrator/ # State machine + LangGraph orchestrators (Python)
+├── router/       # Intent classification, model routing (Python)
+├── src/          # TypeScript migration (new)
+│   ├── types.ts           # Global type definitions
+│   ├── config/            # Config loader, model registry
+│   ├── infra/             # LLM client, providers (openai-compat, anthropic-compat)
+│   └── entrypoints/       # CLI entry point (Bun)
+├── tests/        # pytest + bun:test test suite
 └── data/         # Runtime data (memory.json, logs)
 ```
 
