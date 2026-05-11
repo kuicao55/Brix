@@ -7,3 +7,10 @@ memory/data/
 *.egg-info/
 dist/
 build/
+
+# TypeScript / Node
+node_modules/
+*.js.map
+*.d.ts
+src/memory/data/
+src/log/data/
