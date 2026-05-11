@@ -160,9 +160,9 @@ class MemoryStrategy:
         if session_context:
             parts.append(f"{_DATA_GUARD}\n\n<session_context>\n{session_context}\n</session_context>")
 
-        # 动态上下文
+        # 动态上下文（系统生成，非用户输入，无需 data-guard）
         if dynamic_context:
-            parts.append(f"{_DATA_GUARD}\n\n<dynamic_context>\n{dynamic_context}\n</dynamic_context>")
+            parts.append(f"<dynamic_context>\n{dynamic_context}\n</dynamic_context>")
 
         return "\n\n".join(parts)
 

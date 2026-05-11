@@ -7,11 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import HTML, PromptSession
+from prompt_toolkit.completion import FuzzyCompleter
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.styles import Style
 from prompt_toolkit.shortcuts.choice_input import ChoiceInput
 from rich.console import Console
 
 from capability.runner import ToolRunner
+from capability.basics.sessions import list_sessions, get_session_by_prefix, resume_session
+from capability.basics.memory_files import load_soul, load_user
+from capability.basics.logs import get_recent_logs, get_log_detail
+from capability.basics.commands import get_command_list
 from hooks.registry import HookRegistry
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_edit import FileEditTool
@@ -19,13 +25,16 @@ from capability.tools.file_read import FileReadTool
 from capability.tools.file_write import FileWriteTool
 from capability.tools.weather import WeatherTool
 from cli.banner import show_banner
+from cli.completer import SlashCommandCompleter
+from cli.display import render_history
+from cli.paginated_selector import PaginatedSelector
 from cli.stage_indicator import StageIndicator
 from cli.stream_renderer import StreamRenderer
 from cli.theme import BRIX_THEME
 from cli.tool_display import ToolDisplay
 from config.loader import load_config
 from log.flow import FlowLog
-from log.writer import flush_log, read_all, read_entry, format_compact_list, format_detail, entry_count
+from log.writer import flush_log
 from infra.llm_client import LLMClient
 from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
@@ -58,7 +67,27 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
-        session = PromptSession(history=InMemoryHistory())
+        completer = FuzzyCompleter(SlashCommandCompleter())
+        # 补全菜单样式：纯文字，无背景无边框
+        completion_style = Style.from_dict({
+            "completion-menu": "bg:",
+            "completion-menu.completion": "fg:#888888 bg:",
+            "completion-menu.completion.current": "fg:#000000 bg:",
+            "completion-menu.meta.completion": "fg:#666666 bg:",
+            "completion-menu.meta.completion.current": "fg:#333333 bg:",
+            "completion-menu.multi-column-meta": "bg:",
+            "completion-menu.completion fuzzymatch.inside": "bg:",
+            "completion-menu.completion fuzzymatch.inside.character": "bg:",
+            "completion-menu.completion fuzzymatch.outside": "fg:#666666 bg:",
+            "scrollbar": "bg:",
+            "scrollbar.button": "bg:",
+        })
+        session = PromptSession(
+            history=InMemoryHistory(),
+            completer=completer,
+            complete_while_typing=True,
+            style=completion_style,
+        )
         default_model = self._config.get("routing", {}).get("default_model", "unknown")
         show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
@@ -105,8 +134,8 @@ class BrixCLI:
             sys.exit(0)
 
         if cmd == "/clear":
-            sid = self._memory.create_session()
-            print(f"New session: {sid[:8]}...")
+            self._memory.clear_session()
+            print("Session cleared.")
             return True
 
         if cmd == "/model":
@@ -115,81 +144,77 @@ class BrixCLI:
             return True
 
         if cmd == "/history":
-            sessions = self._memory.list_sessions()
+            sessions = list_sessions(self._memory)
             if sessions:
                 sid = sessions[0]["id"]
                 msgs = self._memory.load_session(sid)
                 if not msgs:
                     print("No history yet.")
                 else:
-                    for msg in msgs:
-                        role = msg.get("role", "?")
-                        content = msg.get("content", "")
-                        print(f"  [{role}] {content[:80]}")
+                    render_history(self._console, msgs)
             else:
                 print("No history yet.")
             return True
 
-        if cmd == "/sessions":
-            sessions = self._memory.list_sessions()
+        if cmd == "/resume":
+            sessions = list_sessions(self._memory)
             if not sessions:
                 print("No sessions yet.")
-            else:
-                for s in sessions:
-                    sid = s.get("id", "?")[:8]
-                    count = s.get("message_count", 0)
-                    preview = s.get("preview", "")[:60]
-                    updated = s.get("updated", "")[:19]
-                    print(f"  {sid}...  {count} msgs  {updated}  {preview}")
-            return True
+                return True
 
-        if cmd == "/resume":
+            # 带 ID 前缀时尝试直接匹配（向后兼容）
             parts = text.split()
-            if len(parts) < 2:
-                print("Usage: /resume <session_id>")
-                return True
-            prefix = parts[1]
-            # Find matching session
-            sessions = self._memory.list_sessions()
-            matches = [s for s in sessions if s["id"].startswith(prefix)]
-            if not matches:
-                print(f"No session matching: {prefix}")
-                return True
-            if len(matches) > 1:
-                print(f"Ambiguous prefix, {len(matches)} matches:")
-                for s in matches:
-                    print(f"  {s['id'][:8]}...")
-                return True
-            sid = matches[0]["id"]
-            try:
-                msgs = self._memory.resume_session(sid)
-                print(f"Resumed session {sid[:8]}... ({len(msgs)} messages)")
-            except FileNotFoundError:
-                print(f"Session not found: {sid[:8]}...")
+            if len(parts) >= 2:
+                prefix = parts[1]
+                result = get_session_by_prefix(self._memory, prefix)
+                if result == "ambiguous":
+                    matches = [s for s in sessions if s["id"].startswith(prefix)]
+                    print(f"Ambiguous prefix, {len(matches)} matches. Opening selector...")
+                elif result is not None:
+                    self._print_resumed_messages(result["id"])
+                    return True
+
+            # 交互式选择器
+            def format_session(s: dict, idx: int) -> str:
+                sid = s.get("id", "?")[:8]
+                count = s.get("message_count", 0)
+                updated = s.get("updated", "")[:10]  # YYYY-MM-DD
+                preview = s.get("preview", "")[:40].replace("\n", " ")
+                return f"{sid}  {count:>3} msgs  {updated}  {preview}"
+
+            selector = PaginatedSelector(
+                items=sessions,
+                format_item=format_session,
+                page_size=10,
+                title="选择要恢复的会话",
+            )
+            selected = await selector.prompt_async()
+            if selected is not None:
+                self._print_resumed_messages(selected["id"])
             return True
 
         if cmd == "/soul":
-            if self._memory.soul_exists():
-                print(self._memory.load_soul())
+            content = load_soul(self._memory)
+            if content is not None:
+                print(content)
             else:
                 print("No soul.md yet. Start a conversation to create it.")
             return True
 
         if cmd == "/user":
-            if self._memory.user_memory_exists():
-                print(self._memory.load_user_memory())
+            content = load_user(self._memory)
+            if content is not None:
+                print(content)
             else:
                 print("No user.md yet. Start a conversation to create it.")
             return True
 
         if cmd == "/log":
-            total = entry_count()
-            if total == 0:
+            entries = get_recent_logs(20)
+            if not entries:
                 print("No logs yet.")
                 return True
 
-            # Show last 20 entries as interactive selection
-            entries = read_all()[-20:][::-1]  # newest first
             options = []
             for i, entry in enumerate(entries, 1):
                 ts = entry.get("ts", "?")
@@ -208,11 +233,33 @@ class BrixCLI:
             selected = await selector.prompt_async()
             if selected is not None:
                 entry = entries[selected - 1]
-                print(format_detail(entry))
+                print(get_log_detail(entry))
+            return True
+
+        if cmd == "/help":
+            commands = get_command_list()
+            width = max(len(c[0]) for c in commands) + 2
+            print()
+            print("  可用命令：")
+            print()
+            for name, desc in commands:
+                print(f"    {name:<{width}} {desc}")
+            print()
             return True
 
         print(f"Unknown command: {cmd}")
         return True
+
+    def _print_resumed_messages(self, session_id: str) -> None:
+        """恢复 session 并用完整聊天 UI 渲染历史对话。"""
+        try:
+            msgs = resume_session(self._memory, session_id)
+            self._console.print(f"[dim]Resumed session {session_id[:8]}... ({len(msgs)} messages)[/]")
+            if msgs:
+                self._console.print()
+                render_history(self._console, msgs)
+        except FileNotFoundError:
+            print(f"Session not found: {session_id[:8]}...")
 
     # ------------------------------------------------------------------
     # Core processing pipeline
@@ -434,9 +481,12 @@ class BrixCLI:
         import platform
         from datetime import datetime, timezone
 
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        now_utc = datetime.now(timezone.utc)
+        now_local = datetime.now().astimezone()
+        utc_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+        local_str = now_local.strftime("%Y-%m-%d %H:%M %Z")
         parts = [
-            f"Current date/time: {now}",
+            f"Current date/time: {local_str} ({utc_str})",
             f"Platform: {platform.system()} {platform.release()}",
             f"Working directory: {Path.cwd()}",
         ]
