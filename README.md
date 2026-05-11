@@ -183,28 +183,28 @@ Core modules ---(hooks.fire())---> HookRegistry ---(auto-forward)---> FlowLog.st
 
 ### Registering Custom Hooks
 
-```python
-from hooks.registry import HookRegistry
+```typescript
+import { HookRegistry } from '../hooks/registry.js'
 
-hooks = HookRegistry()
-hooks.bind_log(log)  # FlowLog receives all events
+const hooks = new HookRegistry()
+hooks.bindLog(log)  // FlowLog receives all events
 
-# Register a custom hook for specific events
-hooks.register("tool_exec", lambda e: print(f"Tool called: {e.data['name']}"))
-hooks.register("intent", lambda e: audit_log(e))
+// Register a custom hook for specific events
+hooks.register('tool_exec', (e) => console.log(`Tool called: ${e.data['name']}`))
+hooks.register('intent', (e) => auditLog(e))
 ```
 
 ### Available Events
 
 | Event | Trigger Location | Data Fields |
 |-------|-----------------|-------------|
-| `memory` | cli/app.py | `msgs`, `window`, `chars` |
-| `intent` | router/intent.py | `result`, `via`, `model`, `ms` |
-| `complexity` | cli/app.py | `result` |
-| `router` | cli/app.py | `model`, `reason` |
+| `memory` | cli/app.ts | `msgs`, `window`, `chars` |
+| `intent` | router/intent.ts | `result`, `via`, `model`, `ms` |
+| `complexity` | cli/app.ts | `result` |
+| `router` | cli/app.ts | `model`, `reason` |
 | `orch_plan` | orchestrator/ | `iter`, `tools`, `ms`, `response` |
 | `tool_exec` | orchestrator/ | `name`, `args`, `result`, `ms` |
-| `persist` | cli/app.py | `saved` |
+| `persist` | cli/app.ts | `saved` |
 
 ---
 
