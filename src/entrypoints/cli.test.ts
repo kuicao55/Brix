@@ -1,37 +1,37 @@
 /**
- * CLI 入口集成验证测试 — Phase 3
- * 验证所有 Phase 3 模块（Router, Orchestrator, Capability）可正确导入和运行
+ * CLI 入口测试 — 验证入口文件正确使用 BrixCLI
+ *
+ * TDD 约定：
+ *   - mock BrixCLI 防止真实 REPL 启动
+ *   - 验证入口直接调用 main()，不导出
  */
-import { describe, it, expect } from 'vitest'
-import { main } from './cli.js'
+import { describe, expect, it, mock, beforeEach } from 'bun:test'
 
-describe('CLI 集成验证', () => {
-  it('main() should run Phase 3 verification without errors', async () => {
-    // main() 不应抛出异常
-    await expect(main()).resolves.toBeUndefined()
+// 在模块级别 mock，确保 import 前生效
+const runSpy = mock(() => Promise.resolve())
+
+mock.module('../cli/app.js', () => ({
+  BrixCLI: class MockBrixCLI {
+    run = runSpy
+  }
+}))
+
+describe('CLI 入口', () => {
+  beforeEach(() => {
+    runSpy.mockClear()
   })
 
-  it('main() should produce Phase 3 verification output', async () => {
-    const logs: string[] = []
-    const originalLog = console.log
-    console.log = (...args: unknown[]) => {
-      logs.push(args.map(String).join(' '))
-    }
-    try {
-      await main()
-    } finally {
-      console.log = originalLog
-    }
+  it('应该创建 BrixCLI 实例并调用 run() 启动 REPL', async () => {
+    // 动态导入触发 main()
+    await import('./cli.js')
+    // 等待异步 main 执行完成
+    await Bun.sleep(200)
 
-    const output = logs.join('\n')
+    expect(runSpy).toHaveBeenCalled()
+  })
 
-    // 验证关键输出
-    expect(output).toContain('Phase 3 Complete')
-    expect(output).toContain('Intent:')
-    expect(output).toContain('Complexity:')
-    expect(output).toContain('Model:')
-    expect(output).toContain('Orchestrator created')
-    expect(output).toContain('ToolRunner registered')
-    expect(output).toContain('Phase 3 verification complete!')
+  it('不应该导出 main 函数（入口点直接调用）', async () => {
+    const mod = await import('./cli.js')
+    expect(mod.main).toBeUndefined()
   })
 })

@@ -21,6 +21,7 @@ export class ToolDisplay {
 
   /** 显示工具调用开始面板 */
   showToolStart(toolName: string, toolInput: Record<string, unknown>): void {
+    this.stopThinking()
     const icon = TOOL_ICONS[toolName] || '🔧'
     const detail = this.formatDetail(toolName, toolInput)
 
@@ -37,6 +38,7 @@ export class ToolDisplay {
     elapsedMs: number,
     isError: boolean = false,
   ): void {
+    result = result ?? ''
     this.stopThinking()
     const icon = TOOL_ICONS[toolName] || '🔧'
     const statusIcon = isError ? chalk.red('✗') : chalk.green('✓')
@@ -86,7 +88,7 @@ export class ToolDisplay {
       case 'file_read':
         return `📄 Reading ${toolInput.path || ''}`
       case 'file_write':
-        return `✏️ Writing ${toolInput.path || ''} (${(toolInput.content as string || '').split('\n').length} lines)`
+        return `✏️ Writing ${toolInput.path || ''} (${String(toolInput.content ?? '').split('\n').length} lines)`
       case 'file_edit':
         return `📝 Editing ${toolInput.path || ''}`
       case 'web_search':

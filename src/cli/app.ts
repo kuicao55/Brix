@@ -34,6 +34,8 @@ import { COMMANDS } from '../capability/basics/commands.js'
 import { classifyIntent } from '../router/intent.js'
 import { evaluate_complexity } from '../router/complexity.js'
 import { selectModel } from '../router/model-router.js'
+import { paginatedSelect } from './paginated-selector.js'
+import { getRecentLogs } from '../capability/basics/logs.js'
 
 /** BrixCLI 配置选项 */
 export interface BrixCLIOptions {
@@ -79,32 +81,38 @@ export class BrixCLI {
 
     const prompt = () => {
       rl.question(chalk.cyan.bold('  \u276f '), async (input: string) => {
-        const text = input.trim()
-        if (!text) {
-          prompt()
-          return
-        }
-
-        // 斜杠命令
-        if (text.startsWith('/')) {
-          const shouldContinue = await this.handleCommand(text)
-          if (shouldContinue) {
+        try {
+          const text = input.trim()
+          if (!text) {
             prompt()
             return
           }
-          // /quit 返回 false，退出循环
-          rl.close()
-          return
-        }
 
-        // 普通对话 — 流式响应
-        console.log()
-        try {
-          await this.handleChat(text)
+          // 斜杠命令
+          if (text.startsWith('/')) {
+            const shouldContinue = await this.handleCommand(text)
+            if (shouldContinue) {
+              prompt()
+              return
+            }
+            // /quit 返回 false，退出循环
+            rl.close()
+            return
+          }
+
+          // 普通对话 — 流式响应
+          console.log()
+          try {
+            await this.handleChat(text)
+          } catch (exc) {
+            console.error(chalk.red('Error: ') + (exc instanceof Error ? exc.message : String(exc)))
+          }
+          prompt()
         } catch (exc) {
+          // 捕获 handleCommand 等抛出的异常，防止 unhandled promise rejection
           console.error(chalk.red('Error: ') + (exc instanceof Error ? exc.message : String(exc)))
+          prompt()
         }
-        prompt()
       })
     }
 
@@ -130,12 +138,18 @@ export class BrixCLI {
     }
 
     if (cmd === '/quit' || cmd === '/exit') {
-      console.log('Goodbye.')
       return false
     }
 
     if (cmd === '/clear') {
       // 清除会话（如果 memory 存在）
+      if (this.memory) {
+        try {
+          ;(this.memory as any).clearSession?.()
+        } catch {
+          // fail gracefully
+        }
+      }
       console.log('Session cleared.')
       return true
     }
@@ -149,9 +163,9 @@ export class BrixCLI {
     if (cmd === '/history') {
       if (this.memory) {
         try {
-          const sessions = this.memory.listSessions()
-          if (sessions.length > 0) {
-            console.log(`Found ${sessions.length} session(s).`)
+          const messages = (this.memory as any).getContextMessages?.('') ?? []
+          if (messages.length > 0) {
+            renderHistory(messages)
           } else {
             console.log('No history yet.')
           }
@@ -165,7 +179,13 @@ export class BrixCLI {
     }
 
     if (cmd === '/resume') {
-      if (this.memory && parts.length >= 2) {
+      if (!this.memory) {
+        console.log('No sessions available.')
+        return true
+      }
+
+      // 有参数时按 ID 恢复
+      if (parts.length >= 2) {
         const prefix = parts[1]
         try {
           await this.memory.resumeSession(prefix)
@@ -173,8 +193,30 @@ export class BrixCLI {
         } catch {
           console.log(`Session not found: ${prefix.slice(0, 8)}...`)
         }
-      } else {
+        return true
+      }
+
+      // 无参数时使用分页选择器
+      const sessions = this.memory.listSessions()
+      if (sessions.length === 0) {
         console.log('No sessions available.')
+        return true
+      }
+
+      const selected = await paginatedSelect(
+        sessions,
+        (item, idx) => `${item.id.slice(0, 8)}... (${item.message_count} msgs) ${item.preview}`,
+        10,
+        '选择会话'
+      )
+
+      if (selected) {
+        try {
+          await this.memory.resumeSession(selected.id)
+          console.log(`Resumed session ${selected.id.slice(0, 8)}...`)
+        } catch {
+          console.log(`Failed to resume session ${selected.id.slice(0, 8)}...`)
+        }
       }
       return true
     }
@@ -208,7 +250,30 @@ export class BrixCLI {
     }
 
     if (cmd === '/log') {
-      console.log('No logs yet.')
+      const logPath = (this.config as any).log_path as string | undefined
+      if (logPath) {
+        try {
+          const logs = getRecentLogs(logPath, 10)
+          if (logs.length > 0) {
+            for (const entry of logs) {
+              const ts = entry.ts ?? '?'
+              const trace = entry.trace ?? '?'
+              const input = entry.input ?? ''
+              const model = entry.model ?? '?'
+              const ms = entry.ms_total ?? 0
+              const error = entry.error
+              const status = error ? 'ERR' : 'OK'
+              console.log(`  ${ts}  ${trace}  ${status}  ${model}  ${ms}ms  ${input}`)
+            }
+          } else {
+            console.log('No logs yet.')
+          }
+        } catch {
+          console.log('No logs yet.')
+        }
+      } else {
+        console.log('No logs yet.')
+      }
       return true
     }
 

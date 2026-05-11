@@ -1,10 +1,11 @@
 import chalk from 'chalk'
-import { marked } from 'marked'
+import { Marked } from 'marked'
 // @ts-ignore — marked-terminal 没有类型声明
 import TerminalRenderer from 'marked-terminal'
 
-// 配置 marked 使用 terminal renderer
-marked.setOptions({ renderer: new TerminalRenderer() } as any)
+// 使用独立的 marked 实例，避免污染全局状态
+const markedInstance = new Marked()
+markedInstance.setOptions({ renderer: new TerminalRenderer() } as any)
 
 const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
@@ -12,7 +13,7 @@ export class StreamRenderer {
   private pending: string = ''
   private rendered: string = ''
   private marker: string
-  private lastDeltaTime: number = 0
+  private lastRenderedIndex: number = 0
   private activityTimer: ReturnType<typeof setTimeout> | null = null
   private indicatorFrame: number = 0
   private indicatorLabel: string = 'Waiting for tool call...'
@@ -22,7 +23,6 @@ export class StreamRenderer {
   }
 
   pushDelta(delta: string): void {
-    this.lastDeltaTime = Date.now()
     this.pending += delta
 
     // 查找安全边界
@@ -38,6 +38,10 @@ export class StreamRenderer {
   }
 
   private findSafeBoundary(text: string): number | null {
+    // 统计代码围栏数量 — 如果为奇数，说明在代码块内部，不应切割
+    const fenceCount = (text.match(/```/g) || []).length
+    if (fenceCount % 2 !== 0) return null // 在代码块内部，不安全
+
     // 在代码块结束后
     const codeFenceEnd = text.lastIndexOf('```')
     if (codeFenceEnd > 0 && codeFenceEnd < text.length - 3) {
@@ -57,9 +61,11 @@ export class StreamRenderer {
   }
 
   private updateDisplay(): void {
-    if (this.rendered) {
-      const output = marked(this.rendered)
+    const newContent = this.rendered.slice(this.lastRenderedIndex)
+    if (newContent) {
+      const output = markedInstance.parse(newContent) as string
       process.stdout.write(this.marker + output)
+      this.lastRenderedIndex = this.rendered.length
     }
   }
 
@@ -96,5 +102,12 @@ export class StreamRenderer {
 
   getOutput(): string {
     return this.rendered
+  }
+
+  dispose(): void {
+    if (this.activityTimer) {
+      clearTimeout(this.activityTimer)
+      this.activityTimer = null
+    }
   }
 }
