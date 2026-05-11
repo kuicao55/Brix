@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
 import { ModelRegistry } from '../src/config/model-registry.js'
+import { loadConfig } from '../src/config/loader.js'
 import type { ModelConfig } from '../src/config/loader.js'
+import fs from 'fs'
+import path from 'path'
 
 const makeModel = (overrides: Partial<ModelConfig> = {}): ModelConfig => ({
   id: 'test-model',
@@ -72,5 +75,37 @@ describe('ModelRegistry', () => {
     expect(registry.getModelById('m1')?.provider).toBe('anthropic')
     expect(registry.getDefaultModel()?.provider).toBe('anthropic')
     expect(registry.getFallbackModel()?.id).toBe('m2')
+  })
+})
+
+describe('loadConfig', () => {
+  const tmpDir = path.join(__dirname, 'tmp-config')
+
+  beforeEach(() => {
+    fs.mkdirSync(tmpDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('应该在没有配置文件时返回默认配置', () => {
+    const config = loadConfig(tmpDir)
+    expect(config.engine).toBe('state_machine')
+    expect(config.retry.max_retries).toBe(3)
+    expect(config.memory.max_context_tokens).toBe(8000)
+  })
+
+  it('应该加载并深度合并用户配置', () => {
+    const configPath = path.join(tmpDir, 'config.yaml')
+    fs.writeFileSync(configPath, `
+engine: langgraph
+retry:
+  max_retries: 5
+`)
+    const config = loadConfig(tmpDir)
+    expect(config.engine).toBe('langgraph')
+    expect(config.retry.max_retries).toBe(5)
+    expect(config.memory.max_context_tokens).toBe(8000) // 默认值保留
   })
 })
