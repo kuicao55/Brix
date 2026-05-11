@@ -13,7 +13,7 @@ describe('CLI 入口', () => {
     expect(typeof cli.main).toBe('function')
   })
 
-  it('main() 应该输出 Phase 1 Complete 并加载配置', async () => {
+  it('main() 应该输出 Phase 3 Complete 并验证各模块', async () => {
     const cli = await import('../src/entrypoints/cli.js')
     const logs: string[] = []
     const consoleSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
@@ -22,10 +22,13 @@ describe('CLI 入口', () => {
 
     await cli.main()
 
-    expect(logs.some(l => l.includes('Brix TypeScript Migration - Phase 1 Complete'))).toBe(true)
-    expect(logs.some(l => l.includes('Config loaded:'))).toBe(true)
-    // loadConfig 返回默认配置，engine 为 'state_machine'
-    expect(logs.some(l => l.includes('state_machine'))).toBe(true)
+    expect(logs.some(l => l.includes('Brix TypeScript Migration - Phase 3 Complete'))).toBe(true)
+    expect(logs.some(l => l.includes('Intent:'))).toBe(true)
+    expect(logs.some(l => l.includes('Complexity:'))).toBe(true)
+    expect(logs.some(l => l.includes('Model:'))).toBe(true)
+    expect(logs.some(l => l.includes('Orchestrator created'))).toBe(true)
+    expect(logs.some(l => l.includes('ToolRunner registered'))).toBe(true)
+    expect(logs.some(l => l.includes('Phase 3 verification complete!'))).toBe(true)
 
     consoleSpy.mockRestore()
   })

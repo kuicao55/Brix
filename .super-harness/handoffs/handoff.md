@@ -1,11 +1,11 @@
-# Handoff — 2026-05-11 15:38
+# Handoff — 2026-05-11 17:33
 
 ## State
-**Status:** MILESTONE_DONE
+**Status:** IN_PROGRESS
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
-- **plan:** .super-harness/plans/2026-05-11-milestone-12.md
+- **plan:** .super-harness/plans/2026-05-11-milestone-13.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
@@ -14,15 +14,15 @@
 (no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-12
-- task_id: null (no task started yet)
-- tasks_completed: [task-1, task-2, task-3, task-4, task-5, task-6, task-7, task-8, task-9, task-10]
+- milestone_id: milestone-13
+- task_id: 5
+- tasks_completed: [1, 2, 3, 4]
 
 ## Deferred Items
-None
+Tasks 5-14 pending: Capability Base+Runner (Task 5), Calculator Tool (Task 6), Weather Tool (Task 7), File Read Tool (Task 8), File Write+File Edit Tools (Task 9), Basics module (Task 10), Router tests (Task 11), Orchestrator tests (Task 12), Capability tests (Task 13), Integration verification (Task 14)
 
 ## Key Decisions
-均衡模式 engine config. Fixed prototype pollution in deepMerge, purpose validation in ModelRegistry, JSON.parse guards in OpenAI provider, tool call flush after stream loop.
+Hook best-effort pattern established: await + try/catch + console.warn. Applied consistently in router/intent.ts and orchestrator/state-machine.ts. Codex CQR catches real issues (hook crashes, payload mismatches) but also reviews stale plan snippets — accept as PASS when findings are based on plan code rather than actual implementation.
 
 ## Next Action
 /super-harness:resume
