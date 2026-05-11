@@ -174,6 +174,49 @@ describe('FileReadTool', () => {
     expect(result).not.toContain('truncated')
   })
 
+  // --- 安全检查：通过符号链接的父目录绕过沙箱 (Issue 1) ---
+
+  it('应拒绝通过符号链接父目录访问 allowedRoot 之外的文件', async () => {
+    // 在 tmpDir 外创建一个包含文件的目录
+    const externalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'external-'))
+    const externalFile = path.join(externalDir, 'secret.txt')
+    fs.writeFileSync(externalFile, '外部秘密内容')
+
+    // 在 tmpDir 内创建指向外部目录的符号链接
+    const symlinkDir = path.join(tmpDir, 'linked-subdir')
+    fs.symlinkSync(externalDir, symlinkDir)
+
+    // 通过符号链接父目录访问文件 — 应被拒绝
+    const symlinkedPath = path.join(symlinkDir, 'secret.txt')
+    await expect(tool.execute({ path: symlinkedPath })).rejects.toThrow(
+      /outside.*allowed|symbolic|symlink/i
+    )
+
+    // 清理
+    fs.unlinkSync(symlinkDir)
+    fs.rmSync(externalDir, { recursive: true, force: true })
+  })
+
+  // --- 安全检查：多字节字符的字节大小限制 (Issue 3) ---
+
+  it('应拒绝字节大小超过 100KB 的多字节文件（即使字符数未超限）', async () => {
+    const filePath = path.join(tmpDir, 'multibyte-large.txt')
+    // 每个 '中' 字是 3 字节 UTF-8，但 String.length 为 1
+    // 40000 个字符 = 120000 字节 > 100KB，但字符数 40000 < 102400
+    const charCount = 40000
+    const content = '中'.repeat(charCount)
+    const byteSize = Buffer.byteLength(content, 'utf-8')
+    // 确认字节大小确实超过 100KB
+    expect(byteSize).toBeGreaterThan(100 * 1024)
+    // 确认字符数确实未超过 100KB
+    expect(content.length).toBeLessThan(100 * 1024)
+
+    fs.writeFileSync(filePath, content)
+
+    const result = await tool.execute({ path: filePath })
+    expect(result).toContain('truncated')
+  })
+
   // --- 通过 ToolRunner 集成 ---
 
   it('应能通过 ToolRunner 注册和执行', async () => {
