@@ -1,7 +1,7 @@
-# Handoff — 2026-05-11 21:30
+# Handoff — 2026-05-11 23:30
 
 ## State
-**Status:** IN_PROGRESS
+**Status:** MILESTONE_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-11-typescript-migration-design.md
@@ -10,23 +10,41 @@
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-- path: worktrees/milestone-14
-- branch: harness/milestone-14-cli
+(no worktree — merged and cleaned up)
 
 ## Current Position
-- milestone_id: milestone-14 (IN_PROGRESS)
-- current_task: Task 11 (Configure global command)
-- tasks_completed: 10
-- tasks_remaining: 11, 12, 13, 14
+- milestone_id: milestone-14 (COMPLETE)
+- All 14 tasks of milestone-14 passed: 418 tests across 15 files
+
+## Milestone Summary
+milestone-14 完成了 TypeScript 迁移的最后一层 — CLI 层：
+- Theme: chalk 样式常量
+- Banner: ASCII art + 信息表格
+- Spinner: Braille 动画 spinner
+- StageIndicator: 阶段指示器
+- StreamRenderer: 安全边界 Markdown 流式渲染
+- ToolDisplay: 工具调用面板
+- Display: 显示工具
+- Completer: 斜杠命令补全
+- PaginatedSelector: 分页选择器
+- App: 主 REPL 类
+- Entry point: 入口文件更新
+- Global command: bun link 注册
+- CLAUDE.md: TypeScript 规范更新
+- CLI tests: 142 tests
+- Integration: 418 tests pass, CLI 启动验证
 
 ## Deferred Items
 - Pre-existing tsc error: `src/orchestrator/state-machine.ts:148`
-- Minor: `src/entrypoints/cli.ts` should set `process.exitCode = 1` on failure
-- Minor: `src/entrypoints/cli.test.ts` uses `Bun.sleep(200)` — flaky on slow CI
+- Minor: entry point exit code masking (should set process.exitCode = 1)
+- Minor: entrypoint test uses Bun.sleep(200) — flaky on slow CI
+- Important: global-command test non-hermetic (mutates global env)
 
 ## Key Decisions
-- Engine: 均衡模式 (Spec Review: Claude subagent, Code Quality Review: Codex adversarial-review)
-- Task 10 out-of-scope changes from first Executor attempt kept — they fixed 10 pre-existing test failures
+- Memory provider initialized by default in BrixCLI constructor
+- File tools sandboxed to data_dir
+- FlowLog persisted to JSONL
+- Engine: 均衡模式 (Spec Review: Claude, CQR: Codex)
 
 ## Next Action
-/super-harness:resume → continue with Task 11
+/super-harness:resume → will detect MILESTONE_DONE and check for next milestone
