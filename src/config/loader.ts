@@ -30,13 +30,17 @@ export type BrixConfig = {
   memory: { data_dir: string; max_context_tokens: number }
 }
 
-/** 深合并两个对象（source 覆盖 target，递归合并嵌套对象） */
-function deepMerge(
+/** 可被原型链污染的危险 key */
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** 深合并两个对象（source 覆盖 target，递归合并嵌套对象），过滤危险 key 防止原型污染 */
+export function deepMerge(
   target: Record<string, unknown>,
   source: Record<string, unknown>
 ): Record<string, unknown> {
   const result = { ...target }
   for (const key of Object.keys(source)) {
+    if (DANGEROUS_KEYS.has(key)) continue
     if (
       source[key] &&
       typeof source[key] === 'object' &&
