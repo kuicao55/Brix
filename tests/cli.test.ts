@@ -222,3 +222,136 @@ describe('Spinner', () => {
     spinner.stop()
   })
 })
+
+describe('StageIndicator', () => {
+  let stdoutWrite: ReturnType<typeof mock>
+  let stdoutOutput: string[]
+
+  beforeEach(() => {
+    stdoutOutput = []
+    stdoutWrite = mock((chunk: string) => {
+      stdoutOutput.push(chunk)
+      return true
+    })
+    process.stdout.write = stdoutWrite as any
+  })
+
+  afterEach(() => {
+    process.stdout.write = process.stdout.write
+  })
+
+  it('应该从 src/cli/stage-indicator.ts 导出 StageIndicator 类', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    expect(StageIndicator).toBeDefined()
+    expect(typeof StageIndicator).toBe('function')
+  })
+
+  it('应该使用默认标签创建实例', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator()
+    expect(indicator).toBeDefined()
+    indicator.finish()
+  })
+
+  it('应该使用自定义标签创建实例', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator('Processing...')
+    expect(indicator).toBeDefined()
+    indicator.finish()
+  })
+
+  it('构造时应自动启动 spinner', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator('Test...')
+    await new Promise((r) => setTimeout(r, 150))
+    expect(stdoutOutput.length).toBeGreaterThan(0)
+    indicator.finish()
+  })
+
+  it('update() 应该更新为已知阶段标签', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator()
+    await new Promise((r) => setTimeout(r, 100))
+    indicator.update('Memory')
+    stdoutOutput.length = 0
+    await new Promise((r) => setTimeout(r, 150))
+    expect(stdoutOutput.some((s) => s.includes('Loading memory...'))).toBe(true)
+    indicator.finish()
+  })
+
+  it('update() 应该将未知阶段映射为 Working...', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator()
+    await new Promise((r) => setTimeout(r, 100))
+    indicator.update('UnknownStage')
+    stdoutOutput.length = 0
+    await new Promise((r) => setTimeout(r, 150))
+    expect(stdoutOutput.some((s) => s.includes('Working...'))).toBe(true)
+    indicator.finish()
+  })
+
+  it('finish() 应该停止 spinner 并防止后续 update', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator()
+    await new Promise((r) => setTimeout(r, 100))
+    indicator.finish()
+    stdoutOutput.length = 0
+    // finish 后 update 不应产生输出
+    indicator.update('Route')
+    await new Promise((r) => setTimeout(r, 150))
+    expect(stdoutOutput.length).toBe(0)
+  })
+
+  it('stop_silent() 应该停止 spinner 而不输出完成信息', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const consoleOutput: string[] = []
+    const originalLog = console.log
+    console.log = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    const indicator = new StageIndicator()
+    await new Promise((r) => setTimeout(r, 100))
+    indicator.stop_silent()
+    // stop_silent 不应输出完成信息
+    expect(consoleOutput.some((s) => s.includes('Done'))).toBe(false)
+    expect(consoleOutput.some((s) => s.includes('✓'))).toBe(false)
+    console.log = originalLog
+  })
+
+  it('所有 STAGE_LABELS 阶段应该正确映射', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const stages: [string, string][] = [
+      ['Memory', 'Loading memory...'],
+      ['Intent', 'Classifying intent...'],
+      ['Complexity', 'Evaluating complexity...'],
+      ['Route', 'Selecting model...'],
+      ['Planning', 'Planning...'],
+    ]
+    for (const [stage, expectedLabel] of stages) {
+      const indicator = new StageIndicator()
+      await new Promise((r) => setTimeout(r, 50))
+      indicator.update(stage)
+      stdoutOutput.length = 0
+      await new Promise((r) => setTimeout(r, 150))
+      expect(stdoutOutput.some((s) => s.includes(expectedLabel))).toBe(true)
+      indicator.finish()
+    }
+  })
+
+  it('重复调用 finish() 不应报错', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator()
+    await new Promise((r) => setTimeout(r, 50))
+    indicator.finish()
+    // 第二次调用不应抛出异常
+    expect(() => indicator.finish()).not.toThrow()
+  })
+
+  it('重复调用 stop_silent() 不应报错', async () => {
+    const { StageIndicator } = await import('../src/cli/stage-indicator.js')
+    const indicator = new StageIndicator()
+    await new Promise((r) => setTimeout(r, 50))
+    indicator.stop_silent()
+    expect(() => indicator.stop_silent()).not.toThrow()
+  })
+})
