@@ -5,7 +5,47 @@
 
 ## 目标
 
-将 Brix 从 Python 3.11+ 全面迁移至 TypeScript，保持当前分层架构（Protocol 接口隔离）和所有已实现功能不变。迁移后 CLI 入口为终端输入 `brix` 即可启动。
+将 Brix 从 Python 3.11+ 全面迁移至 TypeScript，**严格保持当前分层架构（Protocol 接口隔离）、所有已实现功能、以及 TUI 外观和交互完全不变**。迁移后 CLI 入口为终端输入 `brix` 即可启动。
+
+### TUI 保持不变（最高优先级）
+
+以下 TUI 组件必须在迁移后保持**完全一致**的外观和行为：
+
+| 组件 | Python 实现 | TypeScript 实现要求 |
+|------|------------|-------------------|
+| **Banner** | `cli/banner.py` - ASCII art + Rich Table | 使用 chalk 渲染相同 ASCII art + 格式化表格 |
+| **Spinner** | `cli/spinner.py` - Braille 动画 + 计时 | 使用 setInterval + chalk 实现相同帧率和样式 |
+| **StageIndicator** | `cli/stage_indicator.py` - 单行 spinner 更新标签 | 相同逻辑：启动 spinner → 按阶段更新标签 → 停止 |
+| **StreamRenderer** | `cli/stream_renderer.py` - 安全边界 Markdown 流式渲染 | 使用 marked + marked-terminal，保持安全边界逻辑 |
+| **ToolDisplay** | `cli/tool_display.py` - 工具调用面板 | 使用 chalk + 相同图标和格式 |
+| **PaginatedSelector** | `cli/paginated_selector.py` - 分页选择器 | 使用 readline 或 ink 实现相同键绑定和分页逻辑 |
+| **Completer** | `cli/completer.py` - 斜杠命令补全 | 使用 readline completer 实现相同补全逻辑 |
+| **Theme** | `cli/theme.py` - Rich 主题样式 | 使用 chalk 样式常量映射所有 16 个样式键 |
+| **REPL** | `cli/app.py` - prompt_toolkit PromptSession | 使用 readline + chalk 实现相同提示符和补全 |
+
+### 功能保持不变（最高优先级）
+
+以下功能必须在迁移后保持**完全一致**的行为：
+
+1. **Slash 命令**：/help, /quit, /clear, /model, /history, /resume, /soul, /user, /log
+2. **流式对话**：text_delta, tool_call, tool_result 事件格式和渲染
+3. **工具调用**：calculator, weather, file_read, file_write, file_edit
+4. **Memory 系统**：session 创建/恢复/列表、soul.md、user.md
+5. **Router**：intent 分类、complexity 评估、model 选择
+6. **Log**：FlowLog + JSONL 写入/读取
+7. **数据兼容**：所有数据文件格式与 Python 版完全一致
+
+## 参考实现
+
+**Claude Code TypeScript 实现**：`/Users/kuicao/Applications/claude_codes/claude-code`
+
+Claude Code 使用以下技术栈实现 TUI：
+- **Ink (React for CLI)**：`@anthropic/ink` - 组件化 TUI
+- **chalk**：终端颜色
+- **marked + marked-terminal**：Markdown 终端渲染
+- **readline**：REPL 输入
+
+Brix 迁移时应参考 Claude Code 的 TUI 实现模式，但保持 Brix 现有的视觉风格和交互逻辑。
 
 ## 架构
 
@@ -375,8 +415,21 @@ async function retry<T>(
 
 迁移完成的标志：
 
-1. **CLI 启动**：`bun run src/entrypoints/cli.ts` 或 `brix` 命令可正常启动 REPL，显示 Banner，提示符可输入
-2. **Slash 命令**：所有 9 个 slash 命令正常工作
+### TUI 验收（必须与 Python 版视觉一致）
+
+1. **Banner**：ASCII art 完全一致，表格格式相同（Model/Version/Directory）
+2. **Spinner**：Braille 帧动画、计时显示、start/stop/finish/fail 行为一致
+3. **StageIndicator**：单行 spinner 更新标签，阶段转换逻辑一致
+4. **StreamRenderer**：安全边界 Markdown 渲染、activity indicator 行为一致
+5. **ToolDisplay**：工具调用面板格式、图标、thinking spinner 行为一致
+6. **PaginatedSelector**：分页选择器键绑定（↑↓←→/Home/End/Enter/Esc/数字键）一致
+7. **Completer**：斜杠命令补全逻辑一致
+8. **Theme**：所有 16 个样式键映射到 chalk 样式
+
+### 功能验收
+
+9. **CLI 启动**：`bun run src/entrypoints/cli.ts` 或 `brix` 命令可正常启动 REPL，显示 Banner，提示符可输入
+10. **Slash 命令**：所有 9 个 slash 命令正常工作
    - `/help`：显示帮助信息
    - `/quit`：退出 REPL
    - `/clear`：清空当前会话，创建新 session
