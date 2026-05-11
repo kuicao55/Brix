@@ -942,4 +942,214 @@ describe('ToolDisplay', () => {
     expect(() => display.startThinking()).not.toThrow()
     display.stopThinking()
   })
+
+  // ===== CQR HIGH FIX TESTS =====
+
+  it('HIGH-1: showToolStart 应在打印前停止活跃的 thinking spinner', async () => {
+    let stopCalled = false
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+
+    // 模拟活跃的 spinner：直接设置 activeSpinner 并 mock stopThinking
+    const originalStopThinking = display.stopThinking.bind(display)
+    display.stopThinking = () => {
+      stopCalled = true
+      originalStopThinking()
+    }
+    display.startThinking()
+    await new Promise((r) => setTimeout(r, 50))
+
+    // 调用 showToolStart —— 应先 stopThinking
+    display.showToolStart('bash', { command: 'echo hi' })
+    expect(stopCalled).toBe(true)
+    display.stopThinking()
+  })
+
+  it('HIGH-2: formatDetail 应安全处理非字符串的 content（如 number）', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+
+    // content 为 number 时不应抛出 TypeError
+    expect(() => {
+      display.showToolStart('file_write', { path: '/tmp/test.txt', content: 12345 })
+    }).not.toThrow()
+
+    // content 为 object 时不应抛出 TypeError
+    expect(() => {
+      display.showToolStart('file_write', { path: '/tmp/test.txt', content: { nested: true } })
+    }).not.toThrow()
+
+    // content 为 null 时不应抛出 TypeError
+    expect(() => {
+      display.showToolStart('file_write', { path: '/tmp/test.txt', content: null })
+    }).not.toThrow()
+  })
+
+  it('HIGH-3: showToolResult 应安全处理 null/undefined result', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+
+    // null result 不应抛出 TypeError
+    expect(() => {
+      display.showToolResult('bash', null as any, 100)
+    }).not.toThrow()
+
+    // undefined result 不应抛出 TypeError
+    expect(() => {
+      display.showToolResult('bash', undefined as any, 100)
+    }).not.toThrow()
+
+    display.stopThinking()
+  })
+})
+
+describe('Display', () => {
+  let consoleOutput: string[]
+  let consoleSpy: ReturnType<typeof mock>
+
+  beforeEach(() => {
+    consoleOutput = []
+    consoleSpy = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    console.log = consoleSpy
+  })
+
+  afterEach(() => {
+    console.log = console.log
+  })
+
+  it('应该从 src/cli/display.ts 导出 formatResponse 函数', async () => {
+    const { formatResponse } = await import('../src/cli/display.js')
+    expect(formatResponse).toBeDefined()
+    expect(typeof formatResponse).toBe('function')
+  })
+
+  it('应该从 src/cli/display.ts 导出 renderHistory 函数', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    expect(renderHistory).toBeDefined()
+    expect(typeof renderHistory).toBe('function')
+  })
+
+  it('formatResponse 应该原样返回传入的字符串', async () => {
+    const { formatResponse } = await import('../src/cli/display.js')
+    expect(formatResponse('hello')).toBe('hello')
+    expect(formatResponse('')).toBe('')
+  })
+
+  it('renderHistory 应该渲染 user 消息', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    renderHistory([{ role: 'user', content: '你好' }])
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('你好')
+  })
+
+  it('renderHistory 应该渲染 assistant 消息', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    renderHistory([{ role: 'assistant', content: '有什么可以帮你？' }])
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('有什么可以帮你？')
+  })
+
+  it('renderHistory 应该渲染 system 消息', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    renderHistory([{ role: 'system', content: 'system prompt' }])
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('system prompt')
+  })
+
+  it('renderHistory 应该处理多条消息', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    renderHistory([
+      { role: 'user', content: 'msg1' },
+      { role: 'assistant', content: 'msg2' },
+    ])
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('msg1')
+    expect(output).toContain('msg2')
+  })
+
+  it('renderHistory 空数组不应报错', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    expect(() => renderHistory([])).not.toThrow()
+  })
+})
+
+describe('Completer', () => {
+  it('应该从 src/cli/completer.ts 导出 createCompleter 函数', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    expect(createCompleter).toBeDefined()
+    expect(typeof createCompleter).toBe('function')
+  })
+
+  it('createCompleter 应该返回一个函数', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    expect(typeof completer).toBe('function')
+  })
+
+  it('非斜杠输入应返回空匹配', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('hello')
+    expect(hits).toEqual([])
+    expect(line).toBe('hello')
+  })
+
+  it('空字符串应返回空匹配', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('')
+    expect(hits).toEqual([])
+    expect(line).toBe('')
+  })
+
+  it('/h 应匹配 /help', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('/h')
+    expect(hits).toContain('/help')
+    expect(line).toBe('/h')
+  })
+
+  it('/help 应匹配 /help', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('/help')
+    expect(hits).toContain('/help')
+    expect(line).toBe('/help')
+  })
+
+  it('/r 应匹配 /resume', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('/r')
+    expect(hits).toContain('/resume')
+    expect(line).toBe('/r')
+  })
+
+  it('/q 应匹配 /quit', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('/q')
+    expect(hits).toContain('/quit')
+    expect(line).toBe('/q')
+  })
+
+  it('/xyz 不匹配时应返回所有命令', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('/xyz')
+    // 不匹配任何命令，应回退到所有命令
+    expect(hits.length).toBeGreaterThan(0)
+    expect(line).toBe('/xyz')
+  })
+
+  it('包含空格的输入应返回空匹配', async () => {
+    const { createCompleter } = await import('../src/cli/completer.js')
+    const completer = createCompleter()
+    const [hits, line] = completer('/help me')
+    expect(hits).toEqual([])
+    expect(line).toBe('/help me')
+  })
 })
