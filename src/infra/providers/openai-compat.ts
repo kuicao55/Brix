@@ -25,11 +25,19 @@ export class OpenAICompatProvider {
     })
 
     const choice = response.choices[0]
-    const toolCalls: ToolCallData[] = (choice.message.tool_calls || []).map(tc => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments),
-    }))
+    const toolCalls: ToolCallData[] = (choice.message.tool_calls || []).map(tc => {
+      let args: Record<string, unknown> = {}
+      try {
+        args = JSON.parse(tc.function.arguments)
+      } catch {
+        args = { _parse_error: tc.function.arguments }
+      }
+      return {
+        id: tc.id,
+        name: tc.function.name,
+        arguments: args,
+      }
+    })
 
     return {
       content: choice.message.content || '',
@@ -78,15 +86,38 @@ export class OpenAICompatProvider {
 
       if (chunk.choices[0]?.finish_reason === 'tool_calls') {
         for (const [id, tc] of toolCallAccumulator) {
+          let input: Record<string, unknown> = {}
+          try {
+            input = JSON.parse(tc.arguments)
+          } catch {
+            input = { _parse_error: tc.arguments }
+          }
           yield {
             type: 'tool_call',
             id,
             name: tc.name,
-            input: JSON.parse(tc.arguments),
+            input,
           }
         }
         toolCallAccumulator.clear()
       }
     }
+
+    // flush 累积的 tool calls（stream 可能以 stop 或其他 finish_reason 结束）
+    for (const [id, tc] of toolCallAccumulator) {
+      let input: Record<string, unknown> = {}
+      try {
+        input = JSON.parse(tc.arguments)
+      } catch {
+        input = { _parse_error: tc.arguments }
+      }
+      yield {
+        type: 'tool_call',
+        id,
+        name: tc.name,
+        input,
+      }
+    }
+    toolCallAccumulator.clear()
   }
 }
