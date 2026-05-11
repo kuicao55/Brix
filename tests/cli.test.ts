@@ -1073,6 +1073,31 @@ describe('Display', () => {
     const { renderHistory } = await import('../src/cli/display.js')
     expect(() => renderHistory([])).not.toThrow()
   })
+
+  it('renderHistory 应跳过 tool 角色消息且不产生任何输出', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    consoleOutput.length = 0
+    renderHistory([{ role: 'tool', content: 'tool result data' }])
+    // tool 消息不应产生任何 console.log 输出（包括空行）
+    expect(consoleOutput.length).toBe(0)
+  })
+
+  it('renderHistory 混合消息中 tool 消息不应产生额外空行', async () => {
+    const { renderHistory } = await import('../src/cli/display.js')
+    consoleOutput.length = 0
+    renderHistory([
+      { role: 'user', content: '问题' },
+      { role: 'tool', content: 'tool output' },
+      { role: 'assistant', content: '回答' },
+    ])
+    // 应只有 user 和 assistant 的输出，不应有 tool 产生的空行
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('问题')
+    expect(output).toContain('回答')
+    // 不应有纯空行出现在不该出现的位置
+    // user 和 assistant 各自后面有一个空行，总共 4 次 console.log 调用
+    expect(consoleOutput.length).toBe(4)
+  })
 })
 
 describe('Completer', () => {
@@ -1151,5 +1176,387 @@ describe('Completer', () => {
     const [hits, line] = completer('/help me')
     expect(hits).toEqual([])
     expect(line).toBe('/help me')
+  })
+})
+
+describe('PaginatedSelector', () => {
+  let consoleOutput: string[]
+  let consoleSpy: ReturnType<typeof mock>
+  let originalStdin: typeof process.stdin
+  let mockStdin: ReturnType<typeof mock>
+
+  beforeEach(() => {
+    consoleOutput = []
+    consoleSpy = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    console.log = consoleSpy
+    console.clear = mock(() => {})
+  })
+
+  afterEach(() => {
+    console.log = console.log
+    console.clear = console.clear
+  })
+
+  it('应该从 src/cli/paginated-selector.ts 导出 paginatedSelect 函数', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+    expect(paginatedSelect).toBeDefined()
+    expect(typeof paginatedSelect).toBe('function')
+  })
+
+  it('空数组应立即返回 null', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+    const result = await paginatedSelect([], (item: string) => item)
+    expect(result).toBeNull()
+  })
+
+  it('单个元素按 Enter 应返回该元素', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    // 模拟 stdin 事件
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    // 延迟发送 Enter 按键
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\r'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['Apple']
+    const result = await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    expect(result).toBe('Apple')
+  })
+
+  it('Esc 键应返回 null', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\x1b'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['A', 'B', 'C']
+    const result = await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    expect(result).toBeNull()
+  })
+
+  it('q 键应返回 null', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('q'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['A', 'B']
+    const result = await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    expect(result).toBeNull()
+  })
+
+  it('Ctrl+C 应返回 null', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\x03'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['X']
+    const result = await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    expect(result).toBeNull()
+  })
+
+  it('按向下再 Enter 应选择第二项', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) {
+        // 按下键移动到第二项
+        handler(Buffer.from('\x1b[B'))
+        // 按 Enter 确认
+        handler(Buffer.from('\r'))
+      }
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['First', 'Second', 'Third']
+    const result = await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    expect(result).toBe('Second')
+  })
+
+  it('formatItem 应被调用来格式化显示', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\r'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = [42]
+    const result = await paginatedSelect(items, (item, idx) => `Item #${idx}: ${item}`)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('Item #0: 42')
+    expect(result).toBe(42)
+  })
+
+  it('多页时按右箭头应翻到下一页', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) {
+        // 按右箭头翻到第二页
+        handler(Buffer.from('\x1b[C'))
+        // 按 Enter 选择第二页第一项（全局第 11 项）
+        handler(Buffer.from('\r'))
+      }
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    // 生成 15 项，默认 pageSize=10，第二页有 5 项
+    const items = Array.from({ length: 15 }, (_, i) => `Item-${i + 1}`)
+    const result = await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    expect(result).toBe('Item-11')
+  })
+
+  it('自定义 title 应显示在输出中', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\r'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['A']
+    await paginatedSelect(items, (item) => item, 10, '选择会话')
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('选择会话')
+  })
+
+  it('pageSize 参数应控制每页显示数量', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\x1b')) // Esc 取消
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = Array.from({ length: 5 }, (_, i) => `Item-${i}`)
+    await paginatedSelect(items, (item) => item, 3, 'Test')
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    const output = consoleOutput.join('\n')
+    // pageSize=3，5 项应分为 2 页
+    expect(output).toContain('1/2')
+    expect(output).toContain('5 项')
+  })
+
+  it('应显示页码信息', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\x1b'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['A', 'B', 'C']
+    await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('第 1/1 页')
+    expect(output).toContain('共 3 项')
+  })
+
+  it('应显示操作提示', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\x1b'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['A']
+    await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('Enter')
+    expect(output).toContain('Esc')
+  })
+
+  it('选中项应有高亮标记', async () => {
+    const { paginatedSelect } = await import('../src/cli/paginated-selector.js')
+
+    const listeners: ((chunk: Buffer) => void)[] = []
+    const origOn = process.stdin.on.bind(process.stdin)
+    const origRemove = process.stdin.removeListener.bind(process.stdin)
+
+    setTimeout(() => {
+      const handler = listeners[listeners.length - 1]
+      if (handler) handler(Buffer.from('\x1b'))
+    }, 50)
+
+    process.stdin.on = ((event: string, fn: any) => {
+      if (event === 'data') listeners.push(fn)
+      return process.stdin
+    }) as any
+    process.stdin.removeListener = (() => {}) as any
+
+    const items = ['Apple', 'Banana']
+    await paginatedSelect(items, (item) => item)
+
+    process.stdin.on = origOn
+    process.stdin.removeListener = origRemove
+
+    const output = consoleOutput.join('\n')
+    // 第一项应有 > 高亮标记
+    expect(output).toContain('> 1.')
   })
 })
