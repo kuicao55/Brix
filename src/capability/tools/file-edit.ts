@@ -147,7 +147,7 @@ export class FileEditTool extends BaseTool {
     }
 
     // 执行替换
-    const newContent = content.replace(oldText, newText)
+    const newContent = content.replace(oldText, () => newText)
 
     // 原子写入：临时文件 -> fsync -> rename
     const tmpFile = resolved + `.tmp.${process.pid}.${Date.now()}`
