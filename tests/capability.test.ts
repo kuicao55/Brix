@@ -384,9 +384,34 @@ describe('WeatherTool', () => {
     expect(result).toBe('Weather data not available for tokyo')
   })
 
-  it('缺少 city 参数应返回错误', async () => {
+  it('缺少 city 参数应返回清晰错误', async () => {
     const result = await weather.execute({})
-    expect(result).toBe('Weather data not available for undefined')
+    expect(result).toBe('Error: city parameter is required and must be a non-empty string')
+  })
+
+  it('city 为空字符串应返回清晰错误', async () => {
+    const result = await weather.execute({ city: '' })
+    expect(result).toBe('Error: city parameter is required and must be a non-empty string')
+  })
+
+  it('city 为非字符串类型应返回清晰错误', async () => {
+    const result = await weather.execute({ city: 123 })
+    expect(result).toBe('Error: city parameter is required and must be a non-empty string')
+  })
+
+  it('大写城市名应不区分大小写', async () => {
+    const result = await weather.execute({ city: 'Beijing' })
+    expect(result).toBe('Beijing: 22°C, Sunny, Humidity: 45%')
+  })
+
+  it('全大写城市名应不区分大小写', async () => {
+    const result = await weather.execute({ city: 'BEIJING' })
+    expect(result).toBe('BEIJING: 22°C, Sunny, Humidity: 45%')
+  })
+
+  it('城市名前后有空格应自动去除', async () => {
+    const result = await weather.execute({ city: '  shanghai  ' })
+    expect(result).toBe('shanghai: 25°C, Cloudy, Humidity: 70%')
   })
 
   it('应通过 ToolRunner 注册和执行', async () => {

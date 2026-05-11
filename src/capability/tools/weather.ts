@@ -32,8 +32,18 @@ export class WeatherTool extends BaseTool {
   }
 
   async execute(params: Record<string, unknown>): Promise<string> {
-    const city = params.city as string
-    const data = WEATHER_DATA[city]
+    const raw = params.city
+
+    // 输入校验：必须是非空字符串
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      return 'Error: city parameter is required and must be a non-empty string'
+    }
+
+    // 去除首尾空格，用于显示
+    const city = raw.trim()
+    // 转小写用于数据查找（不区分大小写）
+    const key = city.toLowerCase()
+    const data = WEATHER_DATA[key]
 
     if (!data) {
       return `Weather data not available for ${city}`
