@@ -3,6 +3,7 @@ import type { Tool } from '../src/capability/base.js'
 import { BaseTool } from '../src/capability/base.js'
 import { ToolRunner } from '../src/capability/runner.js'
 import { CalculatorTool } from '../src/capability/tools/calculator.js'
+import { WeatherTool } from '../src/capability/tools/weather.js'
 
 // --- 测试用具 ---
 
@@ -315,5 +316,84 @@ describe('CalculatorTool', () => {
   it('应拒绝畸形数字字面量 "1.2.3"', async () => {
     const result = await calc.execute({ expression: '1.2.3' })
     expect(result).toMatch(/^Error:/)
+  })
+})
+
+// --- WeatherTool 测试 ---
+
+describe('WeatherTool', () => {
+  const weather = new WeatherTool()
+
+  it('应有正确的 name、description 和 inputSchema', () => {
+    expect(weather.name).toBe('weather')
+    expect(weather.description).toBe('Get weather information for a city')
+    expect(weather.inputSchema).toEqual({
+      type: 'object',
+      properties: {
+        city: { type: 'string' },
+      },
+      required: ['city'],
+    })
+  })
+
+  it('应返回正确的 OpenAI schema', () => {
+    const schema = weather.toOpenAiSchema()
+    expect(schema).toEqual({
+      type: 'function',
+      function: {
+        name: 'weather',
+        description: 'Get weather information for a city',
+        parameters: {
+          type: 'object',
+          properties: {
+            city: { type: 'string' },
+          },
+          required: ['city'],
+        },
+      },
+    })
+  })
+
+  it('应返回北京天气数据', async () => {
+    const result = await weather.execute({ city: 'beijing' })
+    expect(result).toBe('beijing: 22°C, Sunny, Humidity: 45%')
+  })
+
+  it('应返回上海天气数据', async () => {
+    const result = await weather.execute({ city: 'shanghai' })
+    expect(result).toBe('shanghai: 25°C, Cloudy, Humidity: 70%')
+  })
+
+  it('应返回广州天气数据', async () => {
+    const result = await weather.execute({ city: 'guangzhou' })
+    expect(result).toBe('guangzhou: 30°C, Rainy, Humidity: 85%')
+  })
+
+  it('应返回深圳天气数据', async () => {
+    const result = await weather.execute({ city: 'shenzhen' })
+    expect(result).toBe('shenzhen: 29°C, Partly Cloudy, Humidity: 78%')
+  })
+
+  it('应返回杭州天气数据', async () => {
+    const result = await weather.execute({ city: 'hangzhou' })
+    expect(result).toBe('hangzhou: 24°C, Overcast, Humidity: 65%')
+  })
+
+  it('未知城市应返回不可用提示', async () => {
+    const result = await weather.execute({ city: 'tokyo' })
+    expect(result).toBe('Weather data not available for tokyo')
+  })
+
+  it('缺少 city 参数应返回错误', async () => {
+    const result = await weather.execute({})
+    expect(result).toBe('Weather data not available for undefined')
+  })
+
+  it('应通过 ToolRunner 注册和执行', async () => {
+    const runner = new ToolRunner()
+    runner.register(weather)
+
+    const result = await runner.run('weather', { city: 'beijing' })
+    expect(result).toBe('beijing: 22°C, Sunny, Humidity: 45%')
   })
 })
