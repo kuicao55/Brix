@@ -67,3 +67,158 @@ describe('Banner', () => {
     expect(consoleSpy.mock.calls.length).toBeGreaterThanOrEqual(5)
   })
 })
+
+describe('Spinner', () => {
+  let stdoutWrite: ReturnType<typeof mock>
+  let stdoutOutput: string[]
+
+  beforeEach(() => {
+    stdoutOutput = []
+    stdoutWrite = mock((chunk: string) => {
+      stdoutOutput.push(chunk)
+      return true
+    })
+    process.stdout.write = stdoutWrite as any
+  })
+
+  afterEach(() => {
+    process.stdout.write = process.stdout.write
+  })
+
+  it('应该从 src/cli/spinner.ts 导出 Spinner 类', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    expect(Spinner).toBeDefined()
+    expect(typeof Spinner).toBe('function')
+  })
+
+  it('应该使用默认标签创建实例', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    expect(spinner).toBeDefined()
+  })
+
+  it('应该使用自定义标签创建实例', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner('Loading...')
+    expect(spinner).toBeDefined()
+  })
+
+  it('start() 应该开始动画并写入 stdout', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner('Testing...')
+    spinner.start()
+    // 等待至少一帧
+    await new Promise((r) => setTimeout(r, 150))
+    expect(stdoutOutput.length).toBeGreaterThan(0)
+    expect(stdoutOutput.some((s) => s.includes('Testing...'))).toBe(true)
+    spinner.stop()
+  })
+
+  it('start() 应该包含 Braille 字符', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 150))
+    const brailleChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    const hasBraille = stdoutOutput.some((s) =>
+      brailleChars.some((b) => s.includes(b))
+    )
+    expect(hasBraille).toBe(true)
+    spinner.stop()
+  })
+
+  it('stop() 应该停止动画并清除行', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 150))
+    stdoutOutput.length = 0
+    spinner.stop()
+    // stop 会写入清除行的内容
+    expect(stdoutOutput.some((s) => s.includes('\r'))).toBe(true)
+  })
+
+  it('updateLabel() 应该更新标签', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner('Old label')
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 150))
+    spinner.updateLabel('New label')
+    stdoutOutput.length = 0
+    await new Promise((r) => setTimeout(r, 150))
+    expect(stdoutOutput.some((s) => s.includes('New label'))).toBe(true)
+    spinner.stop()
+  })
+
+  it('finish() 应该输出完成信息', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    const consoleOutput: string[] = []
+    const originalLog = console.log
+    console.log = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 50))
+    spinner.finish('Complete!')
+    expect(consoleOutput.some((s) => s.includes('Complete!'))).toBe(true)
+    expect(consoleOutput.some((s) => s.includes('✓'))).toBe(true)
+    console.log = originalLog
+  })
+
+  it('finish() 应该使用默认标签 Done', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    const consoleOutput: string[] = []
+    const originalLog = console.log
+    console.log = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 50))
+    spinner.finish()
+    expect(consoleOutput.some((s) => s.includes('Done'))).toBe(true)
+    console.log = originalLog
+  })
+
+  it('fail() 应该输出失败信息', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    const consoleOutput: string[] = []
+    const originalLog = console.log
+    console.log = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 50))
+    spinner.fail('Error occurred')
+    expect(consoleOutput.some((s) => s.includes('Error occurred'))).toBe(true)
+    expect(consoleOutput.some((s) => s.includes('✗'))).toBe(true)
+    console.log = originalLog
+  })
+
+  it('fail() 应该使用默认标签 Failed', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner()
+    const consoleOutput: string[] = []
+    const originalLog = console.log
+    console.log = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 50))
+    spinner.fail()
+    expect(consoleOutput.some((s) => s.includes('Failed'))).toBe(true)
+    console.log = originalLog
+  })
+
+  it('应该在动画帧中显示经过时间', async () => {
+    const { Spinner } = await import('../src/cli/spinner.js')
+    const spinner = new Spinner('Timed')
+    spinner.start()
+    await new Promise((r) => setTimeout(r, 250))
+    // 应该包含秒数显示 (如 "0.1s", "0.2s" 等)
+    expect(stdoutOutput.some((s) => /[\d.]+s/.test(s))).toBe(true)
+    spinner.stop()
+  })
+})
