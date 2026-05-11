@@ -179,15 +179,24 @@ class ExpressionParser {
 
     // 括号表达式
     if (this.expr[this.pos] === '(') {
-      this.pos++
-      const result = this.parseExpression()
-      this.skipWhitespace()
-
-      if (this.pos >= this.expr.length || this.expr[this.pos] !== ')') {
-        throw new Error('缺少右括号')
+      this.depth++
+      if (this.depth > 100) {
+        this.depth--
+        throw new Error('递归深度超过 100 层限制（DoS 保护）')
       }
-      this.pos++
-      return result
+      try {
+        this.pos++
+        const result = this.parseExpression()
+        this.skipWhitespace()
+
+        if (this.pos >= this.expr.length || this.expr[this.pos] !== ')') {
+          throw new Error('缺少右括号')
+        }
+        this.pos++
+        return result
+      } finally {
+        this.depth--
+      }
     }
 
     // 数字
