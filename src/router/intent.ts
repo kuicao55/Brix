@@ -27,9 +27,13 @@ export async function classifyIntent(
   model: string,
   hooks?: IntentHookRegistry
 ): Promise<Intent> {
-  // 触发 hook — fire-and-forget，hook 不阻塞分类（失败/慢都不影响主流程）
+  // 触发 hook — best-effort，hook 失败不阻塞分类但记录警告
   if (hooks) {
-    hooks.fire('intent', { input }).catch(() => {})
+    try {
+      await hooks.fire('intent', { input })
+    } catch (e) {
+      console.warn('hook fire failed:', e instanceof Error ? e.message : e)
+    }
   }
 
   try {
