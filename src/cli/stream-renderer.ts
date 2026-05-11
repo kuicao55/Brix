@@ -65,8 +65,8 @@ export class StreamRenderer {
     const newContent = this.rendered.slice(this.lastRenderedIndex)
     if (newContent) {
       let output = markedInstance.parse(newContent) as string
-      // 去掉 marked-terminal 添加的多余空行（\n\n → \n）
-      output = output.replace(/\n{3,}/g, '\n\n')
+      // 去掉多余空行，保持单行间距
+      output = output.replace(/\n{2,}/g, '\n')
       // 首次输出加 marker，后续换行对齐到 marker 右侧
       if (!this.markerWritten) {
         this.markerWritten = true
