@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-09T21:39:46Z",
+  "updated_at": "2026-05-11T13:37:13Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feat/spinner-and-onboarding-upgrade",
@@ -120,6 +120,50 @@
       "plan_file": ".super-harness/plans/2026-05-09-milestone-10.md",
       "session_date": "2026-05-09T21:39:03Z",
       "notes": "Completed 2026-05-09. 2 tasks: max_iterations default 5\u2192100 with iteration-count fallback, Spinner embedded in ToolDisplay for tool execution feedback. CQR: Codex flagged blast radius (Minor, deferred) and spinner leak (Minor, sequential processing prevents). 297 tests pass, 21 pre-existing failures."
+    },
+    {
+      "id": "milestone-11",
+      "title": "TypeScript Migration Phase 1: \u9879\u76ee\u9aa8\u67b6 + Config + Infra + Types",
+      "description": "TypeScript Migration Phase 1: \u9879\u76ee\u9aa8\u67b6 + Config + Infra + Types",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-11-typescript-migration-design.md",
+      "plan_file": ".super-harness/plans/2026-05-11-milestone-11.md",
+      "session_date": "2026-05-11T12:29:27Z",
+      "notes": null
+    },
+    {
+      "id": "milestone-12",
+      "title": "TypeScript Migration Phase 2: Memory + Log + Hooks",
+      "description": "TypeScript Migration Phase 2: Memory + Log + Hooks",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-11-typescript-migration-design.md",
+      "plan_file": ".super-harness/plans/2026-05-11-milestone-12.md",
+      "session_date": "2026-05-11T12:31:08Z",
+      "notes": null
+    },
+    {
+      "id": "milestone-13",
+      "title": "TypeScript Migration Phase 3: Router + Orchestrator + Capability",
+      "description": "TypeScript Migration Phase 3: Router + Orchestrator + Capability",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-11-typescript-migration-design.md",
+      "plan_file": ".super-harness/plans/2026-05-11-milestone-13.md",
+      "session_date": "2026-05-11T12:33:08Z",
+      "notes": null
+    },
+    {
+      "id": "milestone-14",
+      "title": "TypeScript Migration Phase 4: CLI + \u96c6\u6210\u6d4b\u8bd5 + \u53d1\u5e03",
+      "description": "TypeScript Migration Phase 4: CLI + \u96c6\u6210\u6d4b\u8bd5 + \u53d1\u5e03",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-11-typescript-migration-design.md",
+      "plan_file": ".super-harness/plans/2026-05-11-milestone-14.md",
+      "session_date": "2026-05-11T12:34:58Z",
+      "notes": null
     }
   ]
 }
