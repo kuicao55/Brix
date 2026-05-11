@@ -1,28 +1,32 @@
-# Handoff — 2026-05-11 21:54
+# Handoff — 2026-05-11 21:30
 
 ## State
 **Status:** IN_PROGRESS
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
+- **spec:** .super-harness/specs/2026-05-11-typescript-migration-design.md
 - **plan:** .super-harness/plans/2026-05-11-milestone-14.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-## Worktree
-(no worktree — working on main)
+- path: worktrees/milestone-14
+- branch: harness/milestone-14-cli
 
 ## Current Position
-- milestone_id: milestone-14
-- task_id: task-9
-- tasks_completed: [task-1, task-2, task-3, task-4, task-5, task-6, task-7, task-8, task-9]
+- milestone_id: milestone-14 (IN_PROGRESS)
+- current_task: Task 11 (Configure global command)
+- tasks_completed: 10
+- tasks_remaining: 11, 12, 13, 14
 
 ## Deferred Items
-Task 4 CQR: Spinner double-start() timer leak (deferred, sequential processing prevents in practice). Task 13: comprehensive CLI tests not yet written.
+- Pre-existing tsc error: `src/orchestrator/state-machine.ts:148`
+- Minor: `src/entrypoints/cli.ts` should set `process.exitCode = 1` on failure
+- Minor: `src/entrypoints/cli.test.ts` uses `Bun.sleep(200)` — flaky on slow CI
 
 ## Key Decisions
-All engines: Claude subagent (Codex unavailable). Worktree at worktrees/milestone-14 branch harness/milestone-14-cli. Tasks 4,5,6,7,9 required CQR re-dispatches. StreamRenderer uses dedicated Marked instance (not global). App REPL wrapped entire callback in try-catch for unhandled promise rejection safety.
+- Engine: 均衡模式 (Spec Review: Claude subagent, Code Quality Review: Codex adversarial-review)
+- Task 10 out-of-scope changes from first Executor attempt kept — they fixed 10 pre-existing test failures
 
 ## Next Action
-/super-harness:resume
+/super-harness:resume → continue with Task 11
