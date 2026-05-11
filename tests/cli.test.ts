@@ -624,4 +624,322 @@ describe('StreamRenderer', () => {
     expect(allOutput).toContain('⏺')
     renderer.flush()
   })
+
+  // ===== CRITICAL FIX TESTS =====
+
+  it('pushDelta 多次边界不应重复输出到 stdout（CRITICAL）', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    // 推送第一段内容，触发渲染
+    renderer.pushDelta('Hello World\n')
+    // 推送第二段内容，触发第二次渲染
+    renderer.pushDelta('Second Line\n')
+
+    // 统计 "Hello World" 在 stdout 中出现的次数
+    // 修复前：updateDisplay() 重新渲染整个 buffer，"Hello World" 会出现两次
+    // 修复后：只渲染新增内容，"Hello World" 只出现一次
+    const allOutput = stdoutOutput.join('')
+    const helloMatches = allOutput.match(/Hello World/g) || []
+    expect(helloMatches.length).toBe(1)
+
+    renderer.flush()
+  })
+
+  it('pushDelta 三次边界不应重复输出任何内容到 stdout（CRITICAL）', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    renderer.pushDelta('Line A\n')
+    renderer.pushDelta('Line B\n')
+    renderer.pushDelta('Line C\n')
+
+    const allOutput = stdoutOutput.join('')
+    // 每行只应出现一次
+    expect((allOutput.match(/Line A/g) || []).length).toBe(1)
+    expect((allOutput.match(/Line B/g) || []).length).toBe(1)
+    expect((allOutput.match(/Line C/g) || []).length).toBe(1)
+
+    renderer.flush()
+  })
+
+  it('findSafeBoundary 在未闭合代码块内应返回 null（HIGH）', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    // 推送一个未闭合的代码块（只有开始 ```，没有结束 ```）
+    // 当前 bug：lastIndexOf('```') 找到开头的 ```，在 ``` 后面找到换行就认为是安全边界
+    // 修复后：检测到奇数个 ```，在代码块内部，不应找到安全边界
+    renderer.pushDelta('一些文本\n\n```python\nprint("hello")\nmore code\n')
+    // 修复后：未闭合代码块内不应找到安全边界，rendered 应为空
+    const output = renderer.getOutput()
+    // 未闭合代码块时，不应该渲染任何内容
+    // 注意：修复前这个测试会失败，因为当前代码会在开头发 ``` 后找到边界
+    expect(output).toBe('')
+    renderer.flush()
+  })
+
+  it('findSafeBoundary 在闭合代码块后应正常找到边界', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    // 推送一个完整的代码块（偶数个 ```，应找到安全边界）
+    renderer.pushDelta('一些文本\n\n```python\nprint("hello")\n```\n')
+    const output = renderer.getOutput()
+    // 闭合的代码块应该被渲染
+    expect(output).toContain('print')
+    renderer.flush()
+  })
+
+  it('flush() 应该渲染所有剩余 pending 内容', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    // 推送没有边界的内容
+    renderer.pushDelta('pending content')
+    // 没有边界，不应渲染
+    expect(renderer.getOutput()).toBe('')
+    // stdout 也不应有内容
+    const outputBefore = stdoutOutput.join('')
+    expect(outputBefore).not.toContain('pending content')
+    // flush 应该渲染剩余内容
+    renderer.flush()
+    expect(renderer.getOutput()).toContain('pending content')
+  })
+
+  it('flush() 应该写入 pending 内容到 stdout', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    renderer.pushDelta('flush stdout test')
+    stdoutOutput.length = 0
+    renderer.flush()
+    const allOutput = stdoutOutput.join('')
+    expect(allOutput).toContain('flush stdout test')
+  })
+
+  it('dispose() 方法应该存在（LOW）', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    expect(typeof renderer.dispose).toBe('function')
+  })
+
+  it('dispose() 应该清理活动指示器定时器（LOW）', async () => {
+    const { StreamRenderer } = await import('../src/cli/stream-renderer.js')
+    const renderer = new StreamRenderer('')
+    renderer.pushDelta('text')
+    // dispose 应该清理定时器而不抛出异常
+    expect(() => renderer.dispose()).not.toThrow()
+    // dispose 后不应有定时器活动
+    stdoutOutput.length = 0
+    await new Promise((r) => setTimeout(r, 950))
+    const brailleChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    const hasBraille = stdoutOutput.some((s) =>
+      brailleChars.some((b) => s.includes(b))
+    )
+    expect(hasBraille).toBe(false)
+  })
+})
+
+describe('ToolDisplay', () => {
+  let consoleOutput: string[]
+  let consoleSpy: ReturnType<typeof mock>
+  let originalStdoutWrite: typeof process.stdout.write
+
+  beforeEach(() => {
+    originalStdoutWrite = process.stdout.write
+    consoleOutput = []
+    consoleSpy = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    console.log = consoleSpy
+  })
+
+  afterEach(() => {
+    console.log = console.log
+    process.stdout.write = originalStdoutWrite
+  })
+
+  it('应该从 src/cli/tool-display.ts 导出 ToolDisplay 类', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    expect(ToolDisplay).toBeDefined()
+    expect(typeof ToolDisplay).toBe('function')
+  })
+
+  it('应该创建 ToolDisplay 实例', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    expect(display).toBeDefined()
+  })
+
+  it('showToolStart 应该输出工具调用面板', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('bash', { command: 'echo hello' })
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('bash')
+    expect(output).toContain('Calling tools')
+    // 面板边框
+    expect(output).toContain('┌─')
+    expect(output).toContain('└─')
+  })
+
+  it('showToolStart 应该显示已知工具的图标', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('bash', { command: 'ls' })
+    const output = consoleOutput.join('\n')
+    // bash 工具应该有闪电图标
+    expect(output).toContain('⚡')
+  })
+
+  it('showToolStart 应该显示 file_read 工具的图标和路径', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('file_read', { path: '/tmp/test.txt' })
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('📄')
+    expect(output).toContain('/tmp/test.txt')
+  })
+
+  it('showToolStart 应该显示 file_write 工具的图标和路径', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('file_write', { path: '/tmp/out.txt', content: 'line1\nline2' })
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('✏️')
+    expect(output).toContain('/tmp/out.txt')
+  })
+
+  it('showToolStart 应该显示 file_edit 工具的图标和路径', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('file_edit', { path: '/tmp/code.ts' })
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('📝')
+    expect(output).toContain('/tmp/code.ts')
+  })
+
+  it('showToolStart 应该显示 web_search 工具的查询内容', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('web_search', { query: 'TypeScript tips' })
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('🔍')
+    expect(output).toContain('TypeScript tips')
+  })
+
+  it('showToolStart 应该为未知工具使用默认图标', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolStart('custom_tool', { foo: 'bar' })
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('🔧')
+    expect(output).toContain('custom_tool')
+  })
+
+  it('showToolResult 应该输出成功结果', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolResult('bash', 'hello world', 42)
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('bash')
+    expect(output).toContain('✓')
+    expect(output).toContain('42ms')
+  })
+
+  it('showToolResult 应该输出错误结果', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.showToolResult('bash', 'command not found', 100, true)
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('bash')
+    expect(output).toContain('✗')
+    expect(output).toContain('100ms')
+    expect(output).toContain('command not found')
+  })
+
+  it('showToolResult 应该截断超过 200 字符的错误结果', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    const longResult = 'x'.repeat(300)
+    display.showToolResult('bash', longResult, 10, true)
+    const output = consoleOutput.join('\n')
+    // 错误结果应包含截断标记
+    expect(output).toContain('...')
+  })
+
+  it('startThinking 应该启动 spinner 并写入 stdout', async () => {
+    const localOutput: string[] = []
+    const originalWrite = process.stdout.write
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      localOutput.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
+      return true
+    }) as any
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.startThinking()
+    await new Promise((r) => setTimeout(r, 150))
+    // 应该有 spinner 帧输出
+    expect(localOutput.length).toBeGreaterThan(0)
+    display.stopThinking()
+    process.stdout.write = originalWrite
+  })
+
+  it('stopThinking 应该可以安全调用而不报错', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    // 没有启动 spinner 时调用 stopThinking 不应报错
+    expect(() => display.stopThinking()).not.toThrow()
+    // 启动后停止也不应报错
+    display.startThinking()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(() => display.stopThinking()).not.toThrow()
+  })
+
+  it('cleanup 应该可以安全调用而不报错', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    expect(() => display.cleanup()).not.toThrow()
+    display.startThinking()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(() => display.cleanup()).not.toThrow()
+  })
+
+  it('showToolResult 应该先停止 thinking 再输出然后重新启动 thinking', async () => {
+    const localOutput: string[] = []
+    const originalWrite = process.stdout.write
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      localOutput.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk))
+      return true
+    }) as any
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.startThinking()
+    await new Promise((r) => setTimeout(r, 100))
+    // showToolResult 应自动 stopThinking，输出结果，再 startThinking
+    display.showToolResult('bash', 'done', 50)
+    localOutput.length = 0
+    await new Promise((r) => setTimeout(r, 200))
+    // showToolResult 后会重新 startThinking，应该有 braille 帧
+    const brailleChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    const hasBraille = localOutput.some((s) =>
+      brailleChars.some((b) => s.includes(b))
+    )
+    expect(hasBraille).toBe(true)
+    display.stopThinking()
+    process.stdout.write = originalWrite
+  })
+
+  it('重复调用 stopThinking 不应报错', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    expect(() => display.stopThinking()).not.toThrow()
+    display.startThinking()
+    display.stopThinking()
+    expect(() => display.stopThinking()).not.toThrow()
+  })
+
+  it('重复调用 startThinking 不应创建多个 spinner', async () => {
+    const { ToolDisplay } = await import('../src/cli/tool-display.js')
+    const display = new ToolDisplay()
+    display.startThinking()
+    // 第二次调用不应抛出异常
+    expect(() => display.startThinking()).not.toThrow()
+    display.stopThinking()
+  })
 })
