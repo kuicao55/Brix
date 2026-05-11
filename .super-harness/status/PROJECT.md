@@ -7,7 +7,7 @@
 **Project Name:** Brix
 **Harness Version:** 3.6.0
 **Generated:** 2026-05-07
-**Last Updated:** 2026-05-11 (milestone-11 complete)
+**Last Updated:** 2026-05-11 (milestone-14 complete — TypeScript migration done)
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@
 - **Data Models:** dataclasses (Python) / TypeScript interfaces (TS)
 - **Orchestrator:** Pure Python state machine + LangGraph (switchable)
 - **LLM Integration:** OpenAI-compatible + Anthropic-compatible providers
-- **TypeScript Packages:** @anthropic-ai/sdk, openai, chalk, js-yaml, js-tiktoken, marked, ora, dotenv
+- **TypeScript Packages:** @anthropic-ai/sdk, openai, chalk, js-yaml, js-tiktoken, marked, marked-terminal, ora, dotenv
 
 ## Functional Modules
 
@@ -52,7 +52,20 @@
 | **TS: OpenAI Provider** | **OpenAI-compatible chat + streaming with tool call accumulation** | **`src/infra/providers/openai-compat.ts`** |
 | **TS: Anthropic Provider** | **Anthropic-compatible chat + streaming with message conversion** | **`src/infra/providers/anthropic-compat.ts`** |
 | **TS: LLM Client** | **Unified LLM client with retry, provider abstraction, lazy init** | **`src/infra/llm-client.ts`** |
-| **TS: CLI Entry** | **Minimal Bun CLI entry point** | **`src/entrypoints/cli.ts`** |
+| **TS: CLI Entry** | **Bun CLI entry point (imports BrixCLI)** | **`src/entrypoints/cli.ts`** |
+| **TS: Theme** | **chalk 样式常量** | **`src/cli/theme.ts`** |
+| **TS: Banner** | **ASCII art + 信息表格** | **`src/cli/banner.ts`** |
+| **TS: Spinner** | **Braille 动画 spinner** | **`src/cli/spinner.ts`** |
+| **TS: StageIndicator** | **阶段指示器** | **`src/cli/stage-indicator.ts`** |
+| **TS: StreamRenderer** | **安全边界 Markdown 流式渲染** | **`src/cli/stream-renderer.ts`** |
+| **TS: ToolDisplay** | **工具调用面板** | **`src/cli/tool-display.ts`** |
+| **TS: Display** | **显示工具** | **`src/cli/display.ts`** |
+| **TS: Completer** | **斜杠命令补全** | **`src/cli/completer.ts`** |
+| **TS: PaginatedSelector** | **分页选择器** | **`src/cli/paginated-selector.ts`** |
+| **TS: App** | **主 REPL 类 (BrixCLI)** | **`src/cli/app.ts`** |
+| **TS: MemoryProvider** | **文件系统 MemoryProvider 工厂** | **`src/memory/provider.ts`** |
+| **TS: HookRegistry** | **事件注册、观察者模式** | **`src/hooks/registry.ts`** |
+| **TS: FlowLog** | **FlowLog 事件记录** | **`src/log/flow.ts`** |
 
 ## Key Architectural Decisions
 
@@ -89,10 +102,17 @@ Brix/
 ├── memory/       # Conversation persistence (Python)
 ├── orchestrator/ # State machine + LangGraph orchestrators (Python)
 ├── router/       # Intent classification, model routing (Python)
-├── src/          # TypeScript migration (new)
+├── src/          # TypeScript migration (complete)
 │   ├── types.ts           # Global type definitions
 │   ├── config/            # Config loader, model registry
 │   ├── infra/             # LLM client, providers (openai-compat, anthropic-compat)
+│   ├── router/            # Intent classification, complexity, model selection
+│   ├── orchestrator/      # Engine interface, states, state machine
+│   ├── capability/        # Tool base, runner, calculator, weather, file tools, basics
+│   ├── memory/            # MemoryProvider factory
+│   ├── hooks/             # HookRegistry
+│   ├── log/               # FlowLog
+│   ├── cli/               # Theme, banner, spinner, stage-indicator, stream-renderer, tool-display, display, completer, paginated-selector, app
 │   └── entrypoints/       # CLI entry point (Bun)
 ├── tests/        # pytest + bun:test test suite
 └── data/         # Runtime data (memory.json, logs)
