@@ -13,12 +13,13 @@ export class StreamRenderer {
   private pending: string = ''
   private rendered: string = ''
   private marker: string
+  private markerWritten: boolean = false
   private lastRenderedIndex: number = 0
   private activityTimer: ReturnType<typeof setTimeout> | null = null
   private indicatorFrame: number = 0
   private indicatorLabel: string = 'Waiting for tool call...'
 
-  constructor(marker: string = chalk.green('⏺ ')) {
+  constructor(marker: string = chalk.green('  ⏺ ')) {
     this.marker = marker
   }
 
@@ -64,7 +65,9 @@ export class StreamRenderer {
     const newContent = this.rendered.slice(this.lastRenderedIndex)
     if (newContent) {
       const output = markedInstance.parse(newContent) as string
-      process.stdout.write(this.marker + output)
+      const prefix = this.markerWritten ? '' : this.marker
+      this.markerWritten = true
+      process.stdout.write(prefix + output)
       this.lastRenderedIndex = this.rendered.length
     }
   }
