@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { Tool } from '../src/capability/base.js'
 import { BaseTool } from '../src/capability/base.js'
 import { ToolRunner } from '../src/capability/runner.js'
+import { CalculatorTool } from '../src/capability/tools/calculator.js'
 
 // --- 测试用具 ---
 
@@ -176,5 +177,126 @@ describe('ToolRunner', () => {
     // 验证结构兼容性：必须有 run 和 getToolSchemas 方法
     expect(typeof runner.run).toBe('function')
     expect(typeof runner.getToolSchemas).toBe('function')
+  })
+})
+
+// --- CalculatorTool 测试 ---
+
+describe('CalculatorTool', () => {
+  const calc = new CalculatorTool()
+
+  it('应有正确的 name、description 和 inputSchema', () => {
+    expect(calc.name).toBe('calculator')
+    expect(calc.description).toBe('Calculate mathematical expressions')
+    expect(calc.inputSchema).toEqual({
+      type: 'object',
+      properties: {
+        expression: { type: 'string', description: '数学表达式' },
+      },
+      required: ['expression'],
+    })
+  })
+
+  it('应返回正确的 OpenAI schema', () => {
+    const schema = calc.toOpenAiSchema()
+    expect(schema).toEqual({
+      type: 'function',
+      function: {
+        name: 'calculator',
+        description: 'Calculate mathematical expressions',
+        parameters: {
+          type: 'object',
+          properties: {
+            expression: { type: 'string', description: '数学表达式' },
+          },
+          required: ['expression'],
+        },
+      },
+    })
+  })
+
+  it('应计算基本加法: 2+2 = 4', async () => {
+    expect(await calc.execute({ expression: '2+2' })).toBe('4')
+  })
+
+  it('应计算基本减法: 5-3 = 2', async () => {
+    expect(await calc.execute({ expression: '5-3' })).toBe('2')
+  })
+
+  it('应计算基本乘法: 3*4 = 12', async () => {
+    expect(await calc.execute({ expression: '3*4' })).toBe('12')
+  })
+
+  it('应计算基本除法: 10/2 = 5', async () => {
+    expect(await calc.execute({ expression: '10/2' })).toBe('5')
+  })
+
+  it('应计算取模: 10%3 = 1', async () => {
+    expect(await calc.execute({ expression: '10%3' })).toBe('1')
+  })
+
+  it('应计算幂运算: 2**10 = 1024', async () => {
+    expect(await calc.execute({ expression: '2**10' })).toBe('1024')
+  })
+
+  it('应正确处理运算符优先级: 2+3*4 = 14', async () => {
+    expect(await calc.execute({ expression: '2+3*4' })).toBe('14')
+  })
+
+  it('应正确处理括号: (2+3)*4 = 20', async () => {
+    expect(await calc.execute({ expression: '(2+3)*4' })).toBe('20')
+  })
+
+  it('应正确处理一元负号: -5+3 = -2', async () => {
+    expect(await calc.execute({ expression: '-5+3' })).toBe('-2')
+  })
+
+  it('应处理小数: 3.14*2 = 6.28', async () => {
+    expect(await calc.execute({ expression: '3.14*2' })).toBe('6.28')
+  })
+
+  it('应处理嵌套括号: ((2+3)*(4-1)) = 15', async () => {
+    expect(await calc.execute({ expression: '(2+3)*(4-1)' })).toBe('15')
+  })
+
+  it('应处理空格: "2 + 3 * 4" = 14', async () => {
+    expect(await calc.execute({ expression: '2 + 3 * 4' })).toBe('14')
+  })
+
+  it('应返回除零错误', async () => {
+    const result = await calc.execute({ expression: '1/0' })
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('应拒绝无效表达式', async () => {
+    const result = await calc.execute({ expression: '2++' })
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('应拒绝缺少 expression 参数', async () => {
+    const result = await calc.execute({})
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('应拒绝非字符串 expression', async () => {
+    const result = await calc.execute({ expression: 123 })
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('DoS 保护: 指数 <= 1000 时正常计算', async () => {
+    expect(await calc.execute({ expression: '2**1000' })).toBe(String(2 ** 1000))
+  })
+
+  it('DoS 保护: 指数 > 1000 时返回错误', async () => {
+    const result = await calc.execute({ expression: '2**1001' })
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('应通过 ToolRunner 注册和执行', async () => {
+    const runner = new ToolRunner()
+    runner.register(calc)
+
+    const result = await runner.run('calculator', { expression: '6*7' })
+    expect(result).toBe('42')
   })
 })
