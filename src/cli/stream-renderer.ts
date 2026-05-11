@@ -91,7 +91,7 @@ export class StreamRenderer {
       this.activityTimer = null
     }
     // 清除 activity indicator
-    process.stdout.write('\r' + ' '.repeat(80) + '\r')
+    process.stdout.write('\r\x1B[2K')
 
     if (this.pending) {
       this.rendered += this.pending

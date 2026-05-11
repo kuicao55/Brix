@@ -34,8 +34,8 @@ export class Spinner {
       clearInterval(this.timer)
       this.timer = null
     }
-    // 清除行
-    process.stdout.write('\r' + ' '.repeat(80) + '\r')
+    // 用 ANSI 转义码清除整行
+    process.stdout.write('\r\x1B[2K')
   }
 
   updateLabel(label: string): void {
