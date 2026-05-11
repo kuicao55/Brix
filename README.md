@@ -7,11 +7,11 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 ## Features
 
 - **Multi-Provider LLM** — Unified interface for OpenAI-compatible and Anthropic-compatible APIs
-- **Dual Orchestrator** — Pure Python state machine + LangGraph engine, switchable via config
+- **Dual Orchestrator** — Pure TypeScript state machine + LangGraph engine, switchable via config
 - **Streaming Output** — Real-time token-by-token rendering with safe-boundary Markdown detection
 - **Tool Calling** — Built-in tools: calculator, weather, file reader, file writer, file editor
 - **Memory System v2** — Session-isolated conversations, agent personality (soul.md), user profile (user.md), auto-onboarding
-- **Persistent Storage** — Crash-safe atomic writes with fcntl locking
+- **Persistent Storage** — Crash-safe atomic writes with proper-lockfile
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
 - **Rich Terminal UI** — Thinking spinner during LLM gap, tool execution panels, content indentation with compact paragraph spacing, styled banner, custom theme, inline response markers
 - **Slash Autocomplete** — Type `/` to see command suggestions with fuzzy matching; Tab to accept, Up/Down to navigate
@@ -29,12 +29,8 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 git clone https://github.com/kuicao55/Brix.git
 cd Brix
 
-# Create virtual environment (Python 3.11+ required)
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies (Bun 1.3+ required)
+bun install
 ```
 
 ### 2. Configure API Keys
@@ -57,16 +53,16 @@ MINIMAX_API_KEY=your-minimax-key-here
 MIMO_API_KEY=your-mimo-key-here
 ```
 
-> Keys are auto-loaded via `python-dotenv` — no need to `export` manually.
+> Keys are auto-loaded via `dotenv` — no need to `export` manually.
 
 ### 3. Run
 
 ```bash
-# Option A: Direct
-.venv/bin/python main.py
+# Development mode
+bun run src/entrypoints/cli.ts
 
-# Option B: With venv activated
-python main.py
+# Or using npm script
+bun run dev
 ```
 
 ---
@@ -81,12 +77,12 @@ Add this line to your shell config file:
 
 **Zsh** (default on macOS) — edit `~/.zshrc`:
 ```bash
-alias brix="cd ~/Applications/Brix && .venv/bin/python main.py"
+alias brix="cd ~/Applications/Brix && bun run src/entrypoints/cli.ts"
 ```
 
 **Bash** — edit `~/.bashrc` or `~/.bash_profile`:
 ```bash
-alias brix="cd ~/Applications/Brix && .venv/bin/python main.py"
+alias brix="cd ~/Applications/Brix && bun run src/entrypoints/cli.ts"
 ```
 
 > Replace `~/Applications/Brix` with your actual project path if different.
@@ -103,7 +99,7 @@ source ~/.zshrc   # or source ~/.bashrc
 # Launch Brix from anywhere
 brix
 
-# That's it — no need to activate venv or cd into the project
+# That's it — no need to cd into the project
 ```
 
 ### Removing the Alias
@@ -187,28 +183,28 @@ Core modules ---(hooks.fire())---> HookRegistry ---(auto-forward)---> FlowLog.st
 
 ### Registering Custom Hooks
 
-```python
-from hooks.registry import HookRegistry
+```typescript
+import { HookRegistry } from '../hooks/registry.js'
 
-hooks = HookRegistry()
-hooks.bind_log(log)  # FlowLog receives all events
+const hooks = new HookRegistry()
+hooks.bindLog(log)  // FlowLog receives all events
 
-# Register a custom hook for specific events
-hooks.register("tool_exec", lambda e: print(f"Tool called: {e.data['name']}"))
-hooks.register("intent", lambda e: audit_log(e))
+// Register a custom hook for specific events
+hooks.register('tool_exec', (e) => console.log(`Tool called: ${e.data['name']}`))
+hooks.register('intent', (e) => auditLog(e))
 ```
 
 ### Available Events
 
 | Event | Trigger Location | Data Fields |
 |-------|-----------------|-------------|
-| `memory` | cli/app.py | `msgs`, `window`, `chars` |
-| `intent` | router/intent.py | `result`, `via`, `model`, `ms` |
-| `complexity` | cli/app.py | `result` |
-| `router` | cli/app.py | `model`, `reason` |
+| `memory` | cli/app.ts | `msgs`, `window`, `chars` |
+| `intent` | router/intent.ts | `result`, `via`, `model`, `ms` |
+| `complexity` | cli/app.ts | `result` |
+| `router` | cli/app.ts | `model`, `reason` |
 | `orch_plan` | orchestrator/ | `iter`, `tools`, `ms`, `response` |
 | `tool_exec` | orchestrator/ | `name`, `args`, `result`, `ms` |
-| `persist` | cli/app.py | `saved` |
+| `persist` | cli/app.ts | `saved` |
 
 ---
 
@@ -292,43 +288,21 @@ routing:
 
 ## Switching the Orchestrator Layer
 
-Brix has two orchestrator engines that control how the agent processes requests:
+Brix has a state machine orchestrator that controls how the agent processes requests:
 
 | Engine | Description | Best For |
 |--------|-------------|----------|
-| `state_machine` | Pure Python state machine. No extra dependencies. | Default, lightweight, fast |
-| `langgraph` | LangGraph StateGraph with visual workflow. Requires `langgraph`. | Complex multi-step tasks, debugging |
+| `state_machine` | TypeScript state machine. No extra dependencies. | Default, lightweight, fast |
 
 ### How to Switch
 
 Edit `config/settings.yaml`, change the `engine` field:
 
 ```yaml
-engine: "state_machine"   # Pure Python (default)
-```
-
-or:
-
-```yaml
-engine: "langgraph"       # LangGraph StateGraph
+engine: "state_machine"   # TypeScript (default)
 ```
 
 Save the file — the change takes effect on next launch.
-
-### Installing LangGraph
-
-If you want to use the `langgraph` engine, install it:
-
-```bash
-pip install langgraph
-```
-
-If LangGraph is not installed and you set `engine: "langgraph"`, Brix will automatically fall back to `state_machine` with a warning.
-
-### When to Use Which?
-
-- **`state_machine`** — Recommended for most users. Simple, fast, no extra dependencies.
-- **`langgraph`** — Use when you need graph-based orchestration with explicit state transitions. Better for debugging complex multi-tool workflows.
 
 ---
 
@@ -337,62 +311,61 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 ```
 +-----------------------------------------------------+
 |                      CLI Layer                       |
-|                  cli/app.py (REPL)                   |
+|              src/cli/app.ts (REPL)                   |
 +-----------------------------------------------------+
 |                   Router Layer                       |
-|  router/intent.py  router/complexity.py              |
-|  router/model_router.py                              |
+|  src/router/intent.ts  src/router/complexity.ts      |
+|  src/router/model-router.ts                          |
 +-----------------------------------------------------+
 |                Orchestrator Layer                     |
-|  orchestrator/state_machine.py  (Pure Python)        |
-|  orchestrator/langgraph_engine.py (LangGraph)        |
+|  src/orchestrator/state-machine.ts (TypeScript)      |
 +-----------------------------------------------------+
 |                  Capability Layer                     |
-|  capability/runner.py (ToolRunner)                   |
-|  capability/basics/ (reusable agent features)        |
-|    sessions.py, memory_files.py, logs.py, commands.py|
-|  capability/tools/calculator.py                      |
-|  capability/tools/weather.py                         |
-|  capability/tools/file_read.py                       |
-|  capability/tools/file_write.py                      |
-|  capability/tools/file_edit.py                       |
+|  src/capability/runner.ts (ToolRunner)               |
+|  src/capability/basics/ (reusable agent features)    |
+|    sessions.ts, memory-files.ts, logs.ts, commands.ts|
+|  src/capability/tools/calculator.ts                  |
+|  src/capability/tools/weather.ts                     |
+|  src/capability/tools/file-read.ts                   |
+|  src/capability/tools/file-write.ts                  |
+|  src/capability/tools/file-edit.ts                   |
 +-----------------------------------------------------+
 |                   Infra Layer                        |
-|  infra/llm_client.py (Unified LLM Client)            |
-|  infra/providers/openai_compat.py                    |
-|  infra/providers/anthropic_compat.py                 |
+|  src/infra/llm-client.ts (Unified LLM Client)       |
+|  src/infra/providers/openai-compat.ts                |
+|  src/infra/providers/anthropic-compat.ts             |
 +-----------------------------------------------------+
 |                   Config Layer                       |
-|  config/loader.py  config/model_registry.py          |
+|  src/config/loader.ts  src/config/model-registry.ts  |
 |  config/settings.yaml                                |
 +-----------------------------------------------------+
 |                   Memory Layer                       |
-|  memory/__init__.py (MemoryProvider Protocol)        |
-|  memory/provider.py (BrixMemoryProvider)             |
-|  memory/session.py (Session CRUD + locking)          |
-|  memory/soul.py (Agent personality)                  |
-|  memory/user.py (User profile)                       |
-|  memory/storage.py (Atomic JSON)                     |
-|  memory/strategy.py (Context Window)                 |
+|  src/memory/types.ts (MemoryProvider interface)      |
+|  src/memory/provider.ts (BrixMemoryProvider)         |
+|  src/memory/session.ts (Session CRUD + locking)      |
+|  src/memory/soul.ts (Agent personality)              |
+|  src/memory/user.ts (User profile)                   |
+|  src/memory/storage.ts (Atomic JSON)                 |
+|  src/memory/strategy.ts (Context Window)             |
 +-----------------------------------------------------+
 |                    Log Layer                          |
-|  log/flow.py (FlowLog Collector)                     |
-|  log/writer.py (JSONL File I/O)                      |
+|  src/log/flow.ts (FlowLog Collector)                 |
+|  src/log/writer.ts (JSONL File I/O)                  |
 +-----------------------------------------------------+
 |                   Hook Layer                          |
-|  hooks/registry.py (HookRegistry + HookEvent)        |
+|  src/hooks/registry.ts (HookRegistry + HookEvent)    |
 |  Core modules fire events → FlowLog auto-receives    |
 +-----------------------------------------------------+
 |                 Terminal UI Layer                     |
-|  cli/stream_renderer.py (Markdown stream rendering)  |
-|  cli/spinner.py (Braille animation)                  |
-|  cli/stage_indicator.py (unified loading spinner)    |
-|  cli/tool_display.py (tool execution panels)         |
-|  cli/completer.py (slash command autocomplete)       |
-|  cli/paginated_selector.py (generic TUI selector)    |
-|  cli/display.py (history rendering)                  |
-|  cli/theme.py (Rich theme)                           |
-|  cli/banner.py (startup banner)                      |
+|  src/cli/stream-renderer.ts (Markdown stream)        |
+|  src/cli/spinner.ts (Braille animation)              |
+|  src/cli/stage-indicator.ts (loading spinner)        |
+|  src/cli/tool-display.ts (tool execution panels)     |
+|  src/cli/completer.ts (slash command autocomplete)   |
+|  src/cli/paginated-selector.ts (generic TUI selector)|
+|  src/cli/display.ts (history rendering)              |
+|  src/cli/theme.ts (chalk theme)                      |
+|  src/cli/banner.ts (startup banner)                  |
 +-----------------------------------------------------+
 ```
 
@@ -427,83 +400,76 @@ Response + Memory Persist
 
 ```
 brix/
-+-- main.py                          # Entry point
-+-- pyproject.toml                   # Project config & dependencies
++-- src/
+|   +-- entrypoints/
+|   |   +-- cli.ts                   # Entry point (REPL startup)
+|   +-- types.ts                     # Shared TypeScript types
+|   +-- config/
+|   |   +-- loader.ts                # YAML config loader
+|   |   +-- model-registry.ts        # Model lookup by id/purpose
+|   +-- infra/
+|   |   +-- llm-client.ts            # Unified LLM client
+|   |   +-- providers/
+|   |       +-- openai-compat.ts     # OpenAI-compatible adapter
+|   |       +-- anthropic-compat.ts  # Anthropic-compatible adapter
+|   +-- router/
+|   |   +-- intent.ts                # Intent classification
+|   |   +-- complexity.ts            # Complexity evaluation
+|   |   +-- model-router.ts          # Model selection logic
+|   +-- orchestrator/
+|   |   +-- engine.ts                # OrchestratorEngine interface
+|   |   +-- states.ts                # State enum
+|   |   +-- state-machine.ts         # TypeScript state machine
+|   +-- capability/
+|   |   +-- runner.ts                # ToolRunner registry
+|   |   +-- basics/                  # Reusable agent features (UI-independent)
+|   |   |   +-- sessions.ts          # Session list, resume, prefix match
+|   |   |   +-- memory-files.ts      # Soul & user file loaders
+|   |   |   +-- logs.ts              # Log retrieval & formatting
+|   |   |   +-- commands.ts          # Command registry for /help & autocomplete
+|   |   +-- tools/
+|   |       +-- calculator.ts        # Math expression evaluator
+|   |       +-- weather.ts           # Mock weather lookup
+|   |       +-- file-read.ts         # Local file reader
+|   |       +-- file-write.ts        # File writer (memory/data/ sandboxed)
+|   |       +-- file-edit.ts         # File editor (memory/data/ sandboxed)
+|   +-- memory/
+|   |   +-- types.ts                 # MemoryProvider interface
+|   |   +-- provider.ts              # BrixMemoryProvider implementation
+|   |   +-- session.ts               # Session manager (UUID, locking)
+|   |   +-- soul.ts                  # Agent personality (soul.md)
+|   |   +-- user.ts                  # User profile (user.md)
+|   |   +-- storage.ts               # Atomic JSON persistence
+|   |   +-- strategy.ts              # Context window management
+|   |   +-- data/                    # Runtime data (gitignored)
+|   +-- log/
+|   |   +-- flow.ts                  # FlowLog step collector
+|   |   +-- writer.ts                # JSONL file I/O
+|   +-- hooks/
+|   |   +-- registry.ts              # HookRegistry + HookEvent
+|   +-- cli/
+|       +-- app.ts                   # REPL interface (streaming pipeline)
+|       +-- completer.ts             # Slash command autocomplete
+|       +-- paginated-selector.ts    # Generic paginated TUI selector
+|       +-- display.ts               # Output formatting & history rendering
+|       +-- stream-renderer.ts       # Safe-boundary Markdown stream renderer
+|       +-- spinner.ts               # Braille dot animation spinner
+|       +-- stage-indicator.ts       # Unified loading spinner (update in-place)
+|       +-- tool-display.ts          # Tool execution status panels
+|       +-- theme.ts                 # chalk theme (markdown, tool, spinner styles)
+|       +-- banner.ts                # Startup ASCII banner
++-- tests/
+|   +-- cli-entrypoint.test.ts       # CLI entrypoint tests
+|   +-- router.test.ts               # Router tests
+|   +-- orchestrator.test.ts         # Orchestrator tests
+|   +-- capability.test.ts           # Tool & runner tests
+|   +-- infra.test.ts                # Infra layer tests
+|   +-- memory.test.ts               # Memory tests
+|   +-- config.test.ts               # Config tests
 +-- config/
 |   +-- settings.yaml                # Provider & model configuration
-|   +-- loader.py                    # YAML config loader
-|   +-- model_registry.py           # Model lookup by id/purpose
-+-- infra/
-|   +-- llm_client.py               # Unified LLM client
-|   +-- providers/
-|       +-- openai_compat.py        # OpenAI-compatible adapter
-|       +-- anthropic_compat.py     # Anthropic-compatible adapter
-+-- router/
-|   +-- intent.py                   # Intent classification
-|   +-- complexity.py               # Complexity evaluation
-|   +-- model_router.py             # Model selection logic
-+-- orchestrator/
-|   +-- engine.py                   # OrchestratorEngine protocol
-|   +-- states.py                   # State enum
-|   +-- state_machine.py            # Pure Python state machine
-|   +-- langgraph_engine.py         # LangGraph-based engine
-+-- capability/
-|   +-- base.py                     # Tool abstract base class
-|   +-- runner.py                   # ToolRunner registry
-|   +-- basics/                     # Reusable agent features (UI-independent)
-|   |   +-- sessions.py             # Session list, resume, prefix match
-|   |   +-- memory_files.py         # Soul & user file loaders
-|   |   +-- logs.py                 # Log retrieval & formatting
-|   |   +-- commands.py             # Command registry for /help & autocomplete
-|   +-- tools/
-|       +-- calculator.py           # Math expression evaluator
-|       +-- weather.py              # Mock weather lookup
-|       +-- file_read.py            # Local file reader
-|       +-- file_write.py           # File writer (memory/data/ sandboxed)
-|       +-- file_edit.py            # File editor (memory/data/ sandboxed)
-+-- memory/
-|   +-- __init__.py                 # MemoryProvider Protocol + factory
-|   +-- provider.py                 # BrixMemoryProvider implementation
-|   +-- session.py                  # Session manager (UUID, locking)
-|   +-- soul.py                     # Agent personality (soul.md)
-|   +-- user.py                     # User profile (user.md)
-|   +-- storage.py                  # Atomic JSON persistence
-|   +-- strategy.py                 # Context window management
-|   +-- data/                       # Runtime data (gitignored)
-+-- log/
-|   +-- flow.py                     # FlowLog step collector
-|   +-- writer.py                   # JSONL file I/O
-+-- hooks/
-|   +-- registry.py                 # HookRegistry + HookEvent
-|   +-- __init__.py                 # Re-exports
-+-- cli/
-|   +-- app.py                      # REPL interface (streaming pipeline)
-|   +-- completer.py                # Slash command autocomplete (prompt_toolkit)
-|   +-- paginated_selector.py       # Generic paginated TUI selector
-|   +-- display.py                  # Output formatting & history rendering
-|   +-- stream_renderer.py          # Safe-boundary Markdown stream renderer
-|   +-- spinner.py                  # Braille dot animation spinner
-|   +-- stage_indicator.py          # Unified loading spinner (update in-place)
-|   +-- tool_display.py             # Tool execution status panels
-|   +-- theme.py                    # Rich theme (markdown, tool, spinner styles)
-|   +-- banner.py                   # Startup ASCII banner
-+-- tests/
-    +-- test_config.py              # Config layer tests
-    +-- test_infra.py               # Infra layer tests
-    +-- test_orchestrator.py        # Orchestrator tests
-    +-- test_langgraph.py           # LangGraph engine tests
-    +-- test_router.py              # Router tests
-    +-- test_capability.py          # Tool & runner tests
-    +-- test_file_tools.py          # File tool tests
-    +-- test_memory.py              # Memory tests
-    +-- test_memory_v2.py           # Memory v2 protocol & provider tests
-    +-- test_basics.py              # capability/basics module tests
-    +-- test_cli.py                 # CLI tests
-    +-- test_completer.py           # Slash command autocomplete tests
-    +-- test_paginated_selector.py  # Paginated TUI selector tests
-    +-- test_flow_log.py            # Flow log tests
-    +-- test_stream_renderer.py     # Stream renderer tests
-    +-- test_tool_display.py        # Tool display panel tests
++-- package.json                     # Project config & dependencies
++-- tsconfig.json                    # TypeScript configuration
 ```
 
 ---
@@ -511,17 +477,14 @@ brix/
 ## Testing
 
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
-
 # Run all tests
-python -m pytest tests/ -v
+bun test
 
-# Run specific module
-python -m pytest tests/test_orchestrator.py -v
+# Run with type checking
+bun run typecheck
 
-# Run with coverage
-python -m pytest tests/ --cov=. --cov-report=term-missing
+# Run specific test file
+bun test tests/router.test.ts
 ```
 
 ---
@@ -530,17 +493,15 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Python 3.11+ |
-| Async | asyncio |
-| REPL | prompt_toolkit |
-| Terminal UI | Rich (Live, Markdown, Panel, Theme) |
-| Config | PyYAML |
-| HTTP | httpx |
+| Language | TypeScript (strict mode) |
+| Runtime | Bun 1.3+ |
+| REPL | readline (Node built-in) |
+| Terminal UI | chalk + custom components |
+| Config | js-yaml |
 | LLM (OpenAI) | openai SDK |
-| LLM (Anthropic) | anthropic SDK |
-| Orchestrator | langgraph (optional) |
-| Env Loading | python-dotenv |
-| Testing | pytest + pytest-asyncio |
+| LLM (Anthropic) | @anthropic-ai/sdk |
+| Env Loading | dotenv |
+| Testing | bun:test |
 
 ---
 
