@@ -1,4 +1,4 @@
-# Handoff — 2026-05-11 15:00
+# Handoff — 2026-05-11 15:20
 
 ## State
 **Status:** IN_PROGRESS
@@ -15,8 +15,8 @@
 
 ## Current Position
 - milestone_id: milestone-11
-- task_id: 7 (迁移 LLM Client)
-- tasks_completed: [1, 2, 3, 4, 5, 6]
+- task_id: 9 (编写 Infra 测试)
+- tasks_completed: [1, 2, 3, 4, 5, 6, 7, 8]
 
 ## Deferred Items
 None
