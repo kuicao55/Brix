@@ -1560,3 +1560,141 @@ describe('PaginatedSelector', () => {
     expect(output).toContain('> 1.')
   })
 })
+
+describe('BrixCLI', () => {
+  let consoleOutput: string[]
+  let consoleSpy: ReturnType<typeof mock>
+
+  beforeEach(() => {
+    consoleOutput = []
+    consoleSpy = mock((...args: string[]) => {
+      consoleOutput.push(args.join(' '))
+    })
+    console.log = consoleSpy
+  })
+
+  afterEach(() => {
+    console.log = console.log
+  })
+
+  it('应该从 src/cli/app.ts 导出 BrixCLI 类', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    expect(BrixCLI).toBeDefined()
+    expect(typeof BrixCLI).toBe('function')
+  })
+
+  it('应该使用默认配置创建实例', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    expect(cli).toBeDefined()
+  })
+
+  it('应该接受自定义配置创建实例', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const { loadConfig } = await import('../src/config/loader.js')
+    const config = loadConfig()
+    const cli = new BrixCLI(config)
+    expect(cli).toBeDefined()
+  })
+
+  it('应该有 run 方法', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    expect(typeof cli.run).toBe('function')
+  })
+
+  it('应该有 handleCommand 方法', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    expect(typeof cli.handleCommand).toBe('function')
+  })
+
+  it('handleCommand /help 应该输出帮助信息并返回 true', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('/help')
+    expect(result).toBe(true)
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('/help')
+    expect(output).toContain('/quit')
+    expect(output).toContain('/clear')
+  })
+
+  it('handleCommand /model 应该输出当前模型并返回 true', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('/model')
+    expect(result).toBe(true)
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('model')
+  })
+
+  it('handleCommand /clear 应该清除会话并返回 true', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('/clear')
+    expect(result).toBe(true)
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('cleared')
+  })
+
+  it('handleCommand /soul 应该输出 soul 内容并返回 true', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('/soul')
+    expect(result).toBe(true)
+  })
+
+  it('handleCommand /user 应该输出 user 内容并返回 true', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('/user')
+    expect(result).toBe(true)
+  })
+
+  it('handleCommand 未知命令应返回 true 并提示', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('/unknown')
+    expect(result).toBe(true)
+    const output = consoleOutput.join('\n')
+    expect(output).toContain('Unknown')
+  })
+
+  it('handleCommand 非斜杠命令应返回 false', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const result = await cli.handleCommand('hello world')
+    expect(result).toBe(false)
+  })
+
+  it('应该注册内置工具（Calculator, Weather, FileRead, FileWrite, FileEdit）', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    // 通过 getToolRunner 访问内部 toolRunner，验证工具已注册
+    const toolRunner = cli.getToolRunner()
+    const schemas = toolRunner.getToolSchemas()
+    const toolNames = schemas.map((s: any) => s.function?.name)
+    expect(toolNames).toContain('calculator')
+    expect(toolNames).toContain('weather')
+    expect(toolNames).toContain('file_read')
+    expect(toolNames).toContain('file_write')
+    expect(toolNames).toContain('file_edit')
+  })
+
+  it('应该创建 StateMachineOrchestrator 作为默认编排器', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const orchestrator = cli.getOrchestrator()
+    expect(orchestrator).toBeDefined()
+    expect(typeof orchestrator.run).toBe('function')
+    expect(typeof orchestrator.runStream).toBe('function')
+  })
+
+  it('应该创建 LLMClient', async () => {
+    const { BrixCLI } = await import('../src/cli/app.js')
+    const cli = new BrixCLI()
+    const llmClient = cli.getLLMClient()
+    expect(llmClient).toBeDefined()
+  })
+})
