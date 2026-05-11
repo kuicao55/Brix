@@ -26,12 +26,18 @@ export class StageIndicator {
   finish(): void {
     if (this.finished) return
     this.finished = true
-    this.spinner.stop()
+    this.spinner.finish()
   }
 
   stop_silent(): void {
     if (this.finished) return
     this.finished = true
     this.spinner.stop()
+  }
+
+  fail(label: string = 'Error'): void {
+    if (this.finished) return
+    this.finished = true
+    this.spinner.fail(label)
   }
 }
