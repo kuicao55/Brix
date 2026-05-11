@@ -1,4 +1,4 @@
-# Handoff — 2026-05-11 14:00
+# Handoff — 2026-05-11 14:15
 
 ## State
 **Status:** IN_PROGRESS
@@ -15,8 +15,8 @@
 
 ## Current Position
 - milestone_id: milestone-11
-- task_id: 2 (创建全局类型定义)
-- tasks_completed: [1]
+- task_id: 3 (迁移 Config Loader)
+- tasks_completed: [1, 2]
 
 ## Deferred Items
 None
