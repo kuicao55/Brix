@@ -253,7 +253,7 @@ export class BrixCLI {
     }
 
     if (cmd === '/log') {
-      const logPath = (this.config as any).log_path as string | undefined
+      const logPath = path.resolve(this.config.memory.data_dir, '..', 'log', 'data', 'brix.jsonl')
       if (logPath) {
         try {
           const logs = getRecentLogs(logPath, 10)
@@ -306,9 +306,19 @@ export class BrixCLI {
     const hooks = new HookRegistry()
     hooks.bindLog(log)
 
-    // Memory stage
+    // Memory stage — 加载 soul + user 作为 system prompt
     indicator.update('Memory')
     const contextMessages: Array<{ role: string; content: string }> = []
+    if (this.memory) {
+      const parts: string[] = []
+      const soul = this.memory.loadSoul()
+      if (soul) parts.push(`# Soul\n${soul}`)
+      const user = this.memory.loadUserMemory()
+      if (user) parts.push(`# User Profile\n${user}`)
+      if (parts.length > 0) {
+        contextMessages.push({ role: 'system', content: parts.join('\n\n') })
+      }
+    }
     hooks.fire('memory', { msgs: contextMessages.length })
 
     // Intent stage

@@ -18,7 +18,7 @@ export class StreamRenderer {
   private indicatorFrame: number = 0
   private indicatorLabel: string = 'Waiting for tool call...'
 
-  constructor(marker: string = chalk.green('  ⏺ ')) {
+  constructor(marker: string = chalk.green('⏺ ')) {
     this.marker = marker
   }
 

@@ -1884,47 +1884,56 @@ describe('BrixCLI', () => {
   // --- HIGH: /log 应显示日志条目 ---
 
   it('HIGH: /log 应调用 getRecentLogs 并显示日志条目', async () => {
-    const { writeFileSync, mkdirSync } = await import('fs')
+    const { writeFileSync, mkdirSync, rmSync } = await import('fs')
     const { join } = await import('path')
     const { tmpdir } = await import('os')
     const testDir = join(tmpdir(), `brix-test-cli-log-${Date.now()}`)
-    mkdirSync(testDir, { recursive: true })
-    const logFile = join(testDir, 'flow.jsonl')
+    const dataDir = join(testDir, 'data')
+    const logDir = join(testDir, 'log', 'data')
+    mkdirSync(logDir, { recursive: true })
+    mkdirSync(dataDir, { recursive: true })
+    const logFile = join(logDir, 'brix.jsonl')
     const entries = [
       JSON.stringify({ trace: 'aaa-111', ts: '2025-01-01T10:00:00', input: 'hello', model: 'gpt-4', ms_total: 150 }),
       JSON.stringify({ trace: 'bbb-222', ts: '2025-01-01T10:01:00', input: 'world', model: 'claude-3', ms_total: 200 }),
     ]
     writeFileSync(logFile, entries.join('\n') + '\n')
 
-    // Mock the log path in config
     const { BrixCLI } = await import('../src/cli/app.js')
     const { loadConfig } = await import('../src/config/loader.js')
     const config = loadConfig()
-    // 设置 log_path 供 /log 使用
-    ;(config as any).log_path = logFile
+    config.memory.data_dir = dataDir
 
     const cli = new BrixCLI(config)
     consoleOutput.length = 0
     const result = await cli.handleCommand('/log')
     expect(result).toBe(true)
     const output = consoleOutput.join('\n')
-    // 应显示日志条目内容
     expect(output).toContain('aaa-111')
     expect(output).toContain('bbb-222')
 
-    // 清理
-    const { unlinkSync, rmdirSync } = await import('fs')
-    try { unlinkSync(logFile) } catch {}
-    try { rmdirSync(testDir) } catch {}
+    try { rmSync(testDir, { recursive: true }) } catch {}
   })
 
   it('HIGH: /log 无日志文件时应提示无日志', async () => {
+    const { mkdirSync, rmSync } = await import('fs')
+    const { join } = await import('path')
+    const { tmpdir } = await import('os')
+    const testDir = join(tmpdir(), `brix-test-cli-nolog-${Date.now()}`)
+    mkdirSync(testDir, { recursive: true })
+
     const { BrixCLI } = await import('../src/cli/app.js')
-    const cli = new BrixCLI()
+    const { loadConfig } = await import('../src/config/loader.js')
+    const config = loadConfig()
+    config.memory.data_dir = testDir
+
+    const cli = new BrixCLI(config)
     consoleOutput.length = 0
     const result = await cli.handleCommand('/log')
     expect(result).toBe(true)
     const output = consoleOutput.join('\n')
     expect(output).toContain('No logs')
+
+    try { rmSync(testDir, { recursive: true }) } catch {}
   })
 })
