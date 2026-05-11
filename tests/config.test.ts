@@ -97,7 +97,7 @@ describe('loadConfig', () => {
   })
 
   it('应该加载并深度合并用户配置', () => {
-    const configPath = path.join(tmpDir, 'config.yaml')
+    const configPath = path.join(tmpDir, 'settings.yaml')
     fs.writeFileSync(configPath, `
 engine: langgraph
 retry:

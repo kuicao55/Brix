@@ -63,8 +63,8 @@ export function deepMerge(
  * @returns 合并后的完整配置
  */
 export function loadConfig(configDir?: string): BrixConfig {
-  const dir = configDir || path.join(process.cwd(), '.brix')
-  const configPath = path.join(dir, 'config.yaml')
+  const dir = configDir || path.join(process.cwd(), 'config')
+  const configPath = path.join(dir, 'settings.yaml')
 
   // 默认配置
   const defaultConfig: BrixConfig = {
