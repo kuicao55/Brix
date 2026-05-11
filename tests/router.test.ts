@@ -160,5 +160,23 @@ describe('classifyIntent', () => {
       const result = await classifyIntent('Build a page', mockLLMClient, 'gpt-4o', hooks)
       expect(result).toBe('task')
     })
+
+    it('hooks.fire 抛出错误时不应阻塞意图分类', async () => {
+      const mockFire = mock(() => Promise.reject(new Error('telemetry network failure')))
+      const hooks = { fire: mockFire } as unknown as NonNullable<Parameters<typeof classifyIntent>[3]>
+      mockChat.mockResolvedValueOnce({ content: 'task', tool_calls: [], finish_reason: 'stop' })
+
+      const result = await classifyIntent('Build a page', mockLLMClient, 'gpt-4o', hooks)
+      expect(result).toBe('task')
+    })
+
+    it('hooks.fire 抛出错误且 LLM 也失败时应通过关键词回退分类', async () => {
+      const mockFire = mock(() => Promise.reject(new Error('hook crash')))
+      const hooks = { fire: mockFire } as unknown as NonNullable<Parameters<typeof classifyIntent>[3]>
+      mockChat.mockRejectedValueOnce(new Error('API error'))
+
+      const result = await classifyIntent('Fix the bug', mockLLMClient, 'gpt-4o', hooks)
+      expect(result).toBe('task')
+    })
   })
 })
