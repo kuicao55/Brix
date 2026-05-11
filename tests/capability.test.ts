@@ -299,4 +299,21 @@ describe('CalculatorTool', () => {
     const result = await runner.run('calculator', { expression: '6*7' })
     expect(result).toBe('42')
   })
+
+  it('DoS 保护: 超长表达式应返回错误', async () => {
+    const longExpr = '1' + '+1'.repeat(1000) // 2001 字符
+    const result = await calc.execute({ expression: longExpr })
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('DoS 保护: 过深嵌套括号应返回错误', async () => {
+    const deepExpr = '(' .repeat(200) + '1' + ')'.repeat(200)
+    const result = await calc.execute({ expression: deepExpr })
+    expect(result).toMatch(/^Error:/)
+  })
+
+  it('应拒绝畸形数字字面量 "1.2.3"', async () => {
+    const result = await calc.execute({ expression: '1.2.3' })
+    expect(result).toMatch(/^Error:/)
+  })
 })
