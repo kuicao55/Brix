@@ -23,8 +23,9 @@ export class Spinner {
     this.running = true
     this.startTime = Date.now()
     this.timer = setInterval(() => {
+      if (!this.running) return
       this.frameIdx++
-      process.stdout.write('\r' + this.renderFrame())
+      process.stdout.write('\r\x1B[2K' + this.renderFrame())
     }, 100)
   }
 

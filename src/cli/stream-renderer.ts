@@ -80,7 +80,7 @@ export class StreamRenderer {
 
   private showActivityIndicator(): void {
     const frame = BRAILLE_FRAMES[this.indicatorFrame % BRAILLE_FRAMES.length]
-    process.stdout.write(`\r  ${chalk.dim(frame)} ${chalk.dim(this.indicatorLabel)}`)
+    process.stdout.write(`\r\x1B[2K  ${chalk.dim(frame)} ${chalk.dim(this.indicatorLabel)}`)
     this.indicatorFrame++
     this.activityTimer = setTimeout(() => this.showActivityIndicator(), 100)
   }
