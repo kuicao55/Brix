@@ -27,8 +27,12 @@ export class StateMachineOrchestrator implements OrchestratorEngine {
     const messages: Message[] = [...history, { role: 'user', content: userInput }]
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
-      // 触发 plan hook
-      await hooks?.fire('orch_plan', { iteration })
+      // 触发 plan hook — best-effort，hook 失败不阻塞编排
+      try {
+        await hooks?.fire('orch_plan', { iteration })
+      } catch (e) {
+        console.warn('hook fire failed:', e instanceof Error ? e.message : e)
+      }
 
       // 调用 LLM
       const tools = toolRunner?.getToolSchemas()
@@ -52,8 +56,12 @@ export class StateMachineOrchestrator implements OrchestratorEngine {
           throw new Error('toolRunner is required to execute tool calls')
         }
 
-        // 触发 tool_exec hook
-        await hooks?.fire('tool_exec', { name: toolCall.name, id: toolCall.id })
+        // 触发 tool_exec hook — best-effort，hook 失败不阻塞工具执行
+        try {
+          await hooks?.fire('tool_exec', { name: toolCall.name, id: toolCall.id })
+        } catch (e) {
+          console.warn('hook fire failed:', e instanceof Error ? e.message : e)
+        }
 
         let result: string
         try {
@@ -90,8 +98,12 @@ export class StateMachineOrchestrator implements OrchestratorEngine {
     const messages: Message[] = [...history, { role: 'user', content: userInput }]
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
-      // 触发 plan hook
-      await hooks?.fire('orch_plan', { iteration })
+      // 触发 plan hook — best-effort，hook 失败不阻塞编排
+      try {
+        await hooks?.fire('orch_plan', { iteration })
+      } catch (e) {
+        console.warn('hook fire failed:', e instanceof Error ? e.message : e)
+      }
 
       const tools = toolRunner?.getToolSchemas()
 
@@ -131,7 +143,12 @@ export class StateMachineOrchestrator implements OrchestratorEngine {
           throw new Error('toolRunner is required to execute tool calls')
         }
 
-        await hooks?.fire('tool_exec', { name: toolCall.name, id: toolCall.id })
+        // 触发 tool_exec hook — best-effort，hook 失败不阻塞工具执行
+        try {
+          await hooks?.fire('tool_exec', { name: toolCall.name, id: toolCall.id })
+        } catch (e) {
+          console.warn('hook fire failed:', e instanceof Error ? e.message : e)
+        }
 
         const startTime = Date.now()
         let result: string

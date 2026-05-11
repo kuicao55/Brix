@@ -327,6 +327,102 @@ describe('StateMachineOrchestrator', () => {
     })
   })
 
+  describe('hooks 容错（best-effort）', () => {
+    it('orch_plan hook 拒绝时 run() 不应崩溃', async () => {
+      // hook 在每次调用时都拒绝
+      mockFire.mockImplementation(() => Promise.reject(new Error('hook crashed')))
+
+      mockChat.mockImplementationOnce(() =>
+        Promise.resolve({ content: 'response after hook crash', tool_calls: [], finish_reason: 'stop' }),
+      )
+
+      const orchestrator = new StateMachineOrchestrator()
+      const result = await orchestrator.run('Hi', makeContext())
+
+      expect(result).toBe('response after hook crash')
+    })
+
+    it('tool_exec hook 拒绝时 run() 不应崩溃', async () => {
+      let callCount = 0
+      mockChat.mockImplementation(() => {
+        callCount++
+        if (callCount === 1) {
+          return Promise.resolve({
+            content: '',
+            tool_calls: [{ id: 'tc_1', name: 'test_tool', arguments: {} }],
+            finish_reason: 'tool_calls',
+          })
+        }
+        return Promise.resolve({ content: 'done after tool hook crash', tool_calls: [], finish_reason: 'stop' })
+      })
+
+      // tool_exec hook 拒绝，orch_plan 正常
+      mockFire.mockImplementation((name: string) => {
+        if (name === 'tool_exec') return Promise.reject(new Error('tool hook crashed'))
+        return Promise.resolve()
+      })
+
+      mockToolRun.mockImplementationOnce(() => Promise.resolve('tool output'))
+
+      const orchestrator = new StateMachineOrchestrator()
+      const result = await orchestrator.run('do something', makeContext())
+
+      expect(result).toBe('done after tool hook crash')
+      // 工具本身仍应被执行
+      expect(mockToolRun).toHaveBeenCalledWith('test_tool', {})
+    })
+
+    it('orch_plan hook 拒绝时 runStream() 不应崩溃', async () => {
+      mockFire.mockImplementation(() => Promise.reject(new Error('stream hook crashed')))
+
+      mockChatStream.mockImplementation(async function* () {
+        yield { type: 'text_delta', text: 'stream ok' }
+      })
+
+      const orchestrator = new StateMachineOrchestrator()
+      const events: StreamEvent[] = []
+      for await (const event of orchestrator.runStream('Hi', makeContext())) {
+        events.push(event)
+      }
+
+      const textEvents = events.filter(e => e.type === 'text_delta')
+      expect(textEvents).toHaveLength(1)
+      expect(textEvents[0]).toEqual({ type: 'text_delta', text: 'stream ok' })
+    })
+
+    it('tool_exec hook 拒绝时 runStream() 不应崩溃', async () => {
+      let streamCount = 0
+      mockChatStream.mockImplementation(async function* () {
+        streamCount++
+        if (streamCount === 1) {
+          yield { type: 'tool_call', id: 'tc_1', name: 'test_tool', input: { q: 'test' } }
+        } else {
+          yield { type: 'text_delta', text: 'final' }
+        }
+      })
+
+      mockFire.mockImplementation((name: string) => {
+        if (name === 'tool_exec') return Promise.reject(new Error('tool hook crashed'))
+        return Promise.resolve()
+      })
+
+      mockToolRun.mockImplementationOnce(() => Promise.resolve('tool output'))
+
+      const orchestrator = new StateMachineOrchestrator()
+      const events: StreamEvent[] = []
+      for await (const event of orchestrator.runStream('search', makeContext())) {
+        events.push(event)
+      }
+
+      const toolResults = events.filter(e => e.type === 'tool_result')
+      expect(toolResults).toHaveLength(1)
+      expect((toolResults[0] as any).result).toBe('tool output')
+
+      const textEvents = events.filter(e => e.type === 'text_delta')
+      expect(textEvents).toHaveLength(1)
+    })
+  })
+
   describe('默认 maxIterations', () => {
     it('默认值应为 100', async () => {
       // 验证构造函数默认参数
