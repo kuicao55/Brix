@@ -1,4 +1,4 @@
-# Handoff — 2026-05-11 14:20
+# Handoff — 2026-05-11 14:30
 
 ## State
 **Status:** IN_PROGRESS
@@ -15,8 +15,8 @@
 
 ## Current Position
 - milestone_id: milestone-11
-- task_id: 4 (迁移 Model Registry)
-- tasks_completed: [1, 2, 3]
+- task_id: 5 (迁移 OpenAI Provider)
+- tasks_completed: [1, 2, 3, 4]
 
 ## Deferred Items
 None
