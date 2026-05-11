@@ -6,11 +6,14 @@
  */
 
 import * as readline from 'readline'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import chalk from 'chalk'
 
 import type { BrixConfig } from '../config/loader.js'
 import { loadConfig } from '../config/loader.js'
 import type { MemoryProvider } from '../memory/types.js'
+import { createMemoryProvider } from '../memory/provider.js'
 import type { LLMClient } from '../infra/llm-client.js'
 import type { OrchestratorEngine, OrchestratorContext } from '../orchestrator/engine.js'
 import type { ToolRunner as ToolRunnerProtocol } from '../orchestrator/engine.js'
@@ -56,7 +59,7 @@ export class BrixCLI {
 
   constructor(config?: BrixConfig, options?: BrixCLIOptions) {
     this.config = config ?? loadConfig()
-    this.memory = options?.memory ?? null
+    this.memory = options?.memory ?? createMemoryProvider(this.config.memory.data_dir, this.config.memory.max_context_tokens)
     this.llmClient = new LLMClientImpl(this.config)
     this.toolRunner = new ToolRunner()
     this.registerTools()
@@ -411,8 +414,10 @@ export class BrixCLI {
     // Flush log (best-effort)
     try {
       const entry = log.finish()
-      // 日志写入暂由 writer.ts 的 writeJsonl 处理
-      void entry
+      const logDir = path.resolve(this.config.memory.data_dir, '..', 'log', 'data')
+      fs.mkdirSync(logDir, { recursive: true })
+      const logPath = path.join(logDir, 'brix.jsonl')
+      fs.appendFileSync(logPath, JSON.stringify(entry) + '\n')
     } catch {
       // fail gracefully
     }
@@ -451,8 +456,8 @@ export class BrixCLI {
     this.toolRunner.register(new CalculatorTool())
     this.toolRunner.register(new WeatherTool())
     this.toolRunner.register(new FileReadTool())
-    this.toolRunner.register(new FileWriteTool())
-    this.toolRunner.register(new FileEditTool())
+    this.toolRunner.register(new FileWriteTool(this.config.memory.data_dir))
+    this.toolRunner.register(new FileEditTool(this.config.memory.data_dir))
   }
 
   /** 根据配置构建编排器 */
