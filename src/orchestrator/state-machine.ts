@@ -58,7 +58,7 @@ export class StateMachineOrchestrator implements OrchestratorEngine {
 
         // 触发 tool_exec hook — best-effort，hook 失败不阻塞工具执行
         try {
-          await hooks?.fire('tool_exec', { name: toolCall.name, id: toolCall.id })
+          await hooks?.fire('tool_exec', { tool: toolCall.name, args: toolCall.arguments })
         } catch (e) {
           console.warn('hook fire failed:', e instanceof Error ? e.message : e)
         }
@@ -145,7 +145,7 @@ export class StateMachineOrchestrator implements OrchestratorEngine {
 
         // 触发 tool_exec hook — best-effort，hook 失败不阻塞工具执行
         try {
-          await hooks?.fire('tool_exec', { name: toolCall.name, id: toolCall.id })
+          await hooks?.fire('tool_exec', { tool: toolCall.name, args: toolCall.arguments })
         } catch (e) {
           console.warn('hook fire failed:', e instanceof Error ? e.message : e)
         }

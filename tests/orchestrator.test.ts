@@ -169,7 +169,7 @@ describe('StateMachineOrchestrator', () => {
       // 检查 tool_exec hook 被触发
       const toolExecCalls = mockFire.mock.calls.filter(c => c[0] === 'tool_exec')
       expect(toolExecCalls.length).toBeGreaterThanOrEqual(1)
-      expect(toolExecCalls[0][1]).toEqual(expect.objectContaining({ name: 'my_tool' }))
+      expect(toolExecCalls[0][1]).toEqual(expect.objectContaining({ tool: 'my_tool', args: { x: 1 } }))
     })
 
     it('应该处理工具错误并继续', async () => {
