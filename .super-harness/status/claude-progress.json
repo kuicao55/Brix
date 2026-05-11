@@ -126,11 +126,11 @@
       "title": "TypeScript Migration Phase 1: \u9879\u76ee\u9aa8\u67b6 + Config + Infra + Types",
       "description": "TypeScript Migration Phase 1: \u9879\u76ee\u9aa8\u67b6 + Config + Infra + Types",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-11-typescript-migration-design.md",
       "plan_file": ".super-harness/plans/2026-05-11-milestone-11.md",
       "session_date": "2026-05-11T12:29:27Z",
-      "notes": null
+      "notes": "Completed 2026-05-11. 10 tasks: project skeleton, types, config loader (with prototype pollution fix), model registry (with defensive guards), OpenAI provider (with JSON.parse + flush fixes), Anthropic provider, LLM client, config tests, infra tests, CLI entry point. 58 tests pass. CQR: 4 rounds on tasks 3-5 (prototype pollution, purpose validation, JSON.parse, tool call flush)."
     },
     {
       "id": "milestone-12",
