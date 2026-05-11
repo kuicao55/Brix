@@ -65,12 +65,14 @@ function isRetryable(e: unknown): boolean {
  */
 export class LLMClient {
   private providersConfig: Record<string, ProviderConfig>
+  private modelsConfig: import('../config/loader.js').ModelConfig[]
   private providers: Map<string, Provider> = new Map()
   private retryConfig: { max_retries: number; base_delay: number; max_delay: number }
   private routingConfig: { default_model: string; fallback_model: string }
 
   constructor(config: BrixConfig) {
     this.providersConfig = config.providers
+    this.modelsConfig = config.models
     this.retryConfig = config.retry
     this.routingConfig = config.routing
   }
@@ -98,14 +100,14 @@ export class LLMClient {
    * 非流式 chat 请求（带重试）
    */
   async chat(messages: Message[], model: string, tools?: Record<string, unknown>[]): Promise<LLMResponse> {
-    const providerName = this.findProviderForModel(model)
+    const { providerName, modelName } = this.resolveModel(model)
     const provider = this.getProvider(providerName)
     const providerConfig = this.providersConfig[providerName]
 
     return retry(
       () => provider.chat({
         messages,
-        model,
+        model: modelName,
         tools,
         baseUrl: providerConfig.base_url,
         apiKey: process.env[providerConfig.api_key_env] || '',
@@ -123,13 +125,13 @@ export class LLMClient {
    * 流式 chat 请求 — 产出 StreamEvent
    */
   async *chatStream(messages: Message[], model: string, tools?: Record<string, unknown>[]): AsyncGenerator<StreamEvent> {
-    const providerName = this.findProviderForModel(model)
+    const { providerName, modelName } = this.resolveModel(model)
     const provider = this.getProvider(providerName)
     const providerConfig = this.providersConfig[providerName]
 
     yield* provider.chatStream({
       messages,
-      model,
+      model: modelName,
       tools,
       baseUrl: providerConfig.base_url,
       apiKey: process.env[providerConfig.api_key_env] || '',
@@ -137,15 +139,35 @@ export class LLMClient {
   }
 
   /**
-   * 根据模型名查找对应的 provider
-   * 当前为简单实现：返回第一个 provider
-   * 后续将根据 models 配置做精确路由
+   * 解析模型 ID，返回 provider 名称和实际模型名
+   * 模型 ID 格式: "provider/model-name" (如 "minimax/MiniMax-M2.7")
+   * 实际 API 调用只用 "MiniMax-M2.7"
    */
-  private findProviderForModel(model: string): string {
+  private resolveModel(model: string): { providerName: string; modelName: string } {
+    // 从 models 配置中查找匹配的模型
+    const modelConfig = this.modelsConfig.find(m => m.id === model)
+    if (modelConfig) {
+      // 从 model ID 中提取实际模型名 (去掉 provider/ 前缀)
+      const slashIdx = model.indexOf('/')
+      const modelName = slashIdx >= 0 ? model.slice(slashIdx + 1) : model
+      return { providerName: modelConfig.provider, modelName }
+    }
+
+    // fallback: 尝试按 provider/model 格式解析
+    const slashIdx = model.indexOf('/')
+    if (slashIdx >= 0) {
+      const providerName = model.slice(0, slashIdx)
+      const modelName = model.slice(slashIdx + 1)
+      if (this.providersConfig[providerName]) {
+        return { providerName, modelName }
+      }
+    }
+
+    // 最后 fallback: 返回第一个 provider
     const names = Object.keys(this.providersConfig)
     if (names.length === 0) {
       throw new Error(`No provider found for model: ${model}`)
     }
-    return names[0]
+    return { providerName: names[0], modelName: model }
   }
 }
