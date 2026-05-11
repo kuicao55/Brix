@@ -1,29 +1,28 @@
-# Handoff — 2026-05-11 15:20
+# Handoff — 2026-05-11 15:38
 
 ## State
-**Status:** IN_PROGRESS
+**Status:** MILESTONE_DONE
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-11-typescript-migration-design.md
-- **plan:** .super-harness/plans/2026-05-11-milestone-11.md
+- **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
+- **plan:** .super-harness/plans/2026-05-11-milestone-12.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-- **path:** worktrees/milestone-11
-- **branch:** harness/milestone-11-ts-skeleton
+## Worktree
+(no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-11
-- task_id: 9 (编写 Infra 测试)
-- tasks_completed: [1, 2, 3, 4, 5, 6, 7, 8]
+- milestone_id: milestone-12
+- task_id: null (no task started yet)
+- tasks_completed: [task-1, task-2, task-3, task-4, task-5, task-6, task-7, task-8, task-9, task-10]
 
 ## Deferred Items
 None
 
 ## Key Decisions
-TypeScript migration with 4 milestones (11-14). Big Bang approach, 3-4 week timeline. TUI and functionality must remain unchanged.
-Engine: 均衡模式 (Claude Spec Review, Codex Code Quality Review)
+均衡模式 engine config. Fixed prototype pollution in deepMerge, purpose validation in ModelRegistry, JSON.parse guards in OpenAI provider, tool call flush after stream loop.
 
 ## Next Action
 /super-harness:resume
