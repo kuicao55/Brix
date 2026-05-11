@@ -117,12 +117,11 @@ class SessionManager:
                 continue
             if not all(isinstance(m, dict) for m in messages):
                 continue
-            # 取第一条 user 消息作为预览
+            # 取最后一条 user 消息作为预览
             preview = ""
             for msg in messages:
                 if msg.get("role") == "user":
                     preview = msg.get("content", "")[:100]
-                    break
             mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
             index.append({
                 "id": sid,
@@ -178,6 +177,23 @@ class SessionManager:
             self._save_index(index)
             return sid
         return self._with_index_lock(_do_create)
+
+    def remove_session_from_index(self, session_id: str) -> None:
+        """从索引中移除指定 session（不删除 session 文件）。"""
+        def _do_remove() -> None:
+            index = self._load_index()
+            index = [s for s in index if s["id"] != session_id]
+            self._save_index(index)
+        return self._with_index_lock(_do_remove)
+
+    def cleanup_stale_empty_sessions(self) -> None:
+        """启动时清理所有 message_count=0 的空 session 索引条目。"""
+        def _do_cleanup() -> None:
+            index = self._load_index()
+            cleaned = [s for s in index if s.get("message_count", 0) > 0]
+            if len(cleaned) != len(index):
+                self._save_index(cleaned)
+        return self._with_index_lock(_do_cleanup)
 
     def save_session(
         self,
@@ -250,7 +266,6 @@ class SessionManager:
             for msg in final_messages:
                 if msg.get("role") == "user":
                     preview = msg.get("content", "")[:100]
-                    break
             found = False
             for entry in index:
                 if entry["id"] == session_id:
@@ -276,6 +291,7 @@ class SessionManager:
                     "message_count": len(final_messages),
                     "preview": preview,
                 })
+            index.sort(key=lambda e: e.get("updated", ""), reverse=True)
             self._save_index(index)
         self._with_index_lock(_update_index)
         return len(final_messages_ref[0])

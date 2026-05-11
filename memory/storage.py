@@ -73,6 +73,10 @@ class MemoryStorage:
                 "Failed to quarantine corrupt session file: %s", session_path.name,
             )
 
+    def is_empty_on_disk(self) -> bool:
+        """加载时磁盘上是否无消息（用于跳过空 session 的持久化）。"""
+        return self._base_count == 0
+
     def add_message(self, role: str, content: str) -> None:
         self._messages.append({
             "role": role,

@@ -420,16 +420,32 @@ def test_resume_session_switches_active_session(tmp_path):
     assert second_msgs[0]["content"] == "second session msg"
 
 
-def test_resume_session_returns_empty_for_new_session(tmp_path):
-    """resume_session() 对新创建（无消息）的会话返回空列表。"""
+def test_empty_session_cleaned_up_on_new_session(tmp_path):
+    """空 session 在创建新 session 时应被自动清理。"""
     from memory.provider import BrixMemoryProvider
 
     provider = BrixMemoryProvider(data_dir=tmp_path, max_context_tokens=8000)
     empty_sid = provider.create_session()
-    # 切换到另一个会话再 resume 回来
+    # 切换到另一个会话 — 空 session 应被清理
     provider.create_session()
-    messages = provider.resume_session(empty_sid)
-    assert messages == []
+    # 空 session 已从索引移除，resume 应抛出异常
+    with pytest.raises(FileNotFoundError):
+        provider.resume_session(empty_sid)
+
+
+def test_non_empty_session_preserved_on_new_session(tmp_path):
+    """有消息的 session 在创建新 session 时不应被清理。"""
+    from memory.provider import BrixMemoryProvider
+
+    provider = BrixMemoryProvider(data_dir=tmp_path, max_context_tokens=8000)
+    sid = provider.create_session()
+    provider.add_message("user", "hello")
+    provider.save_session()  # 持久化到磁盘
+    # 切换到另一个会话 — 有消息的 session 应保留
+    provider.create_session()
+    messages = provider.resume_session(sid)
+    assert len(messages) == 1
+    assert messages[0]["content"] == "hello"
 
 
 def test_resume_session_raises_for_nonexistent(tmp_path):
