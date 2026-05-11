@@ -53,4 +53,24 @@ describe('ModelRegistry', () => {
     expect(registry.getDefaultModel()).toBeNull()
     expect(registry.getFallbackModel()).toBeNull()
   })
+
+  it('purpose 字段为 undefined 时不应抛异常', () => {
+    const badModel = makeModel({ id: 'bad', purpose: undefined as unknown as string[] })
+    const registry = new ModelRegistry([badModel], 'bad', 'bad')
+    expect(() => registry.getModelsByPurpose('coding')).not.toThrow()
+    expect(registry.getModelsByPurpose('coding')).toHaveLength(0)
+  })
+
+  it('重复 model id 时应取最后一个，并从 Map 正确解析 default/fallback', () => {
+    const modelsWithDup: ModelConfig[] = [
+      makeModel({ id: 'm1', purpose: ['coding'], provider: 'openai' }),
+      makeModel({ id: 'm1', purpose: ['chat'], provider: 'anthropic' }),
+      makeModel({ id: 'm2', purpose: ['chat'], provider: 'openai' }),
+    ]
+    const registry = new ModelRegistry(modelsWithDup, 'm1', 'm2')
+    // 重复 id 的情况下，Map 只保留最后插入的
+    expect(registry.getModelById('m1')?.provider).toBe('anthropic')
+    expect(registry.getDefaultModel()?.provider).toBe('anthropic')
+    expect(registry.getFallbackModel()?.id).toBe('m2')
+  })
 })

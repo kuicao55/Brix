@@ -9,9 +9,9 @@ export class ModelRegistry {
   constructor(models: ModelConfig[], defaultModelId: string, fallbackModelId: string) {
     for (const model of models) {
       this.models.set(model.id, model)
-      if (model.id === defaultModelId) this.defaultModel = model
-      if (model.id === fallbackModelId) this.fallbackModel = model
     }
+    this.defaultModel = this.models.get(defaultModelId) ?? null
+    this.fallbackModel = this.models.get(fallbackModelId) ?? null
   }
 
   /** 通过 id 查找模型 */
@@ -31,6 +31,6 @@ export class ModelRegistry {
 
   /** 按 purpose 过滤模型 */
   getModelsByPurpose(purpose: string): ModelConfig[] {
-    return [...this.models.values()].filter(m => m.purpose.includes(purpose))
+    return [...this.models.values()].filter(m => Array.isArray(m.purpose) && m.purpose.includes(purpose))
   }
 }
