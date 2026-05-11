@@ -64,10 +64,20 @@ export class StreamRenderer {
   private updateDisplay(): void {
     const newContent = this.rendered.slice(this.lastRenderedIndex)
     if (newContent) {
-      const output = markedInstance.parse(newContent) as string
-      const prefix = this.markerWritten ? '' : this.marker
-      this.markerWritten = true
-      process.stdout.write(prefix + output)
+      let output = markedInstance.parse(newContent) as string
+      // 去掉 marked-terminal 添加的多余空行（\n\n → \n）
+      output = output.replace(/\n{3,}/g, '\n\n')
+      // 首次输出加 marker，后续换行对齐到 marker 右侧
+      if (!this.markerWritten) {
+        this.markerWritten = true
+        const indent = '    ' // marker 宽度对齐
+        const indented = output.replace(/\n(?!$)/g, '\n' + indent)
+        process.stdout.write(this.marker + indented)
+      } else {
+        const indent = '    '
+        const indented = output.replace(/\n(?!$)/g, '\n' + indent)
+        process.stdout.write(indent + indented)
+      }
       this.lastRenderedIndex = this.rendered.length
     }
   }
