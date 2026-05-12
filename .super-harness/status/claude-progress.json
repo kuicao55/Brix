@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-09T21:39:46Z",
+  "updated_at": "2026-05-12T23:16:19Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feat/spinner-and-onboarding-upgrade",
@@ -120,6 +120,17 @@
       "plan_file": ".super-harness/plans/2026-05-09-milestone-10.md",
       "session_date": "2026-05-09T21:39:03Z",
       "notes": "Completed 2026-05-09. 2 tasks: max_iterations default 5\u2192100 with iteration-count fallback, Spinner embedded in ToolDisplay for tool execution feedback. CQR: Codex flagged blast radius (Minor, deferred) and spinner leak (Minor, sequential processing prevents). 297 tests pass, 21 pre-existing failures."
+    },
+    {
+      "id": "milestone-11",
+      "title": "Skill \u534f\u8bae \u2014 \u7edf\u4e00 Command \u62bd\u8c61 + Skill \u7cfb\u7edf",
+      "description": "Skill \u534f\u8bae \u2014 \u7edf\u4e00 Command \u62bd\u8c61 + Skill \u7cfb\u7edf",
+      "depends_on": [],
+      "passed": false,
+      "spec_file": ".super-harness/specs/2026-05-12-skill-protocol.md",
+      "plan_file": ".super-harness/plans/2026-05-12-milestone-11.md",
+      "session_date": "2026-05-12T23:04:15Z",
+      "notes": null
     }
   ]
 }
