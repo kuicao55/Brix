@@ -28,11 +28,13 @@ class StageIndicator:
         self._spinner.start()
         self._finished = False
 
-    def update(self, stage: str) -> None:
+    def update(self, stage: str, detail: str = "") -> None:
         """Update spinner label for the current pipeline stage."""
         if self._finished:
             return
         label = STAGE_LABELS.get(stage, "Working...")
+        if detail:
+            label = "{} ({})".format(label, detail)
         self._spinner.update_label(label)
 
     def finish(self) -> None:

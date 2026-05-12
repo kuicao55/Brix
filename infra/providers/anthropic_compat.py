@@ -9,66 +9,64 @@ from infra.llm_client import LLMResponse, ToolCall
 
 
 class AnthropicCompatProvider:
-    """Anthropic compatible protocol adapter."""
+    """Anthropic compatible protocol adapter with long-lived HTTP client."""
+
+    def __init__(self, base_url: str, api_key: str):
+        self._client = AsyncAnthropic(base_url=base_url, api_key=api_key)
+
+    async def close(self):
+        await self._client.close()
 
     async def chat(
         self,
         messages: list[dict],
         model: str,
         tools: list[dict] | None,
-        base_url: str,
-        api_key: str,
     ) -> LLMResponse:
-        client = AsyncAnthropic(base_url=base_url, api_key=api_key)
-        try:
-            # Convert OpenAI-format messages to Anthropic format
-            system_msg = ""
-            anthropic_messages = []
-            for msg in messages:
-                if msg["role"] == "system":
-                    system_msg = msg["content"]
-                else:
-                    anthropic_messages.append(self._convert_message(msg))
+        # Convert OpenAI-format messages to Anthropic format
+        system_msg = ""
+        anthropic_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg = msg["content"]
+            else:
+                anthropic_messages.append(self._convert_message(msg))
 
-            kwargs = {
-                "model": model,
-                "messages": anthropic_messages,
-                "max_tokens": 4096,
-            }
-            if system_msg:
-                kwargs["system"] = system_msg
-            if tools:
-                kwargs["tools"] = self._convert_tools(tools)
+        kwargs = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": 4096,
+        }
+        if system_msg:
+            kwargs["system"] = system_msg
+        if tools:
+            kwargs["tools"] = self._convert_tools(tools)
 
-            response = await client.messages.create(**kwargs)
+        response = await self._client.messages.create(**kwargs)
 
-            content = ""
-            tool_calls = []
-            for block in response.content:
-                if block.type == "text":
-                    content += block.text
-                elif block.type == "tool_use":
-                    tool_calls.append(ToolCall(
-                        id=block.id,
-                        name=block.name,
-                        arguments=block.input,
-                    ))
+        content = ""
+        tool_calls = []
+        for block in response.content:
+            if block.type == "text":
+                content += block.text
+            elif block.type == "tool_use":
+                tool_calls.append(ToolCall(
+                    id=block.id,
+                    name=block.name,
+                    arguments=block.input,
+                ))
 
-            return LLMResponse(
-                content=content,
-                tool_calls=tool_calls,
-                finish_reason=response.stop_reason or "stop",
-            )
-        finally:
-            await client.close()
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=response.stop_reason or "stop",
+        )
 
     async def chat_stream(
         self,
         messages: list[dict],
         model: str,
         tools: list[dict] | None,
-        base_url: str,
-        api_key: str,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream chat completions using Anthropic's streaming API.
 
@@ -76,46 +74,42 @@ class AnthropicCompatProvider:
             {"type": "text_delta", "text": "..."} for text chunks
             {"type": "tool_call", "id": ..., "name": ..., "input": ...} at end
         """
-        client = AsyncAnthropic(base_url=base_url, api_key=api_key)
-        try:
-            system_msg = ""
-            anthropic_messages = []
-            for msg in messages:
-                if msg["role"] == "system":
-                    system_msg = msg["content"]
-                else:
-                    anthropic_messages.append(self._convert_message(msg))
+        system_msg = ""
+        anthropic_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg = msg["content"]
+            else:
+                anthropic_messages.append(self._convert_message(msg))
 
-            kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": anthropic_messages,
-                "max_tokens": 4096,
-            }
-            if system_msg:
-                kwargs["system"] = system_msg
-            if tools:
-                kwargs["tools"] = self._convert_tools(tools)
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": 4096,
+        }
+        if system_msg:
+            kwargs["system"] = system_msg
+        if tools:
+            kwargs["tools"] = self._convert_tools(tools)
 
-            async with client.messages.stream(**kwargs) as stream:
-                async for event in stream:
-                    if (
-                        event.type == "content_block_delta"
-                        and event.delta.type == "text_delta"
-                    ):
-                        yield {"type": "text_delta", "text": event.delta.text}
+        async with self._client.messages.stream(**kwargs) as stream:
+            async for event in stream:
+                if (
+                    event.type == "content_block_delta"
+                    and event.delta.type == "text_delta"
+                ):
+                    yield {"type": "text_delta", "text": event.delta.text}
 
-                # Get the final assembled message for tool_use blocks
-                final_message = await stream.get_final_message()
-                for block in final_message.content:
-                    if block.type == "tool_use":
-                        yield {
-                            "type": "tool_call",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-        finally:
-            await client.close()
+            # Get the final assembled message for tool_use blocks
+            final_message = await stream.get_final_message()
+            for block in final_message.content:
+                if block.type == "tool_use":
+                    yield {
+                        "type": "tool_call",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
 
     def _convert_tools(self, tools: list[dict]) -> list[dict]:
         """Convert OpenAI function calling format to Anthropic tool format."""

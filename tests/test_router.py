@@ -20,9 +20,9 @@ class TestClassifyIntentRobust:
     async def test_uppercase_response(self):
         """LLM responses in uppercase should be handled."""
         mock_llm = AsyncMock()
-        mock_llm.chat.return_value = MagicMock(content="TASK", tool_calls=[], finish_reason="stop")
-        result = await classify_intent("Analyze this", [], mock_llm, "gpt-4.1-mini")
-        assert result == "task"
+        mock_llm.chat.return_value = MagicMock(content="CODE", tool_calls=[], finish_reason="stop")
+        result = await classify_intent("Write a function", [], mock_llm, "gpt-4.1-mini")
+        assert result == "code"
 
     async def test_response_with_trailing_text(self):
         """Only the first token of the LLM response should be used."""
@@ -38,12 +38,12 @@ class TestClassifyIntentRobust:
         result = await classify_intent("What's the weather in Tokyo?", [], mock_llm, "gpt-4.1-mini")
         assert result == "tool_use"
 
-    async def test_heuristic_fallback_task(self):
-        """When LLM returns garbage, task keywords should trigger task."""
+    async def test_heuristic_fallback_deep_chat(self):
+        """When LLM returns garbage, deep keywords should trigger deep_chat."""
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content="hmm", tool_calls=[], finish_reason="stop")
-        result = await classify_intent("Please summarize this document", [], mock_llm, "gpt-4.1-mini")
-        assert result == "task"
+        result = await classify_intent("Please analyze this document", [], mock_llm, "gpt-4.1-mini")
+        assert result == "deep_chat"
 
     async def test_heuristic_fallback_chat(self):
         """When LLM returns garbage and no keywords match, default to chat."""
@@ -69,7 +69,7 @@ async def test_classify_intent_chat():
     mock_llm = AsyncMock()
     mock_llm.chat.return_value = MagicMock(content="chat", tool_calls=[], finish_reason="stop")
     result = await classify_intent("Hello, how are you?", [], mock_llm, "gpt-4.1-mini")
-    assert result in ["chat", "task", "tool_use"]
+    assert result in ["chat", "deep_chat", "knowledge", "code", "tool_use", "image", "video"]
 
 
 def test_complexity_low():

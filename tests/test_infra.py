@@ -29,7 +29,11 @@ def config():
                 "api_key_env": "MIMO_API_KEY",
                 "protocol": "anthropic",
             },
-        }
+        },
+        "models": [
+            {"id": "zenmux-openai/google/gemini-3.1-pro-preview", "provider": "zenmux-openai", "purpose": ["fast_chat"]},
+            {"id": "minimax/MiniMax-M2.7", "provider": "minimax", "purpose": ["fast_chat", "coding"]},
+        ],
     }
 
 
@@ -52,12 +56,12 @@ def test_tool_call_structure():
 
 
 def test_llm_client_selects_openai_provider(llm_client):
-    provider = llm_client._get_provider("openai")
+    provider = llm_client._get_provider("openai", "https://api.openai.com/v1", "test-key")
     assert provider.__class__.__name__ == "OpenAICompatProvider"
 
 
 def test_llm_client_selects_anthropic_provider(llm_client):
-    provider = llm_client._get_provider("anthropic")
+    provider = llm_client._get_provider("anthropic", "https://api.anthropic.com", "test-key")
     assert provider.__class__.__name__ == "AnthropicCompatProvider"
 
 
@@ -186,17 +190,14 @@ async def test_openai_provider_handles_invalid_json_tool_args():
     mock_response.choices[0].message.tool_calls = [mock_tc]
     mock_response.choices[0].finish_reason = "stop"
 
-    provider = OpenAICompatProvider()
     with patch("infra.providers.openai_compat.AsyncOpenAI") as MockClient:
         mock_instance = MockClient.return_value
         mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_instance.close = AsyncMock()
+        provider = OpenAICompatProvider("http://test", "test-key")
         result = await provider.chat(
             messages=[{"role": "user", "content": "hi"}],
             model="test",
             tools=[{"type": "function", "function": {"name": "test_func"}}],
-            base_url="http://test",
-            api_key="test-key",
         )
         assert isinstance(result, LLMResponse)
         assert len(result.tool_calls) == 1
@@ -220,17 +221,14 @@ async def test_openai_provider_handles_non_dict_json_tool_args():
     mock_response.choices[0].message.tool_calls = [mock_tc]
     mock_response.choices[0].finish_reason = "stop"
 
-    provider = OpenAICompatProvider()
     with patch("infra.providers.openai_compat.AsyncOpenAI") as MockClient:
         mock_instance = MockClient.return_value
         mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_instance.close = AsyncMock()
+        provider = OpenAICompatProvider("http://test", "test-key")
         result = await provider.chat(
             messages=[{"role": "user", "content": "hi"}],
             model="test",
             tools=[{"type": "function", "function": {"name": "test_func"}}],
-            base_url="http://test",
-            api_key="test-key",
         )
         assert isinstance(result, LLMResponse)
         assert len(result.tool_calls) == 1
@@ -254,17 +252,14 @@ async def test_openai_provider_handles_preparsed_dict_tool_args():
     mock_response.choices[0].message.tool_calls = [mock_tc]
     mock_response.choices[0].finish_reason = "stop"
 
-    provider = OpenAICompatProvider()
     with patch("infra.providers.openai_compat.AsyncOpenAI") as MockClient:
         mock_instance = MockClient.return_value
         mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_instance.close = AsyncMock()
+        provider = OpenAICompatProvider("http://test", "test-key")
         result = await provider.chat(
             messages=[{"role": "user", "content": "hi"}],
             model="test",
             tools=[{"type": "function", "function": {"name": "test_func"}}],
-            base_url="http://test",
-            api_key="test-key",
         )
         assert isinstance(result, LLMResponse)
         assert len(result.tool_calls) == 1
@@ -276,59 +271,23 @@ async def test_openai_provider_handles_preparsed_dict_tool_args():
 
 
 @pytest.mark.asyncio
-async def test_openai_provider_closes_client():
-    """OpenAI provider should close the client after use."""
+async def test_llm_client_close_closes_all_providers():
+    """LLMClient.close() should close all cached provider HTTP clients."""
     from infra.providers.openai_compat import OpenAICompatProvider
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "hi"
-    mock_response.choices[0].message.tool_calls = None
-    mock_response.choices[0].finish_reason = "stop"
+    mock_close = AsyncMock()
 
-    provider = OpenAICompatProvider()
     with patch("infra.providers.openai_compat.AsyncOpenAI") as MockClient:
-        mock_instance = MockClient.return_value
-        mock_instance.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_instance.close = AsyncMock()
-
-        await provider.chat(
-            messages=[{"role": "user", "content": "hi"}],
-            model="test",
-            tools=None,
-            base_url="http://test",
-            api_key="test-key",
-        )
-        mock_instance.close.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_anthropic_provider_closes_client():
-    """Anthropic provider should close the client after use."""
-    from infra.providers.anthropic_compat import AnthropicCompatProvider
-
-    text_block = MagicMock()
-    text_block.type = "text"
-    text_block.text = "hi"
-
-    mock_response = MagicMock()
-    mock_response.content = [text_block]
-    mock_response.stop_reason = "stop"
-
-    provider = AnthropicCompatProvider()
-    with patch("infra.providers.anthropic_compat.AsyncAnthropic") as MockClient:
-        mock_instance = MockClient.return_value
-        mock_instance.messages.create = AsyncMock(return_value=mock_response)
-        mock_instance.close = AsyncMock()
-
-        await provider.chat(
-            messages=[{"role": "user", "content": "hi"}],
-            model="test",
-            tools=None,
-            base_url="http://test",
-            api_key="test-key",
-        )
-        mock_instance.close.assert_called_once()
+        MockClient.return_value.close = mock_close
+        client = LLMClient({
+            "providers": {
+                "test": {"protocol": "openai", "base_url": "http://test", "api_key_env": "TEST_KEY"},
+            }
+        })
+        with patch.dict("os.environ", {"TEST_KEY": "sk-test"}):
+            client._get_provider("openai", "http://test", "sk-test")
+        await client.close()
+        mock_close.assert_called_once()
 
 
 # --- Fix 4: Anthropic adapter test ---
@@ -361,11 +320,10 @@ async def test_anthropic_provider_chat():
         },
     }]
 
-    provider = AnthropicCompatProvider()
     with patch("infra.providers.anthropic_compat.AsyncAnthropic") as MockClient:
         mock_instance = MockClient.return_value
         mock_instance.messages.create = AsyncMock(return_value=mock_response)
-        mock_instance.close = AsyncMock()
+        provider = AnthropicCompatProvider("http://test", "test-key")
 
         result = await provider.chat(
             messages=[
@@ -374,8 +332,6 @@ async def test_anthropic_provider_chat():
             ],
             model="claude-sonnet-4-20250514",
             tools=tools,
-            base_url="http://test",
-            api_key="test-key",
         )
 
         assert isinstance(result, LLMResponse)

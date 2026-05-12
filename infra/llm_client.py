@@ -85,26 +85,32 @@ class LLMClient:
         self._providers: dict = {}
         self._retry_config = config.get("retry", {})
         self._routing_config = config.get("routing", {})
+        self._models = config.get("models", [])
 
-    def _get_provider(self, protocol: str):
-        if protocol not in self._providers:
+    def _get_provider(self, protocol: str, base_url: str, api_key: str):
+        cache_key = (protocol, base_url)
+        if cache_key not in self._providers:
             if protocol == "openai":
                 from infra.providers.openai_compat import OpenAICompatProvider
-                self._providers[protocol] = OpenAICompatProvider()
+                self._providers[cache_key] = OpenAICompatProvider(base_url, api_key)
             elif protocol == "anthropic":
                 from infra.providers.anthropic_compat import AnthropicCompatProvider
-                self._providers[protocol] = AnthropicCompatProvider()
+                self._providers[cache_key] = AnthropicCompatProvider(base_url, api_key)
             else:
                 raise ValueError(f"Unknown protocol: {protocol}")
-        return self._providers[protocol]
+        return self._providers[cache_key]
+
+    async def close(self):
+        """Close all cached provider HTTP clients."""
+        for provider in self._providers.values():
+            await provider.close()
+        self._providers.clear()
 
     def _resolve_provider_config(self, model: str) -> tuple[str, dict, str]:
         """Find provider config for a given model. Returns (protocol, provider_config, provider_name)."""
-        from config.loader import load_config
         from config.model_registry import ModelRegistry
 
-        config = load_config()
-        registry = ModelRegistry(config)
+        registry = ModelRegistry({"models": self._models, "routing": self._routing_config})
         model_info = registry.get_model_by_id(model)
         if not model_info:
             raise ValueError(f"Model not found: {model}")
@@ -159,14 +165,12 @@ class LLMClient:
                 f"Provider '{provider_name}' missing 'base_url' in config"
             )
 
-        provider = self._get_provider(protocol)
+        provider = self._get_provider(protocol, base_url, api_key)
         api_model = self._api_model_id(model, provider_name)
         return await provider.chat(
             messages=messages,
             model=api_model,
             tools=tools,
-            base_url=base_url,
-            api_key=api_key,
         )
 
     async def chat(
@@ -228,13 +232,11 @@ class LLMClient:
                 f"Provider '{provider_name}' missing 'base_url' in config"
             )
 
-        provider = self._get_provider(protocol)
+        provider = self._get_provider(protocol, base_url, api_key)
         api_model = self._api_model_id(model, provider_name)
         async for event in provider.chat_stream(
             messages=messages,
             model=api_model,
             tools=tools,
-            base_url=base_url,
-            api_key=api_key,
         ):
             yield event

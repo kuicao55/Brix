@@ -92,33 +92,36 @@ class BrixCLI:
         show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
         first_turn = True
-        while True:
-            if not first_turn:
-                self._console.print()
-            first_turn = False
-            try:
-                user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
-            except (EOFError, KeyboardInterrupt):
-                self._memory.save_session()
-                self._console.print("\n[dim]Goodbye.[/]")
-                break
+        try:
+            while True:
+                if not first_turn:
+                    self._console.print()
+                first_turn = False
+                try:
+                    user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
+                except (EOFError, KeyboardInterrupt):
+                    self._memory.save_session()
+                    self._console.print("\n[dim]Goodbye.[/]")
+                    break
 
-            text = user_input.strip()
-            if not text:
-                continue
-
-            # Slash commands
-            if text.startswith("/"):
-                if await self._handle_command(text):
+                text = user_input.strip()
+                if not text:
                     continue
-                # /quit returns True from _handle_command after printing
 
-            # Normal message — stream response
-            self._console.print()  # ❯ 和 ⏺ 之间的间隔
-            try:
-                await self._process_streaming(text)
-            except Exception as exc:
-                self._console.print("[red]Error:[/] {}".format(exc))
+                # Slash commands
+                if text.startswith("/"):
+                    if await self._handle_command(text):
+                        continue
+                    # /quit returns True from _handle_command after printing
+
+                # Normal message — stream response
+                self._console.print()  # ❯ 和 ⏺ 之间的间隔
+                try:
+                    await self._process_streaming(text)
+                except Exception as exc:
+                    self._console.print("[red]Error:[/] {}".format(exc))
+        finally:
+            await self._llm_client.close()
 
     # ------------------------------------------------------------------
     # Command handling
@@ -327,6 +330,13 @@ class BrixCLI:
 
     async def _process_streaming(self, user_input: str) -> None:
         """Stream orchestrator output with unified spinner and markdown rendering."""
+        import time as _time
+        _t_start = _time.monotonic()
+        _timing = []  # (label, elapsed_ms)
+
+        def _tick(label: str):
+            _timing.append((label, int((_time.monotonic() - _t_start) * 1000)))
+
         indicator = StageIndicator(self._console)
 
         log = FlowLog(user_input)
@@ -339,23 +349,27 @@ class BrixCLI:
         context_messages = self._memory.get_context_messages(system_prompt)
         hooks.fire("memory", msgs=len(context_messages),
                    chars=sum(len(m.get("content", "")) for m in context_messages))
+        _tick("memory")
 
         # Intent stage (LLM call — takes time)
-        indicator.update("Intent")
         intent_model = self._config.get("routing", {}).get("intent_model", "")
         default_model = self._config.get("routing", {}).get("default_model", "")
+        _intent_model_name = (intent_model or default_model).split("/")[-1]
+        indicator.update("Intent", _intent_model_name)
         # 只传最近 6 条非 system 消息，避免 intent 分类加载完整 soul.md
         trimmed = [m for m in context_messages if m.get("role") != "system"][-6:]
         intent = await classify_intent(
             user_input, trimmed, self._llm_client,
             intent_model or default_model, hooks=hooks,
         )
+        _tick("intent({})".format(intent))
 
         # Complexity + Route stages
         indicator.update("Complexity")
         complexity = evaluate_complexity(user_input)
         indicator.update("Route")
         model = select_model(intent, complexity, self._config)
+        _tick("route->{}".format(model.split("/")[-1]))
 
         hooks.fire("complexity", result=complexity)
         hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
@@ -370,7 +384,7 @@ class BrixCLI:
         )
 
         # Planning stage
-        indicator.update("Planning")
+        indicator.update("Planning", model.split("/")[-1])
 
         renderer = None
         content_parts = []
@@ -385,6 +399,7 @@ class BrixCLI:
                     text = event.get("text", "")
                     if text:
                         if renderer is None:
+                            _tick("first_token")
                             tool_display.stop_thinking()
                             indicator.stop_silent()
                             from rich.text import Text
@@ -434,8 +449,24 @@ class BrixCLI:
         # Flush any remaining content
         if renderer is not None:
             renderer.flush()
+        _tick("stream_end")
 
         response = "".join(content_parts)
+
+        # Write timing data for analysis
+        try:
+            with open("/tmp/brix_timing.log", "a") as _f:
+                _f.write("input: {}\n".format(user_input[:60]))
+                for label, ms in _timing:
+                    prev = 0
+                    for _, p in _timing:
+                        if _ is label:
+                            break
+                        prev = p
+                    _f.write("  {:>12}: {:>5}ms  (+{}ms)\n".format(label, ms, ms - prev))
+                _f.write("\n")
+        except Exception:
+            pass
 
         if response.startswith("Error"):
             has_error = True

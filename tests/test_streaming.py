@@ -13,8 +13,6 @@ async def test_openai_stream_yields_text_delta():
     """OpenAICompatProvider.chat_stream() should yield text_delta dicts."""
     from infra.providers.openai_compat import OpenAICompatProvider
 
-    provider = OpenAICompatProvider()
-
     # Build mock SSE chunks from the OpenAI streaming API
     mock_chunks = []
     for text in ["Hello", " world", "!"]:
@@ -36,17 +34,15 @@ async def test_openai_stream_yields_text_delta():
             yield chunk
 
     mock_client = MagicMock()
-    mock_client.chat.completions.create = mock_aiter
-    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=lambda **kw: mock_aiter())
 
     with patch("infra.providers.openai_compat.AsyncOpenAI", return_value=mock_client):
+        provider = OpenAICompatProvider("http://test", "sk-test")
         results = []
         async for event in provider.chat_stream(
             messages=[{"role": "user", "content": "hi"}],
             model="test-model",
             tools=None,
-            base_url="http://test",
-            api_key="sk-test",
         ):
             results.append(event)
 
@@ -61,8 +57,6 @@ async def test_openai_stream_yields_text_delta():
 async def test_openai_stream_yields_tool_calls():
     """OpenAICompatProvider.chat_stream() should accumulate tool call deltas."""
     from infra.providers.openai_compat import OpenAICompatProvider
-
-    provider = OpenAICompatProvider()
 
     # Simulate tool call chunks: index/name first, then arguments in pieces
     tc_delta_1 = MagicMock()
@@ -111,17 +105,15 @@ async def test_openai_stream_yields_tool_calls():
             yield chunk
 
     mock_client = MagicMock()
-    mock_client.chat.completions.create = mock_aiter
-    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=lambda **kw: mock_aiter())
 
     with patch("infra.providers.openai_compat.AsyncOpenAI", return_value=mock_client):
+        provider = OpenAICompatProvider("http://test", "sk-test")
         results = []
         async for event in provider.chat_stream(
             messages=[{"role": "user", "content": "hi"}],
             model="test-model",
             tools=[{"type": "function", "function": {"name": "get_weather"}}],
-            base_url="http://test",
-            api_key="sk-test",
         ):
             results.append(event)
 
@@ -136,8 +128,6 @@ async def test_openai_stream_yields_tool_calls():
 async def test_anthropic_stream_yields_text_delta():
     """AnthropicCompatProvider.chat_stream() should yield text_delta dicts."""
     from infra.providers.anthropic_compat import AnthropicCompatProvider
-
-    provider = AnthropicCompatProvider()
 
     # Mock chunks that the async iterator would yield
     content_block_start = MagicMock()
@@ -181,16 +171,14 @@ async def test_anthropic_stream_yields_text_delta():
 
     mock_client = MagicMock()
     mock_client.messages.stream.return_value = mock_stream
-    mock_client.close = AsyncMock()
 
     with patch("infra.providers.anthropic_compat.AsyncAnthropic", return_value=mock_client):
+        provider = AnthropicCompatProvider("http://test", "sk-test")
         results = []
         async for event in provider.chat_stream(
             messages=[{"role": "user", "content": "hi"}],
             model="test-model",
             tools=None,
-            base_url="http://test",
-            api_key="sk-test",
         ):
             results.append(event)
 
