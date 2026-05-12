@@ -1,43 +1,41 @@
-# Handoff — 2026-05-09 23:45
+# Handoff — 2026-05-13 00:30
 
 ## State
-**Status:** ALL_DONE
+**Status:** MILESTONE_DONE
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-09-iteration-limit-and-tool-spinner-design.md
-- **plan:** .super-harness/plans/2026-05-09-milestone-10.md
+- **spec:** .super-harness/specs/2026-05-12-skill-protocol.md
+- **plan:** .super-harness/plans/2026-05-12-milestone-11.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-(no worktree — merged to main and cleaned up)
+(no worktree — merged back to version branch)
 
 ## Current Position
-- milestone_id: milestone-10 — COMPLETE
-- tasks_completed: [task-1, task-2]
-- Integration: Merged to main (commit 182156e)
+- milestone_id: milestone-11
+- tasks_completed: [1, 2, 3, 4, 5, 6]
+- All 6 tasks completed and Code Quality Review approved
 
-## Milestone-10 Summary
-- **Task 1:** max_iterations default 5→100, fallback messages include iteration count
-- **Task 2:** Spinner embedded in ToolDisplay (start/stop/cleanup), cleanup() in app.py finally block
-- **Executor:** claude-subagent (both tasks)
-- **Spec Review:** claude-subagent (both tasks) — SPEC_COMPLIANT on first try
-- **CQR:** codex-adversarial-review (both tasks) — PASS with Minor notes
-- **Tests:** 297 passed, 22 failed (all pre-existing)
+## Milestone Summary
+- **Task 1:** Core Command types (CommandType, CommandMeta, CommandResult, CommandContext, Command ABC) — 8 tests
+- **Task 2:** CommandRegistry (register/get/list_all/get_skill_listing_text) — 8 tests
+- **Task 3:** FileSkill loader (SKILL.md parsing + $ARGUMENTS substitution) — 9 tests
+- **Task 4:** SkillCommand (wraps FileSkill as Command) — 5 tests
+- **Task 5:** Builtin commands (9 system commands + commit SKILL.md) — 10 tests
+- **Task 6:** CLI integration (dispatch, completer, system prompt injection) — 48 tests
 
 ## Deferred Items
-- Blast radius concern: consider adding wall-clock budget or tool-call cap in future milestone
-- Spinner defensive guard: stop existing spinner before starting new one (for future multi-spinner architectures)
+- Prompt injection sanitization for skill metadata (Phase 2+)
+- Command collision protection (Phase 2+)
+- allowed_tools/model enforcement in CLI dispatch (Phase 2+)
+- /resume full interactive resume (Phase 2+)
+- /log redaction (Phase 2+)
 
 ## Key Decisions
-- Engine: 均衡模式 (Spec Review: Claude, CQR: Codex)
-- Tests adapted to use _themed_console(buf) helper for BRIX_THEME compatibility
-
-## Post-Milestone Fixes (4 commits after milestone-10 merge)
-- `07f07bf` fix: is_error detection (error strings now flagged) + file path double-nesting bug (strip `memory/data/` prefix)
-- `e8f1005` fix: spinner moved to LLM thinking gap (after tool_result, before next event)
-- `343950f` fix: content indentation (reduce available width for Rich wrapping) + entry spacing
-- `6552097` fix: spacing between Q&A rounds, ❯→⏺ gap, and tool call entries
+- Used if/elif instead of match/case for Python 3.8 compatibility
+- Added allowed_tools, model, context, skill_root as proper CommandMeta fields (not dynamic attributes)
+- ResumeCommand simplified to session listing only
 
 ## Next Action
-All milestones complete. Project ready for next feature or milestone planning.
+/super-harness:resume — start next milestone
