@@ -98,7 +98,7 @@ class BrixCLI:
                     self._console.print()
                 first_turn = False
                 try:
-                    user_input = await session.prompt_async(HTML('<ansicyan><b>  ❯ </b></ansicyan>'))
+                    user_input = await session.prompt_async(HTML('<ansicyan><b>❯ </b></ansicyan>'))
                 except (EOFError, KeyboardInterrupt):
                     self._memory.save_session()
                     self._console.print("\n[dim]Goodbye.[/]")
@@ -405,7 +405,7 @@ class BrixCLI:
                             from rich.text import Text
                             renderer = StreamRenderer(
                                 self._console,
-                                marker=Text("  ⏺ ", style="green"),
+                                marker=Text("⏺ ", style="green"),
                             )
                             renderer.start()
                         renderer.push_delta(text)

@@ -36,7 +36,7 @@ class ToolDisplay:
         detail = self._format_detail(tool_name, tool_input)
         # Loading indicator: ⏺ Calling tools... — shows tool is running
         loading = Text()
-        loading.append("  ⏺ ", style="dim")
+        loading.append("⏺ ", style="dim")
         loading.append("Calling tools...", style="dim")
         self.console.print(loading)
         panel = Panel(
@@ -69,7 +69,7 @@ class ToolDisplay:
             preview += "\u2026"
 
         text = Text()
-        text.append("  \u23bf ", style="dim")
+        text.append("\u23bf ", style="dim")
         text.append("{} ".format(icon), style="dim")
         text.append(safe_name, style="tool.name")
         text.append("  {}".format(status_icon), style=status_style)

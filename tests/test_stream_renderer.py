@@ -17,7 +17,7 @@ def _make_renderer():
     """Helper: create a StreamRenderer backed by a string buffer."""
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=True, width=80)
-    return StreamRenderer(console, marker=Text("  ⏺ ", style="green")), buf
+    return StreamRenderer(console, marker=Text("⏺ ", style="green")), buf
 
 
 class TestActivityIndicator:

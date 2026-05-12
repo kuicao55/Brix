@@ -31,12 +31,12 @@ def render_history(console: Console, messages: list[dict]) -> None:
         if role == "assistant":
             console.print(_MarkerMarkdown(
                 content,
-                marker_text="  ⏺ ",
+                marker_text="⏺ ",
                 marker_style="green",
                 console=console,
             ))
         elif role == "user":
-            prompt = Text("  ❯ ", style="bold cyan")
+            prompt = Text("❯ ", style="bold cyan")
             prompt.append(content)
             console.print(prompt)
 

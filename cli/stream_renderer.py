@@ -8,14 +8,15 @@ from rich.console import Console
 from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.segment import Segment
 from rich.text import Text
 
 # Braille frames reused from spinner.py for the embedded activity indicator.
 BRAILLE_FRAMES = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
 
-# Visual width of the ``  ⏺ `` marker (2 spaces + circle + 1 space).
-_MARKER_WIDTH = 4
+# Visual width of the ``⏺ `` marker (circle + 1 space).
+_MARKER_WIDTH = 2
 
 
 class _CompactMarkdown:
@@ -43,8 +44,12 @@ class _CompactMarkdown:
 
 class _MarkerMarkdown:
     """Renderable that places a styled marker inline with the first line
-    of a Markdown block and indents every subsequent line by
-    ``_MARKER_WIDTH`` columns so the response body aligns under the marker.
+    of a Markdown block and indents every subsequent line (including
+    auto-wrapped lines) by ``_MARKER_WIDTH`` columns via Rich Padding.
+
+    The first line's left-padding is replaced with the styled marker so
+    content starts right after ``⏺ ``.  All other lines keep the plain
+    space padding, keeping the marker column empty.
     """
 
     def __init__(
@@ -61,16 +66,19 @@ class _MarkerMarkdown:
 
     def __rich_console__(self, console, options):
         style = self._console.get_style(self._marker_style)
-        # Marker on the first line, inline with content
-        yield Segment(self._marker_text, style)
-        # Reduce available width so Rich wraps content within the indented zone
-        inner_width = max(20, options.max_width - _MARKER_WIDTH)
-        inner_options = options.update_width(inner_width)
-        # Render Markdown with reduced width, inserting indent after every newline
-        for seg in self._md.__rich_console__(console, inner_options):
-            yield seg
-            if seg.text == "\n":
-                yield Segment(" " * _MARKER_WIDTH)
+        marker_width = len(self._marker_text)
+        padded = Padding(self._md, (0, 0, 0, marker_width))
+        replaced = False
+        for seg in padded.__rich_console__(console, options):
+            if (
+                not replaced
+                and seg.control is None
+                and seg.text == " " * marker_width
+            ):
+                yield Segment(self._marker_text, style)
+                replaced = True
+            else:
+                yield seg
 
 
 class StreamRenderer:
@@ -178,7 +186,7 @@ class StreamRenderer:
             frame_idx = int(time.monotonic() * 10) % len(BRAILLE_FRAMES)
             frame = BRAILLE_FRAMES[frame_idx]
             indicator = Text()
-            indicator.append("\n  {} ".format(frame), style="spinner.active")
+            indicator.append("\n{} ".format(frame), style="spinner.active")
             indicator.append(self._indicator_label, style="dim")
             parts.append(indicator)
 

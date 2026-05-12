@@ -288,7 +288,7 @@ def test_stream_renderer_marker_printed_inline():
 
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=True, width=80)
-    marker = Text("  ⏺ ", style="green")
+    marker = Text("⏺ ", style="green")
     renderer = StreamRenderer(console, marker=marker)
 
     renderer.start()
