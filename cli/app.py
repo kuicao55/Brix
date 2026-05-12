@@ -18,6 +18,8 @@ from capability.basics.sessions import list_sessions, get_session_by_prefix, res
 from capability.basics.memory_files import load_soul, load_user
 from capability.basics.logs import get_recent_logs, get_log_detail
 from capability.basics.commands import get_command_list
+from capability.command.base import CommandContext, CommandResultType
+from capability.command.registry import CommandRegistry
 from hooks.registry import HookRegistry
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_edit import FileEditTool
@@ -58,6 +60,8 @@ class BrixCLI:
         self._llm_client = LLMClient(self._config)
         self._tool_runner = ToolRunner()
         self._register_tools()
+        self._command_registry = CommandRegistry()
+        self._register_commands()
         self._orchestrator = self._build_orchestrator()
         self._console = Console(theme=BRIX_THEME)
 
@@ -67,7 +71,7 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
-        completer = FuzzyCompleter(SlashCommandCompleter())
+        completer = FuzzyCompleter(SlashCommandCompleter(self._command_registry))
         # 补全菜单样式：纯文字，无背景无边框
         completion_style = Style.from_dict({
             "completion-menu": "bg:",
@@ -129,128 +133,39 @@ class BrixCLI:
 
     async def _handle_command(self, text: str) -> bool:
         """Handle slash commands. Returns True to continue the loop."""
-        cmd = text.split()[0].lower()
+        parts = text.split()
+        cmd_name = parts[0].lower().lstrip("/")
+        args = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-        if cmd == "/quit" or cmd == "/exit":
-            self._memory.save_session()
-            print("Goodbye.")
-            sys.exit(0)
+        # 向后兼容：/exit 映射到 /quit
+        if cmd_name == "exit":
+            cmd_name = "quit"
 
-        if cmd == "/clear":
-            self._memory.clear_session()
-            print("Session cleared.")
+        command = self._command_registry.get(cmd_name)
+        if not command:
+            print(f"Unknown command: /{cmd_name}")
             return True
 
-        if cmd == "/model":
-            default_model = self._config.get("routing", {}).get("default_model", "unknown")
-            print(f"Current model: {default_model}")
-            return True
+        ctx = CommandContext(
+            session_id="",
+            data_dir=self._data_dir,
+            console=self._console,
+            config=self._config,
+            memory=self._memory,
+            llm_client=self._llm_client,
+        )
 
-        if cmd == "/history":
-            sessions = list_sessions(self._memory)
-            if sessions:
-                sid = sessions[0]["id"]
-                msgs = self._memory.load_session(sid)
-                if not msgs:
-                    print("No history yet.")
-                else:
-                    render_history(self._console, msgs)
-            else:
-                print("No history yet.")
-            return True
+        result = await command.execute(args, ctx)
 
-        if cmd == "/resume":
-            sessions = list_sessions(self._memory)
-            if not sessions:
-                print("No sessions yet.")
-                return True
+        if result.type == CommandResultType.QUIT:
+            return False
+        elif result.type == CommandResultType.CLEAR:
+            pass
+        elif result.type == CommandResultType.PROMPT:
+            self._console.print()
+            await self._process_streaming(result.prompt_text)
+        # NONE: 无后续操作
 
-            # 带 ID 前缀时尝试直接匹配（向后兼容）
-            parts = text.split()
-            if len(parts) >= 2:
-                prefix = parts[1]
-                result = get_session_by_prefix(self._memory, prefix)
-                if result == "ambiguous":
-                    matches = [s for s in sessions if s["id"].startswith(prefix)]
-                    print(f"Ambiguous prefix, {len(matches)} matches. Opening selector...")
-                elif result is not None:
-                    self._print_resumed_messages(result["id"])
-                    return True
-
-            # 交互式选择器
-            def format_session(s: dict, idx: int) -> str:
-                sid = s.get("id", "?")[:8]
-                count = s.get("message_count", 0)
-                updated = s.get("updated", "")[:10]  # YYYY-MM-DD
-                preview = s.get("preview", "")[:40].replace("\n", " ")
-                return f"{sid}  {count:>3} msgs  {updated}  {preview}"
-
-            selector = PaginatedSelector(
-                items=sessions,
-                format_item=format_session,
-                page_size=10,
-                title="选择要恢复的会话",
-            )
-            selected = await selector.prompt_async()
-            if selected is not None:
-                self._print_resumed_messages(selected["id"])
-            return True
-
-        if cmd == "/soul":
-            content = load_soul(self._memory)
-            if content is not None:
-                print(content)
-            else:
-                print("No soul.md yet. Start a conversation to create it.")
-            return True
-
-        if cmd == "/user":
-            content = load_user(self._memory)
-            if content is not None:
-                print(content)
-            else:
-                print("No user.md yet. Start a conversation to create it.")
-            return True
-
-        if cmd == "/log":
-            entries = get_recent_logs(20)
-            if not entries:
-                print("No logs yet.")
-                return True
-
-            options = []
-            for i, entry in enumerate(entries, 1):
-                ts = entry.get("ts", "?")
-                trace = entry.get("trace", "?")
-                preview = entry.get("input", "")[:50].replace("\n", " ")
-                ms = entry.get("ms_total", 0)
-                error = entry.get("error")
-                status = "ERR" if error else "OK"
-                label = f"#{i}  {ts} [{trace}]  {ms}ms  {status}  \"{preview}\""
-                options.append((i, label))
-
-            selector = ChoiceInput(
-                message="Select a log entry (arrow keys + Enter):",
-                options=options,
-            )
-            selected = await selector.prompt_async()
-            if selected is not None:
-                entry = entries[selected - 1]
-                print(get_log_detail(entry))
-            return True
-
-        if cmd == "/help":
-            commands = get_command_list()
-            width = max(len(c[0]) for c in commands) + 2
-            print()
-            print("  可用命令：")
-            print()
-            for name, desc in commands:
-                print(f"    {name:<{width}} {desc}")
-            print()
-            return True
-
-        print(f"Unknown command: {cmd}")
         return True
 
     def _print_resumed_messages(self, session_id: str) -> None:
@@ -276,6 +191,10 @@ class BrixCLI:
 
         dynamic_ctx = self._build_dynamic_context()
         system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
+        # 注入 Skill 列表到 system prompt
+        skill_listing = self._command_registry.get_skill_listing_text()
+        if skill_listing:
+            system_prompt = system_prompt + "\n\n" + skill_listing
         context_messages = self._memory.get_context_messages(system_prompt)
 
         hooks.fire("memory", msgs=len(context_messages),
@@ -346,6 +265,10 @@ class BrixCLI:
         # Memory stage — build system prompt and context via MemoryProvider
         dynamic_ctx = self._build_dynamic_context()
         system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
+        # 注入 Skill 列表到 system prompt
+        skill_listing = self._command_registry.get_skill_listing_text()
+        if skill_listing:
+            system_prompt = system_prompt + "\n\n" + skill_listing
         context_messages = self._memory.get_context_messages(system_prompt)
         hooks.fire("memory", msgs=len(context_messages),
                    chars=sum(len(m.get("content", "")) for m in context_messages))
@@ -496,6 +419,39 @@ class BrixCLI:
         self._tool_runner.register(FileReadTool())
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))
+
+    def _register_commands(self) -> None:
+        """注册所有内置命令和 Skill 到 CommandRegistry。"""
+        from capability.command.builtin.session import (
+            QuitCommand, ClearCommand, HistoryCommand, ResumeCommand,
+        )
+        from capability.command.builtin.info import (
+            HelpCommand, ModelCommand, SoulCommand, UserCommand, LogCommand,
+        )
+        from capability.command.skill import SkillCommand
+
+        # 系统命令
+        self._command_registry.register(QuitCommand())
+        self._command_registry.register(ClearCommand())
+        self._command_registry.register(HistoryCommand())
+        self._command_registry.register(ResumeCommand())
+        self._command_registry.register(ModelCommand(self._config))
+        self._command_registry.register(SoulCommand())
+        self._command_registry.register(UserCommand())
+        self._command_registry.register(LogCommand())
+        # HelpCommand 需要引用 registry
+        self._command_registry.register(HelpCommand(self._command_registry))
+
+        # 内置 Skill
+        builtin_skills_dir = Path(__file__).parent.parent / "capability" / "command" / "builtin" / "skills"
+        if builtin_skills_dir.is_dir():
+            for entry in sorted(builtin_skills_dir.iterdir()):
+                skill_file = entry / "SKILL.md"
+                if entry.is_dir() and skill_file.is_file():
+                    try:
+                        self._command_registry.register(SkillCommand(entry))
+                    except Exception:
+                        pass
 
     def _build_orchestrator(self):
         """Build the orchestrator engine based on config."""

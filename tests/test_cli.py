@@ -26,6 +26,7 @@ def _make_mock_memory():
     mock_mem.create_session.return_value = "test-session-uuid"
     mock_mem.list_sessions.return_value = []
     mock_mem.load_session.return_value = []
+    mock_mem.load_sessions_index.return_value = []
     mock_mem.resume_session.return_value = []
     mock_mem.soul_exists.return_value = False
     mock_mem.user_memory_exists.return_value = False
@@ -497,7 +498,7 @@ async def test_resume_no_sessions():
     from cli.app import BrixCLI
 
     mock_mem = _make_mock_memory()
-    mock_mem.list_sessions.return_value = []
+    mock_mem.load_sessions_index.return_value = []
 
     with patch("cli.app.load_config", return_value={
         "routing": {"default_model": "test-model"},
@@ -515,18 +516,13 @@ async def test_resume_no_sessions():
 
 @pytest.mark.asyncio
 async def test_resume_direct_id_match():
-    """/resume <id> 直接匹配唯一 session 时应 resume 并用完整 UI 渲染历史。"""
+    """/resume 有 session 时应列出会话摘要。"""
     from cli.app import BrixCLI
 
     mock_mem = _make_mock_memory()
-    mock_mem.list_sessions.return_value = [
+    mock_mem.load_sessions_index.return_value = [
         {"id": "abc12345-xxxx", "message_count": 5, "updated": "2026-05-10", "preview": "hello"},
     ]
-    msgs = [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "hi"},
-    ]
-    mock_mem.resume_session.return_value = msgs
 
     with patch("cli.app.load_config", return_value={
         "routing": {"default_model": "test-model"},
@@ -535,27 +531,22 @@ async def test_resume_direct_id_match():
          patch("cli.app.create_memory_provider", return_value=mock_mem):
         cli = BrixCLI()
 
-    with patch("cli.app.render_history") as mock_render:
+    with patch("builtins.print") as mock_print:
         result = await cli._handle_command("/resume abc")
 
     assert result is True
-    mock_mem.resume_session.assert_called_once_with("abc12345-xxxx")
-    # 验证 render_history 被调用以渲染完整历史
-    mock_render.assert_called_once()
-    call_args = mock_render.call_args
-    assert call_args[0][1] == msgs  # 第二个参数是消息列表
+    printed = " ".join(str(c) for call in mock_print.call_args_list for c in call[0])
+    assert "abc12345" in printed
 
 
 @pytest.mark.asyncio
 async def test_resume_interactive_select():
-    """/resume 无参数时应打开交互式选择器。"""
+    """/resume 无参数时应列出会话摘要。"""
     from cli.app import BrixCLI
-    from cli.paginated_selector import PaginatedSelector
 
     mock_mem = _make_mock_memory()
     session_data = {"id": "abc12345-xxxx", "message_count": 5, "updated": "2026-05-10", "preview": "hello"}
-    mock_mem.list_sessions.return_value = [session_data]
-    mock_mem.resume_session.return_value = [{"role": "user", "content": "hello"}]
+    mock_mem.load_sessions_index.return_value = [session_data]
 
     with patch("cli.app.load_config", return_value={
         "routing": {"default_model": "test-model"},
@@ -564,22 +555,23 @@ async def test_resume_interactive_select():
          patch("cli.app.create_memory_provider", return_value=mock_mem):
         cli = BrixCLI()
 
-    with patch.object(PaginatedSelector, "prompt_async", new_callable=AsyncMock, return_value=session_data):
+    with patch("builtins.print") as mock_print:
         result = await cli._handle_command("/resume")
 
     assert result is True
-    mock_mem.resume_session.assert_called_once_with("abc12345-xxxx")
+    printed = " ".join(str(c) for call in mock_print.call_args_list for c in call[0])
+    assert "abc12345" in printed
 
 
 @pytest.mark.asyncio
-async def test_resume_interactive_cancel():
-    """/resume 交互式选择器取消时不应 resume。"""
+async def test_resume_lists_sessions():
+    """/resume 有 session 时应列出会话信息。"""
     from cli.app import BrixCLI
-    from cli.paginated_selector import PaginatedSelector
 
     mock_mem = _make_mock_memory()
-    mock_mem.list_sessions.return_value = [
-        {"id": "abc12345-xxxx", "message_count": 5, "updated": "2026-05-10", "preview": "hello"},
+    mock_mem.load_sessions_index.return_value = [
+        {"id": "abc12345-xxxx", "message_count": 5},
+        {"id": "def67890-yyyy", "message_count": 3},
     ]
 
     with patch("cli.app.load_config", return_value={
@@ -589,16 +581,18 @@ async def test_resume_interactive_cancel():
          patch("cli.app.create_memory_provider", return_value=mock_mem):
         cli = BrixCLI()
 
-    with patch.object(PaginatedSelector, "prompt_async", new_callable=AsyncMock, return_value=None):
+    with patch("builtins.print") as mock_print:
         result = await cli._handle_command("/resume")
 
     assert result is True
-    mock_mem.resume_session.assert_not_called()
+    printed = " ".join(str(c) for call in mock_print.call_args_list for c in call[0])
+    assert "abc12345" in printed
+    assert "def67890" in printed
 
 
 @pytest.mark.asyncio
 async def test_help_shows_resume_no_sessions():
-    """/help 应显示 /resume [id] 而非 /sessions。"""
+    """/help 应显示 /resume 而非 /sessions。"""
     from cli.app import BrixCLI
 
     mock_mem = _make_mock_memory()
@@ -616,5 +610,5 @@ async def test_help_shows_resume_no_sessions():
     assert result is True
     # 收集所有打印内容
     printed = " ".join(str(c) for call in mock_print.call_args_list for c in call[0])
-    assert "/resume [id]" in printed
+    assert "/resume" in printed
     assert "/sessions" not in printed
