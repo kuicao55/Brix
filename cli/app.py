@@ -278,10 +278,11 @@ class BrixCLI:
         hooks.fire("memory", msgs=len(context_messages),
                  chars=sum(len(m.get("content", "")) for m in context_messages))
 
+        intent_model = self._config.get("routing", {}).get("intent_model", "")
         default_model = self._config.get("routing", {}).get("default_model", "")
         intent = await classify_intent(
             user_input, context_messages, self._llm_client,
-            default_model, hooks=hooks,
+            intent_model or default_model, hooks=hooks,
         )
         complexity = evaluate_complexity(user_input)
         model = select_model(intent, complexity, self._config)
@@ -341,12 +342,13 @@ class BrixCLI:
 
         # Intent stage (LLM call — takes time)
         indicator.update("Intent")
+        intent_model = self._config.get("routing", {}).get("intent_model", "")
         default_model = self._config.get("routing", {}).get("default_model", "")
         # 只传最近 6 条非 system 消息，避免 intent 分类加载完整 soul.md
         trimmed = [m for m in context_messages if m.get("role") != "system"][-6:]
         intent = await classify_intent(
             user_input, trimmed, self._llm_client,
-            default_model, hooks=hooks,
+            intent_model or default_model, hooks=hooks,
         )
 
         # Complexity + Route stages

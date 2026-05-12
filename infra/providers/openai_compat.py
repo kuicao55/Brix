@@ -79,7 +79,7 @@ class OpenAICompatProvider:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            stream = client.chat.completions.create(**kwargs)
+            stream = await client.chat.completions.create(**kwargs)
 
             # Accumulate tool call deltas across chunks
             # keyed by tool call index

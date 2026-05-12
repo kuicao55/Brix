@@ -103,6 +103,16 @@ models:
     cost_tier: "high"
 
   # ============================================================
+  # ZenMux — Qwen (intent 分类等轻量任务)
+  # ============================================================
+  - id: "zenmux-openai/qwen/qwen3.5-flash"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
+  # ============================================================
   # ZenMux — OpenAI / Anthropic (备用)
   # ============================================================
   - id: "zenmux-openai/openai/gpt-4.1-mini"
@@ -145,7 +155,9 @@ engine: "state_machine"
 
 routing:
   default_model: "minimax/MiniMax-M2.7"
-  fallback_model: "zenmux-openai/deepseek/deepseek-v4-flash"
+  fallback_model: "minimax/MiniMax-M2.7"
+  chat_model: "zenmux-openai/deepseek/deepseek-v4-flash"
+  intent_model: "zenmux-openai/qwen/qwen3.5-flash"
 
 retry:
   max_retries: 3

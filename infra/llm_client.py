@@ -122,6 +122,18 @@ class LLMClient:
             raise ValueError(f"Provider '{provider_name}' missing 'base_url' in config")
         return protocol, provider_config, provider_name
 
+    @staticmethod
+    def _api_model_id(model: str, provider_name: str) -> str:
+        """Strip local provider prefix to get the actual API model name.
+
+        Config IDs like 'minimax/MiniMax-M2.7' use the prefix for local routing;
+        the API only receives 'MiniMax-M2.7'.
+        """
+        prefix = provider_name + "/"
+        if model.startswith(prefix):
+            return model[len(prefix):]
+        return model
+
     async def _call_provider(
         self,
         messages: list[dict],
@@ -148,9 +160,10 @@ class LLMClient:
             )
 
         provider = self._get_provider(protocol)
+        api_model = self._api_model_id(model, provider_name)
         return await provider.chat(
             messages=messages,
-            model=model,
+            model=api_model,
             tools=tools,
             base_url=base_url,
             api_key=api_key,
@@ -216,9 +229,10 @@ class LLMClient:
             )
 
         provider = self._get_provider(protocol)
+        api_model = self._api_model_id(model, provider_name)
         async for event in provider.chat_stream(
             messages=messages,
-            model=model,
+            model=api_model,
             tools=tools,
             base_url=base_url,
             api_key=api_key,

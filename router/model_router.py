@@ -13,6 +13,7 @@ def select_model(intent: str, complexity: str, config: dict) -> str:
 
     default_model = routing.get("default_model", "")
     fallback_model = routing.get("fallback_model", default_model)
+    chat_model = routing.get("chat_model", "")
 
     # For high complexity, prefer models with 'reasoning' purpose
     if complexity == "high":
@@ -27,5 +28,9 @@ def select_model(intent: str, complexity: str, config: dict) -> str:
             purposes = model.get("purpose", [])
             if "coding" in purposes:
                 return model.get("id", fallback_model)
+
+    # For chat intent, use chat_model if configured
+    if intent == "chat" and chat_model:
+        return chat_model
 
     return default_model or fallback_model
