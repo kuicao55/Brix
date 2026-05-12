@@ -25,9 +25,9 @@ providers:
     protocol: "anthropic"
 
   minimax:
-    base_url: "https://api.minimaxi.com/anthropic"
+    base_url: "https://api.minimaxi.com/v1"
     api_key_env: "MINIMAX_API_KEY"
-    protocol: "anthropic"
+    protocol: "openai"
 
   mimo:
     base_url: "https://api.xiaomimimo.com/anthropic"
