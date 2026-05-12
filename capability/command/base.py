@@ -34,6 +34,11 @@ class CommandMeta:
     when_to_use: str = ""  # LLM 匹配用描述
     user_invocable: bool = True  # 用户可否 /name 调用
     disable_model_invocation: bool = False  # 是否禁止 LLM 调用
+    # Skill 专用字段
+    allowed_tools: list[str] = field(default_factory=list)  # 工具白名单
+    model: str | None = None  # 模型覆盖
+    context: str = "inline"  # 上下文模式
+    skill_root: str = ""  # Skill 目录路径
 
 
 @dataclass
