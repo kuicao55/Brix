@@ -28,7 +28,7 @@ class Spinner:
         elapsed = time.time() - self.start_time
         frame = BRAILLE_FRAMES[self.frame_idx % len(BRAILLE_FRAMES)]
         text = Text()
-        text.append("  {} ".format(frame), style="spinner.active")
+        text.append("{} ".format(frame), style="spinner.active")
         text.append(self.label, style="dim")
         text.append("  {:.1f}s".format(elapsed), style="dim cyan")
         return text
@@ -74,7 +74,7 @@ class Spinner:
         if self.live:
             self.live.stop()
         elapsed = time.time() - self.start_time
-        self.console.print("  [green]\u2713[/] {}  [dim]{:.1f}s[/]".format(label, elapsed))
+        self.console.print("[green]\u2713[/] {}  [dim]{:.1f}s[/]".format(label, elapsed))
 
     def fail(self, label: str = "Failed") -> None:
         """Stop spinner and print a failure message."""
@@ -84,4 +84,4 @@ class Spinner:
         if self.live:
             self.live.stop()
         elapsed = time.time() - self.start_time
-        self.console.print("  [red]\u2717[/] {}  [dim]{:.1f}s[/]".format(label, elapsed))
+        self.console.print("[red]\u2717[/] {}  [dim]{:.1f}s[/]".format(label, elapsed))
