@@ -33,7 +33,7 @@ export function readEntry(filePath: string, traceId: string): Record<string, unk
 }
 
 /**
- * 格式化单条日志条目为可读文本
+ * 格式化单条日志条目为可读文本（匹配 Python format_detail）
  */
 export function formatDetail(entry: Record<string, unknown>): string {
   const ts = entry.ts ?? '?'
@@ -41,7 +41,11 @@ export function formatDetail(entry: Record<string, unknown>): string {
   const inp = entry.input ?? ''
   const model = entry.model ?? '?'
   const msTotal = entry.ms_total ?? 0
+  const llmCalls = entry.llm_calls ?? 0
+  const tools = entry.tools ?? 0
+  const iters = entry.iters ?? 0
   const error = entry.error
+  const steps = Array.isArray(entry.steps) ? entry.steps : []
   const status = error ? 'ERR' : 'OK'
   const sep = '-'.repeat(60)
 
@@ -55,13 +59,46 @@ export function formatDetail(entry: Record<string, unknown>): string {
     sep,
   ]
 
+  // 步骤描述（匹配 Python 版本）
+  const desc: Record<string, string> = {
+    memory: '从存储加载历史记录，裁剪上下文窗口',
+    intent: '调用 LLM 分类用户意图 (chat/task/tool_use)',
+    complexity: '基于关键词规则评估请求复杂度',
+    router: '根据意图和复杂度选择最佳模型',
+    orch_plan: '调用 LLM 生成回复 (streaming)',
+    tool_exec: '执行工具调用并返回结果',
+    persist: '将本轮对话保存到存储',
+  }
+
+  // 逐步骤详情
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i] as Record<string, unknown>
+    const m = s.m ?? '?'
+    const at = s.at ?? ''
+    const atStr = at ? `  @${at}` : ''
+    lines.push(`  [${i + 1}] ${m}${atStr}`)
+
+    const d = desc[String(m)]
+    if (d) {
+      lines.push(`      ${d}`)
+    }
+
+    for (const [k, v] of Object.entries(s)) {
+      if (k === 'm' || k === 'at') continue
+      lines.push(`      ${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+    }
+    lines.push('')
+  }
+
   if (error) {
     lines.push(`  ERROR: ${error}`)
     lines.push('')
   }
 
   lines.push(sep)
-  lines.push(`  Total: ${msTotal}ms`)
+  lines.push(
+    `  Total: ${msTotal}ms | LLM calls: ${llmCalls} | Tools: ${tools} | Iterations: ${iters}`
+  )
   lines.push(sep)
 
   return lines.join('\n')

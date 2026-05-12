@@ -65,19 +65,22 @@ export class StreamRenderer {
     const newContent = this.rendered.slice(this.lastRenderedIndex)
     if (newContent) {
       let output = markedInstance.parse(newContent) as string
-      // 去掉多余空行，保持单行间距
+      // 去掉前导换行（marked-terminal 可能输出 \n 开头）
+      output = output.replace(/^\n+/, '')
+      // 去掉多余空行，保持单行间距（匹配 Python _CompactMarkdown 行为）
       output = output.replace(/\n{2,}/g, '\n')
-      // 首次输出加 marker，后续换行对齐到 marker 右侧
+      const indent = '    '
+      // 在每个换行后添加缩进，对齐到 marker 右侧
+      const indented = output.replace(/\n/g, '\n' + indent)
+      // 去掉末尾多余换行，避免与后续 console.log() 产生双空行
+      const trimmed = indented.replace(/\n+$/, '')
       if (!this.markerWritten) {
         this.markerWritten = true
-        const indent = '    ' // marker 宽度对齐
-        const indented = output.replace(/\n(?!$)/g, '\n' + indent)
-        process.stdout.write(this.marker + indented)
+        process.stdout.write(this.marker + trimmed)
       } else {
-        const indent = '    '
-        const indented = output.replace(/\n(?!$)/g, '\n' + indent)
-        process.stdout.write(indent + indented)
+        process.stdout.write(indent + trimmed)
       }
+      console.log()
       this.lastRenderedIndex = this.rendered.length
     }
   }

@@ -32,13 +32,13 @@ import { createCompleter } from './completer.js'
 import { StageIndicator } from './stage-indicator.js'
 import { StreamRenderer } from './stream-renderer.js'
 import { ToolDisplay } from './tool-display.js'
-import { renderHistory } from './display.js'
+import { renderHistory, renderMessage } from './display.js'
 import { COMMANDS } from '../capability/basics/commands.js'
 import { classifyIntent } from '../router/intent.js'
 import { evaluate_complexity } from '../router/complexity.js'
 import { selectModel } from '../router/model-router.js'
 import { paginatedSelect } from './paginated-selector.js'
-import { getRecentLogs } from '../capability/basics/logs.js'
+import { getRecentLogs, getLogDetail } from '../capability/basics/logs.js'
 
 /** BrixCLI 配置选项 */
 export interface BrixCLIOptions {
@@ -76,55 +76,62 @@ export class BrixCLI {
     showBanner(defaultModel, '0.1.0', process.cwd())
 
     const completer = createCompleter()
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      completer: (line: string) => completer(line),
-    })
 
-    const prompt = () => {
-      rl.question(chalk.cyan.bold('  \u276f '), async (input: string) => {
-        try {
-          const text = input.trim()
-          if (!text) {
-            prompt()
-            return
-          }
-
-          // 斜杠命令
-          if (text.startsWith('/')) {
-            const shouldContinue = await this.handleCommand(text)
-            if (shouldContinue) {
-              prompt()
-              return
-            }
-            // /quit 返回 false，退出循环
-            rl.close()
-            return
-          }
-
-          // 普通对话 — 流式响应
-          console.log()
-          try {
-            await this.handleChat(text)
-          } catch (exc) {
-            console.error(chalk.red('Error: ') + (exc instanceof Error ? exc.message : String(exc)))
-          }
-          prompt()
-        } catch (exc) {
-          // 捕获 handleCommand 等抛出的异常，防止 unhandled promise rejection
-          console.error(chalk.red('Error: ') + (exc instanceof Error ? exc.message : String(exc)))
-          prompt()
-        }
+    // 每轮 prompt 创建新的 readline，避免 paginatedSelect 等操作污染 stdin 状态
+    const promptOnce = (): Promise<string | null> =>
+      new Promise(resolve => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+          completer: (line: string) => completer(line),
+        })
+        let resolved = false
+        rl.question(chalk.cyan.bold('  \u276f '), answer => {
+          resolved = true
+          rl.close()
+          resolve(answer)
+        })
+        // 仅在 Ctrl+D / Ctrl+C 导致的意外关闭时 resolve null
+        rl.on('close', () => {
+          if (!resolved) resolve(null)
+        })
       })
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const input = await promptOnce()
+      if (input === null) {
+        // Ctrl+D / Ctrl+C
+        console.log('\nGoodbye.')
+        break
+      }
+
+      const text = input.trim()
+      if (!text) continue
+
+      // 斜杠命令
+      if (text.startsWith('/')) {
+        try {
+          const shouldContinue = await this.handleCommand(text)
+          if (!shouldContinue) break
+        } catch (exc) {
+          console.error(chalk.red('Error: ') + (exc instanceof Error ? exc.message : String(exc)))
+        }
+        continue
+      }
+
+      // 普通对话 — 流式响应
+      // 问→答间距：1 空行（由 console.log 产生）
+      console.log()
+      try {
+        await this.handleChat(text)
+      } catch (exc) {
+        console.error(chalk.red('Error: ') + (exc instanceof Error ? exc.message : String(exc)))
+      }
+      // 答→下一问间距：2 空行（轮次间大间距）
+      console.log()
+      console.log()
     }
-
-    // 处理 Ctrl+C / EOF
-    rl.on('close', () => {
-      console.log('\nGoodbye.')
-    })
-
-    prompt()
   }
 
   /**
@@ -145,10 +152,9 @@ export class BrixCLI {
     }
 
     if (cmd === '/clear') {
-      // 清除会话（如果 memory 存在）
       if (this.memory) {
         try {
-          ;(this.memory as any).clearSession?.()
+          this.memory.clearSession()
         } catch {
           // fail gracefully
         }
@@ -187,36 +193,71 @@ export class BrixCLI {
         return true
       }
 
-      // 有参数时按 ID 恢复
+      const sessions = this.memory.listSessions()
+
+      // 有参数时按 ID 前缀匹配恢复
       if (parts.length >= 2) {
         const prefix = parts[1]
-        try {
-          await this.memory.resumeSession(prefix)
-          console.log(`Resumed session ${prefix.slice(0, 8)}...`)
-        } catch {
+        const matches = sessions.filter(s => s.id.startsWith(prefix))
+        if (matches.length === 1) {
+          try {
+            await this.memory.resumeSession(matches[0].id)
+            this.printResumedMessages(matches[0].id)
+          } catch {
+            console.log(`Failed to resume session ${prefix.slice(0, 8)}...`)
+          }
+        } else if (matches.length > 1) {
+          console.log(`Ambiguous prefix, ${matches.length} matches. Opening selector...`)
+          // 回退到交互式选择器
+          const selected = await paginatedSelect(
+            matches,
+            item => {
+              const sid = item.id.slice(0, 8)
+              const count = String(item.message_count).padStart(3)
+              const date = (item.updated ?? '').slice(0, 10)
+              const preview = (item.preview ?? '').slice(0, 40).replace(/\n/g, ' ')
+              return `${sid}  ${count} msgs  ${date}  ${preview}`
+            },
+            10,
+            '选择要恢复的会话'
+          )
+          if (selected) {
+            try {
+              await this.memory.resumeSession(selected.id)
+              this.printResumedMessages(selected.id)
+            } catch {
+              console.log(`Failed to resume session ${selected.id.slice(0, 8)}...`)
+            }
+          }
+        } else {
           console.log(`Session not found: ${prefix.slice(0, 8)}...`)
         }
         return true
       }
 
       // 无参数时使用分页选择器
-      const sessions = this.memory.listSessions()
       if (sessions.length === 0) {
-        console.log('No sessions available.')
+        console.log('No sessions yet.')
         return true
       }
 
       const selected = await paginatedSelect(
         sessions,
-        (item, idx) => `${item.id.slice(0, 8)}... (${item.message_count} msgs) ${item.preview}`,
+        item => {
+          const sid = item.id.slice(0, 8)
+          const count = String(item.message_count).padStart(3)
+          const date = (item.updated ?? '').slice(0, 10)
+          const preview = (item.preview ?? '').slice(0, 40).replace(/\n/g, ' ')
+          return `${sid}  ${count} msgs  ${date}  ${preview}`
+        },
         10,
-        '选择会话'
+        '选择要恢复的会话'
       )
 
       if (selected) {
         try {
           await this.memory.resumeSession(selected.id)
-          console.log(`Resumed session ${selected.id.slice(0, 8)}...`)
+          this.printResumedMessages(selected.id)
         } catch {
           console.log(`Failed to resume session ${selected.id.slice(0, 8)}...`)
         }
@@ -254,27 +295,54 @@ export class BrixCLI {
 
     if (cmd === '/log') {
       const logPath = path.resolve(this.config.memory.data_dir, '..', 'log', 'data', 'brix.jsonl')
-      if (logPath) {
-        try {
-          const logs = getRecentLogs(logPath, 10)
-          if (logs.length > 0) {
-            for (const entry of logs) {
-              const ts = entry.ts ?? '?'
-              const trace = entry.trace ?? '?'
-              const input = entry.input ?? ''
-              const model = entry.model ?? '?'
-              const ms = entry.ms_total ?? 0
-              const error = entry.error
-              const status = error ? 'ERR' : 'OK'
-              console.log(`  ${ts}  ${trace}  ${status}  ${model}  ${ms}ms  ${input}`)
-            }
-          } else {
-            console.log('No logs yet.')
-          }
-        } catch {
+      try {
+        const logs = getRecentLogs(logPath, 20)
+        if (logs.length === 0) {
           console.log('No logs yet.')
+          return true
         }
-      } else {
+
+        // 最新在前
+        const reversed = [...logs].reverse()
+
+        if (process.stdin.isTTY) {
+          // TTY 模式：使用分页选择器（匹配 Python ChoiceInput 行为）
+          const selected = await paginatedSelect(
+            reversed,
+            (item, idx) => {
+              const ts = item.ts ?? '?'
+              const trace = item.trace ?? '?'
+              const ms = item.ms_total ?? 0
+              const error = item.error
+              const status = error ? 'ERR' : 'OK'
+              const preview = String(item.input ?? '').slice(0, 50).replace(/\n/g, ' ')
+              return `${ts} [${trace}]  ${ms}ms  ${status}  "${preview}"`
+            },
+            10,
+            '选择日志条目'
+          )
+
+          if (selected) {
+            const detail = getLogDetail(logPath, String(selected.trace ?? ''))
+            if (detail) {
+              console.log()
+              console.log(detail)
+            }
+          }
+        } else {
+          // 非 TTY 模式：显示列表（测试环境）
+          console.log()
+          for (let i = 0; i < reversed.length; i++) {
+            const entry = reversed[i]
+            const ts = entry.ts ?? '?'
+            const trace = entry.trace ?? '?'
+            const ms = entry.ms_total ?? 0
+            const error = entry.error
+            const status = error ? 'ERR' : 'OK'
+            console.log(`  #${i + 1}  ${ts} [${trace}]  ${ms}ms  ${status}`)
+          }
+        }
+      } catch {
         console.log('No logs yet.')
       }
       return true
@@ -283,7 +351,7 @@ export class BrixCLI {
     if (cmd === '/help') {
       const width = Math.max(...COMMANDS.map(([name]) => name.length)) + 2
       console.log()
-      console.log('  Available commands:')
+      console.log('  可用命令：')
       console.log()
       for (const [name, desc] of COMMANDS) {
         console.log(`    ${name.padEnd(width)} ${desc}`)
@@ -407,13 +475,11 @@ export class BrixCLI {
     // Persist conversation (if memory available)
     if (this.memory) {
       try {
-        // 这里调用 memory 的 add_message 和 save_session
-        // 由于 MemoryProvider 接口尚未完全迁移，暂用 try-catch 保护
-        ;(this.memory as any).add_message?.('user', userInput)
+        this.memory.addMessage('user', userInput)
         if (!response.startsWith('Error')) {
-          ;(this.memory as any).add_message?.('assistant', response)
+          this.memory.addMessage('assistant', response)
         }
-        ;(this.memory as any).save_session?.()
+        this.memory.saveSession()
       } catch {
         // fail gracefully
       }
@@ -473,5 +539,23 @@ export class BrixCLI {
   /** 根据配置构建编排器 */
   private buildOrchestrator(): OrchestratorEngine {
     return new StateMachineOrchestrator()
+  }
+
+  /** 恢复会话后渲染历史对话（匹配 Python _print_resumed_messages）
+   *  读取 sessions/session-{id}.json 文件并用完整聊天 UI 渲染 */
+  private printResumedMessages(sessionId: string): void {
+    try {
+      const sessionFile = path.join(this.config.memory.data_dir, 'sessions', `session-${sessionId}.json`)
+      const raw = fs.readFileSync(sessionFile, 'utf-8')
+      const msgs = JSON.parse(raw) as Array<{ role: string; content: string }>
+      console.log(chalk.dim(`  Resumed session ${sessionId.slice(0, 8)}... (${msgs.length} messages)`))
+      if (msgs.length > 0) {
+        console.log()
+        renderHistory(msgs)
+        console.log()
+      }
+    } catch {
+      console.log(`Session not found: ${sessionId.slice(0, 8)}...`)
+    }
   }
 }

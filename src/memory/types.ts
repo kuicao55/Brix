@@ -17,4 +17,13 @@ export interface MemoryProvider {
 
   /** 恢复指定会话为当前活跃会话 */
   resumeSession(sessionId: string): Promise<void>
+
+  /** 添加消息到当前活跃会话 */
+  addMessage(role: string, content: string): void
+
+  /** 保存当前活跃会话到磁盘 */
+  saveSession(): void
+
+  /** 清除当前活跃会话（开始新会话） */
+  clearSession(): void
 }
