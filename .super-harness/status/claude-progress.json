@@ -4,7 +4,7 @@
   "updated_at": "2026-05-12T23:16:19Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
-  "version_branch": "feat/spinner-and-onboarding-upgrade",
+  "version_branch": "feat/skill-updates",
   "worktree": null,
   "milestones": [
     {
@@ -126,11 +126,11 @@
       "title": "Skill \u534f\u8bae \u2014 \u7edf\u4e00 Command \u62bd\u8c61 + Skill \u7cfb\u7edf",
       "description": "Skill \u534f\u8bae \u2014 \u7edf\u4e00 Command \u62bd\u8c61 + Skill \u7cfb\u7edf",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-12-skill-protocol.md",
       "plan_file": ".super-harness/plans/2026-05-12-milestone-11.md",
       "session_date": "2026-05-12T23:04:15Z",
-      "notes": null
+      "notes": "Completed 2026-05-13. 6 tasks: core types, CommandRegistry, FileSkill loader, SkillCommand, builtin commands, CLI integration. 405 tests pass, 22 pre-existing failures. Codex CQR on all tasks (Minor findings deferred to Phase 2+)."
     }
   ]
 }
