@@ -52,6 +52,7 @@ class VoiceRuntimeImpl:
         self._stt: Optional[STTProcessor] = None
         self._cleanup: Optional[LLMCleanupProcessor] = None
         self._pipeline: Any = None
+        self._idle_timeout_task: Optional[asyncio.Task] = None
 
     @property
     def is_running(self) -> bool:
@@ -127,6 +128,15 @@ class VoiceRuntimeImpl:
         self._shutdown = True
         logger.info("Stopping VoiceRuntime...")
 
+        # 取消空闲超时任务，避免 stop 后触发状态变更
+        if self._idle_timeout_task is not None:
+            self._idle_timeout_task.cancel()
+            try:
+                await self._idle_timeout_task
+            except asyncio.CancelledError:
+                pass
+            self._idle_timeout_task = None
+
         try:
             if self._pipeline is not None:
                 await self._pipeline.stop()
@@ -168,3 +178,58 @@ class VoiceRuntimeImpl:
             return
         # TODO: 当 TTSProcessor 集成后，将文本送入 TTS pipeline
         logger.debug("TTS bridge received text: %s", text[:50])
+
+    def _on_tts_complete(self) -> None:
+        """TTS 播放完成回调 — 决定下一步状态。"""
+        if self._shutdown:
+            return
+
+        if self._continuous:
+            # 连续模式：进入 SLEEPING，启动空闲超时
+            self._state = VoiceConversationState.SLEEPING
+            self._hooks.fire("voice_state", state="sleeping")
+            if self._on_state_change:
+                self._on_state_change("sleeping")
+            self._start_idle_timeout()
+        else:
+            # 非连续模式：回到 IDLE
+            self._state = VoiceConversationState.IDLE
+            self._hooks.fire("voice_state", state="idle")
+            if self._on_state_change:
+                self._on_state_change("idle")
+
+    def _start_idle_timeout(self) -> None:
+        """启动空闲超时检测 — 连续模式下无语音则回到 IDLE。"""
+        # 取消已有超时任务
+        if self._idle_timeout_task is not None:
+            self._idle_timeout_task.cancel()
+            self._idle_timeout_task = None
+
+        self._idle_timeout_task = asyncio.ensure_future(self._idle_timeout_loop())
+
+    async def _idle_timeout_loop(self) -> None:
+        """空闲超时检测循环。"""
+        timeout = self._config.continuous_idle_timeout
+        try:
+            await asyncio.sleep(timeout)
+            # 防御性检查：stop() 可能已设置 _shutdown
+            if self._shutdown:
+                return
+            # 超时，回到 IDLE
+            self._state = VoiceConversationState.IDLE
+            self._hooks.fire("voice_state", state="idle")
+            if self._on_state_change:
+                self._on_state_change("idle")
+            self._idle_timeout_task = None
+        except asyncio.CancelledError:
+            pass  # 被取消说明有新的语音输入
+
+    def _handle_voice_detected(self) -> None:
+        """检测到语音输入时取消超时并切换到 LISTENING。"""
+        if self._idle_timeout_task is not None:
+            self._idle_timeout_task.cancel()
+            self._idle_timeout_task = None
+        self._state = VoiceConversationState.LISTENING
+        self._hooks.fire("voice_state", state="listening")
+        if self._on_state_change:
+            self._on_state_change("listening")
