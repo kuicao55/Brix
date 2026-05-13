@@ -161,3 +161,10 @@ class VoiceRuntimeImpl:
         self._state = VoiceConversationState.PROCESSING
         if self._on_voice_input:
             self._on_voice_input(text)
+
+    def feed_response_text(self, text: str) -> None:
+        """将 LLM 回复文本送入 TTS 合成。"""
+        if self._shutdown or not self._running:
+            return
+        # TODO: 当 TTSProcessor 集成后，将文本送入 TTS pipeline
+        logger.debug("TTS bridge received text: %s", text[:50])

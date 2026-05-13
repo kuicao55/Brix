@@ -33,3 +33,7 @@ class VoiceRuntime(Protocol):
     def on_state_change(self, callback: Callable[[str], None]) -> None:
         """注册回调：状态变化（listening / speaking / idle / error）。"""
         ...
+
+    def feed_response_text(self, text: str) -> None:
+        """将 LLM 回复文本送入 TTS 合成。"""
+        ...

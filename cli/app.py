@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,10 @@ class BrixCLI:
         self._tool_runner = ToolRunner()
         self._register_tools()
         self._command_registry = CommandRegistry()
+        # 语音模块（可选，需在注册命令前初始化）
+        self._voice = None
+        self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._init_voice()
         self._register_commands()
         self._register_skill_tool()
         self._orchestrator = self._build_orchestrator()
@@ -105,14 +110,44 @@ class BrixCLI:
                 if not first_turn:
                     self._console.print()
                 first_turn = False
-                try:
-                    user_input = await session.prompt_async(HTML('<ansicyan><b>❯ </b></ansicyan>'))
-                except (EOFError, KeyboardInterrupt):
-                    self._memory.save_session()
-                    self._console.print("\n[dim]Goodbye.[/]")
-                    break
 
-                text = user_input.strip()
+                # 并行等待键盘输入和语音输入
+                keyboard_task = asyncio.create_task(
+                    session.prompt_async(HTML('<ansicyan><b>❯ </b></ansicyan>'))
+                )
+                voice_task = asyncio.create_task(self._voice_input_queue.get())
+
+                try:
+                    done, pending = await asyncio.wait(
+                        [keyboard_task, voice_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except Exception:
+                    keyboard_task.cancel()
+                    voice_task.cancel()
+                    raise
+
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+                if voice_task in done:
+                    text = voice_task.result()
+                    self._console.print(f"[dim]🎤 {text}[/]")
+                elif keyboard_task in done:
+                    try:
+                        text = keyboard_task.result()
+                    except (EOFError, KeyboardInterrupt):
+                        self._memory.save_session()
+                        self._console.print("\n[dim]Goodbye.[/]")
+                        break
+                else:
+                    continue
+
+                text = text.strip()
                 if not text:
                     continue
 
@@ -129,6 +164,8 @@ class BrixCLI:
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
         finally:
+            if self._voice and self._voice.is_running:
+                await self._voice.stop()
             await self._llm_client.close()
 
     # ------------------------------------------------------------------
@@ -361,6 +398,9 @@ class BrixCLI:
                             renderer.start()
                         renderer.push_delta(text)
                         content_parts.append(text)
+                        # TTS 桥接：将 LLM 回复送入语音模块
+                        if self._voice and self._voice.is_running:
+                            self._voice.feed_response_text(text)
 
                 elif event_type == "tool_call":
                     indicator.finish()
@@ -459,6 +499,33 @@ class BrixCLI:
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))
 
+    def _init_voice(self) -> None:
+        """初始化语音模块（如果配置启用）。"""
+        voice_cfg = self._config.get("voice", {})
+        if not voice_cfg.get("enabled", False):
+            return
+        try:
+            from capability.voice.config import VoiceConfig
+            from capability.voice.runtime import VoiceRuntimeImpl
+
+            cfg = VoiceConfig.from_dict(self._config)
+            self._voice = VoiceRuntimeImpl(
+                config=cfg,
+                hooks=HookRegistry(),
+                llm_fn=self._llm_client.chat,
+            )
+            self._voice.on_voice_input(self._handle_voice_input)
+        except Exception as exc:
+            self._console.print(f"[dim]语音模块加载失败: {exc}[/]")
+
+    def _handle_voice_input(self, text: str) -> None:
+        """语音输入回调 — 将文本注入 REPL 循环。
+
+        注意：此方法必须在 asyncio event loop 线程中调用。
+        如果从音频 I/O 工作线程调用，应使用 loop.call_soon_threadsafe()。
+        """
+        self._voice_input_queue.put_nowait(text)
+
     def _register_commands(self) -> None:
         """注册所有内置命令和 Skill 到 CommandRegistry。"""
         from capability.command.builtin.session import (
@@ -468,6 +535,7 @@ class BrixCLI:
             HelpCommand, ModelCommand, SoulCommand, UserCommand, LogCommand,
         )
         from capability.command.skill import SkillCommand
+        from capability.command.builtin.voice import VoiceCommand
 
         # 系统命令
         self._command_registry.register(QuitCommand())
@@ -480,6 +548,8 @@ class BrixCLI:
         self._command_registry.register(LogCommand())
         # HelpCommand 需要引用 registry
         self._command_registry.register(HelpCommand(self._command_registry))
+        # /voice 命令
+        self._command_registry.register(VoiceCommand(voice_runtime=self._voice))
 
         # 内置 Skill
         builtin_skills_dir = Path(__file__).parent.parent / "capability" / "command" / "builtin" / "skills"
