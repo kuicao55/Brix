@@ -17,7 +17,7 @@ def split_sentences(text: str) -> list[str]:
     """按句子边界切分文本。
 
     规则：句号、问号、感叹号、分号后切分。
-    短句（<3字）合并到下一句，避免碎片合成。
+    短句（<5字）合并到下一句，避免碎片合成。
     """
     if not text.strip():
         return []
@@ -28,13 +28,13 @@ def split_sentences(text: str) -> list[str]:
     for part in raw:
         buf += part
         if re.match(r'[。！？；\n]', part):
-            if len(buf.strip()) >= 3:
+            if len(buf.strip()) >= 5:
                 sentences.append(buf.strip())
                 buf = ""
             # 短句留在 buf 中，与下一句合并
     if buf.strip():
         if sentences:
-            if len(buf.strip()) < 3:
+            if len(buf.strip()) < 5:
                 sentences[-1] += buf.strip()
             else:
                 sentences.append(buf.strip())

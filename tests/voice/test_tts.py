@@ -17,12 +17,12 @@ def test_split_sentences_basic():
 
 
 def test_split_sentences_short_merge():
-    """split_sentences 合并短句。"""
-    text = "嗯。你好世界。"
+    """split_sentences 合并短句（<5字）。"""
+    text = "啊啊啊。你好世界。"
     result = split_sentences(text)
-    # "嗯。" 太短（<3字），应合并到下一句
+    # "啊啊啊。" 4字（<5字），应合并到下一句
     assert len(result) == 1
-    assert result[0] == "嗯。你好世界。"
+    assert result[0] == "啊啊啊。你好世界。"
 
 
 def test_split_sentences_no_punctuation():
@@ -76,7 +76,7 @@ async def test_tts_processor_multisentence():
         yield b"\x00" * 10
 
     tts = TTSProcessor(tts_fn=mock_tts, prefetch_ms=0)
-    async for _ in tts.synthesize("第一句。第二句。"):
+    async for _ in tts.synthesize("这是第一句话。这是第二句话。"):
         pass
 
     assert call_count == 2  # 两次调用，每次一句
