@@ -103,7 +103,7 @@ class ToolDisplay:
 
         if tool_name == "bash":
             cmd = markup_escape(str(tool_input.get("command", "")))
-            return "[white on grey11]$ {}[/]".format(cmd)
+            return "$ {}".format(cmd)
         elif tool_name == "file_read":
             path = markup_escape(str(tool_input.get("path", "")))
             return "\U0001f4c4 Reading {}".format(path)
