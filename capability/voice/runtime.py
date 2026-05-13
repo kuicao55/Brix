@@ -41,6 +41,7 @@ class VoiceRuntimeImpl:
         self._llm_fn = llm_fn
         self._running = False
         self._shutdown = False
+        self._continuous = False
         self._state = VoiceConversationState.IDLE
 
         self._on_voice_input: Optional[Callable[[str], None]] = None
@@ -66,13 +67,14 @@ class VoiceRuntimeImpl:
     def on_state_change(self, callback: Callable[[str], None]) -> None:
         self._on_state_change = callback
 
-    async def start(self) -> None:
+    async def start(self, continuous: bool = False) -> None:
         if self._running:
             logger.warning("VoiceRuntime already running")
             return
 
+        self._continuous = continuous
         self._shutdown = False
-        logger.info("Starting VoiceRuntime...")
+        logger.info("Starting VoiceRuntime (continuous=%s)...", continuous)
 
         self._transport = LocalAudioTransport(self._config)
         self._vad = VADProcessor(threshold=self._config.vad_threshold)

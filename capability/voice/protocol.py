@@ -13,7 +13,7 @@ class VoiceRuntime(Protocol):
     状态变化通过 on_state_change 回调通知。
     """
 
-    async def start(self) -> None:
+    async def start(self, continuous: bool = False) -> None:
         """启动语音 pipeline（麦克风采集、VAD、STT 全链路）。"""
         ...
 
