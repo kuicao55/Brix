@@ -62,11 +62,15 @@ class SimpleVoicePipeline:
                     continue
 
                 vad_frames = self._vad.process_frame_sync(audio_data)
+
+                # 每个 chunk 都把原始音频送入 STT 缓冲区
+                self._stt.process_frame_sync(type("AudioFrame", (), {"audio": audio_data})())
+
                 for frame in vad_frames:
                     if self._hooks:
                         self._hooks.fire("voice_state", state=frame.state)
 
-                for frame in vad_frames:
+                    # speech_end 时 STT 已缓冲音频，触发转录
                     stt_frames = self._stt.process_frame_sync(frame)
                     for stt_frame in stt_frames:
                         cleaned = await self._cleanup.process(stt_frame)
@@ -84,6 +88,7 @@ class SimpleVoicePipeline:
             logger.info("Voice pipeline loop cancelled")
         except Exception as exc:
             logger.error("Voice pipeline error: %s", exc, exc_info=True)
+            self._running = False
             if self._hooks:
                 self._hooks.fire("voice_state", state="error", error=str(exc))
 

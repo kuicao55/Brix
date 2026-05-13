@@ -104,25 +104,28 @@ class VoiceRuntimeImpl:
         self._shutdown = True
         logger.info("Stopping VoiceRuntime...")
 
-        if self._pipeline is not None:
-            await self._pipeline.stop()
-            self._pipeline = None
+        try:
+            if self._pipeline is not None:
+                await self._pipeline.stop()
+                self._pipeline = None
+        except Exception as exc:
+            logger.error("Error stopping pipeline: %s", exc)
+        finally:
+            if self._transport is not None:
+                await self._transport.stop()
+                self._transport = None
 
-        if self._transport is not None:
-            await self._transport.stop()
-            self._transport = None
+            self._vad = None
+            self._stt = None
+            self._cleanup = None
 
-        self._vad = None
-        self._stt = None
-        self._cleanup = None
+            self._running = False
 
-        self._running = False
+            self._hooks.fire("voice_state", state="idle")
+            if self._on_state_change:
+                self._on_state_change("idle")
 
-        self._hooks.fire("voice_state", state="idle")
-        if self._on_state_change:
-            self._on_state_change("idle")
-
-        logger.info("VoiceRuntime stopped")
+            logger.info("VoiceRuntime stopped")
 
     def _handle_final_text(self, text: str) -> None:
         if self._shutdown:
