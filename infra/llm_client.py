@@ -75,6 +75,7 @@ class LLMResponse:
     content: str
     tool_calls: list[ToolCall]
     finish_reason: str
+    reasoning_content: str = ""  # DeepSeek thinking 模式返回的推理内容
 
 
 class LLMClient:
@@ -87,7 +88,7 @@ class LLMClient:
         self._routing_config = config.get("routing", {})
         self._models = config.get("models", [])
 
-    def _get_provider(self, protocol: str, base_url: str, api_key: str):
+    def _get_provider(self, protocol: str, base_url: str, api_key: str, enable_thinking: bool = True):
         cache_key = (protocol, base_url)
         if cache_key not in self._providers:
             if protocol == "openai":
@@ -95,7 +96,7 @@ class LLMClient:
                 self._providers[cache_key] = OpenAICompatProvider(base_url, api_key)
             elif protocol == "anthropic":
                 from infra.providers.anthropic_compat import AnthropicCompatProvider
-                self._providers[cache_key] = AnthropicCompatProvider(base_url, api_key)
+                self._providers[cache_key] = AnthropicCompatProvider(base_url, api_key, enable_thinking=enable_thinking)
             else:
                 raise ValueError(f"Unknown protocol: {protocol}")
         return self._providers[cache_key]
@@ -165,7 +166,8 @@ class LLMClient:
                 f"Provider '{provider_name}' missing 'base_url' in config"
             )
 
-        provider = self._get_provider(protocol, base_url, api_key)
+        enable_thinking = provider_config.get("enable_thinking", True)
+        provider = self._get_provider(protocol, base_url, api_key, enable_thinking=enable_thinking)
         api_model = self._api_model_id(model, provider_name)
         return await provider.chat(
             messages=messages,
@@ -232,7 +234,8 @@ class LLMClient:
                 f"Provider '{provider_name}' missing 'base_url' in config"
             )
 
-        provider = self._get_provider(protocol, base_url, api_key)
+        enable_thinking = provider_config.get("enable_thinking", True)
+        provider = self._get_provider(protocol, base_url, api_key, enable_thinking=enable_thinking)
         api_model = self._api_model_id(model, provider_name)
         async for event in provider.chat_stream(
             messages=messages,

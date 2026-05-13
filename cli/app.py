@@ -21,10 +21,12 @@ from capability.basics.commands import get_command_list
 from capability.command.base import CommandContext, CommandResultType
 from capability.command.registry import CommandRegistry
 from hooks.registry import HookRegistry
+from capability.tools.bash import BashTool
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_edit import FileEditTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.file_write import FileWriteTool
+from capability.tools.skill_tool import SkillTool
 from capability.tools.weather import WeatherTool
 from cli.banner import show_banner
 from cli.completer import SlashCommandCompleter
@@ -32,6 +34,7 @@ from cli.display import render_history
 from cli.paginated_selector import PaginatedSelector
 from cli.stage_indicator import StageIndicator
 from cli.stream_renderer import StreamRenderer
+from cli.thinking_renderer import ThinkingRenderer
 from cli.theme import BRIX_THEME
 from cli.tool_display import ToolDisplay
 from config.loader import load_config
@@ -62,6 +65,7 @@ class BrixCLI:
         self._register_tools()
         self._command_registry = CommandRegistry()
         self._register_commands()
+        self._register_skill_tool()
         self._orchestrator = self._build_orchestrator()
         self._console = Console(theme=BRIX_THEME)
 
@@ -310,6 +314,7 @@ class BrixCLI:
         indicator.update("Planning", model.split("/")[-1])
 
         renderer = None
+        thinking_renderer = None
         content_parts = []
         has_error = False
         tool_display = ToolDisplay(self._console)
@@ -318,9 +323,23 @@ class BrixCLI:
             async for event in self._orchestrator.run_stream(user_input, context):
                 event_type = event.get("type", "")
 
-                if event_type == "text_delta":
+                if event_type == "thinking_delta":
                     text = event.get("text", "")
                     if text:
+                        if thinking_renderer is None:
+                            tool_display.stop_thinking()
+                            indicator.stop_silent()
+                            thinking_renderer = ThinkingRenderer(self._console)
+                            thinking_renderer.start()
+                        thinking_renderer.push_delta(text)
+
+                elif event_type == "text_delta":
+                    text = event.get("text", "")
+                    if text:
+                        # thinking 结束，切换到正式文本渲染
+                        if thinking_renderer is not None:
+                            thinking_renderer.flush()
+                            thinking_renderer = None
                         if renderer is None:
                             _tick("first_token")
                             tool_display.stop_thinking()
@@ -336,6 +355,9 @@ class BrixCLI:
 
                 elif event_type == "tool_call":
                     indicator.finish()
+                    if thinking_renderer is not None:
+                        thinking_renderer.flush()
+                        thinking_renderer = None
                     if renderer is not None:
                         renderer.flush()
                         renderer = None
@@ -359,6 +381,9 @@ class BrixCLI:
 
         except Exception as exc:
             has_error = True
+            if thinking_renderer is not None:
+                thinking_renderer.flush()
+                thinking_renderer = None
             if renderer is not None:
                 renderer.flush()
                 renderer = None
@@ -370,6 +395,8 @@ class BrixCLI:
             indicator.finish()
 
         # Flush any remaining content
+        if thinking_renderer is not None:
+            thinking_renderer.flush()
         if renderer is not None:
             renderer.flush()
         _tick("stream_end")
@@ -414,6 +441,7 @@ class BrixCLI:
     def _register_tools(self) -> None:
         """Register all built-in tools."""
         data_root = Path(self._data_dir)
+        self._tool_runner.register(BashTool())
         self._tool_runner.register(CalculatorTool())
         self._tool_runner.register(WeatherTool())
         self._tool_runner.register(FileReadTool())
@@ -452,6 +480,16 @@ class BrixCLI:
                         self._command_registry.register(SkillCommand(entry))
                     except Exception:
                         pass
+
+    def _register_skill_tool(self) -> None:
+        """注册 SkillTool，让 LLM 能通过 function calling 调用 Skill。"""
+        self._tool_runner.register(SkillTool(
+            registry=self._command_registry,
+            data_dir=self._data_dir,
+            config=self._config,
+            memory=self._memory,
+            llm_client=self._llm_client,
+        ))
 
     def _build_orchestrator(self):
         """Build the orchestrator engine based on config."""

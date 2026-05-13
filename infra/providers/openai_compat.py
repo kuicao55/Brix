@@ -52,10 +52,16 @@ class OpenAICompatProvider:
                     arguments=arguments,
                 ))
 
+        # DeepSeek thinking 模式：API 返回 reasoning 字段，传回时需用 reasoning_content
+        reasoning = ""
+        if hasattr(choice.message, "model_extra") and choice.message.model_extra:
+            reasoning = choice.message.model_extra.get("reasoning", "") or ""
+
         return LLMResponse(
             content=choice.message.content or "",
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason,
+            reasoning_content=reasoning,
         )
 
     async def chat_stream(
@@ -87,6 +93,12 @@ class OpenAICompatProvider:
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
+
+            # DeepSeek thinking: reasoning 字段（传回时需用 reasoning_content）
+            extra = getattr(delta, "model_extra", None) or {}
+            reasoning_text = extra.get("reasoning", "")
+            if reasoning_text:
+                yield {"type": "thinking_delta", "text": reasoning_text}
 
             # Yield text content
             if delta.content:

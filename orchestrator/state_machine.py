@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
+from capability.tools.skill_tool import SKILL_PROMPT_PREFIX
 from orchestrator.engine import OrchestratorContext
 from orchestrator.states import OrchestratorState
 
@@ -21,8 +23,6 @@ def _summarize_history(history: list[dict]) -> list[dict]:
             entry["tool_calls"] = m["tool_calls"]
         if m.get("tool_call_id"):
             entry["tool_call_id"] = m["tool_call_id"]
-        if m.get("tool_name"):
-            entry["tool_name"] = m["tool_name"]
         result.append(entry)
     return result
 
@@ -108,40 +108,66 @@ class StateMachineOrchestrator:
                 args = {"raw": args}
             tool_calls.append({
                 "id": tc.id or "call_{}".format(uuid.uuid4().hex[:12]),
-                "name": tc.name,
-                "arguments": args,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": json.dumps(args, ensure_ascii=False),
+                },
             })
-        context.history.append({
+        assistant_msg: dict = {
             "role": "assistant",
             "content": response.content,
             "tool_calls": tool_calls,
-        })
+        }
+        if hasattr(response, "reasoning_content") and response.reasoning_content:
+            assistant_msg["reasoning_content"] = response.reasoning_content
+        context.history.append(assistant_msg)
 
         # Run each tool and append results
         for tc in tool_calls:
             t0 = time.monotonic()
+            tc_name = tc["function"]["name"]
             try:
-                result = await context.tool_runner.run(tc["name"], tc["arguments"])
+                tc_args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, TypeError):
+                tc_args = {"raw": tc["function"]["arguments"]}
+            try:
+                result = await context.tool_runner.run(tc_name, tc_args)
             except Exception as e:
-                result = f"Error executing {tc['name']}: {e}"
+                result = f"Error executing {tc_name}: {e}"
             elapsed = int((time.monotonic() - t0) * 1000)
             is_error = str(result).startswith("Error")
 
             if context.hooks:
                 context.hooks.fire(
                     "tool_exec",
-                    name=tc["name"],
-                    args=tc["arguments"],
+                    name=tc_name,
+                    args=tc_args,
                     result=str(result)[:100],
                     ms=elapsed,
                 )
 
-            context.history.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "tool_name": tc["name"],
-                "content": str(result),
-            })
+            # Skill 指令：注入为 user message，让 LLM 按指令执行
+            result_str = str(result)
+            if result_str.startswith(SKILL_PROMPT_PREFIX):
+                skill_prompt = result_str[len(SKILL_PROMPT_PREFIX):]
+                context.history.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "name": tc_name,
+                    "content": f"Launching skill: {tc_name}",
+                })
+                context.history.append({
+                    "role": "user",
+                    "content": skill_prompt,
+                })
+            else:
+                context.history.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "name": tc_name,
+                    "content": result_str,
+                })
 
     async def run_stream(self, user_input, context):
         """Streaming orchestrator loop. Yields event dicts to the caller."""
@@ -153,6 +179,7 @@ class StateMachineOrchestrator:
                 tool_schemas = context.tool_runner.get_tool_schemas()
 
             content_parts = []
+            reasoning_parts = []
             tool_calls = []
             t0 = time.monotonic()
 
@@ -165,24 +192,31 @@ class StateMachineOrchestrator:
                     yield event
                     if event.get("type") == "text_delta":
                         content_parts.append(event.get("text", ""))
+                    elif event.get("type") == "thinking_delta":
+                        reasoning_parts.append(event.get("text", ""))
                     elif event.get("type") == "tool_call":
                         raw_args = event.get("input", {})
                         if not isinstance(raw_args, dict):
                             raw_args = {"raw": raw_args}
+                        # DeepSeek API 要求 tool_calls 用 function wrapper 格式
                         tool_calls.append({
                             "id": event.get("id") or "call_{}".format(uuid.uuid4().hex[:12]),
-                            "name": event.get("name", ""),
-                            "arguments": raw_args,
+                            "type": "function",
+                            "function": {
+                                "name": event.get("name", ""),
+                                "arguments": json.dumps(raw_args, ensure_ascii=False),
+                            },
                         })
             except Exception as e:
                 yield {"type": "text_delta", "text": "Error during planning: {}".format(e)}
                 return
 
             content = "".join(content_parts)
+            reasoning_content = "".join(reasoning_parts)
 
             # Fire orch_plan hook — streaming LLM call completed
             elapsed = int((time.monotonic() - t0) * 1000)
-            tc_names = [tc["name"] for tc in tool_calls]
+            tc_names = [tc["function"]["name"] for tc in tool_calls]
             if context.hooks:
                 context.hooks.fire(
                     "orch_plan",
@@ -195,50 +229,83 @@ class StateMachineOrchestrator:
                 )
 
             if not tool_calls:
-                context.history.append({"role": "assistant", "content": content})
+                msg: dict = {"role": "assistant", "content": content}
+                if reasoning_content:
+                    msg["reasoning_content"] = reasoning_content
+                context.history.append(msg)
                 return
 
             # Tool calls present — record assistant message and execute tools
-            context.history.append({
+            assistant_msg: dict = {
                 "role": "assistant",
                 "content": content,
                 "tool_calls": tool_calls,
-            })
+            }
+            if reasoning_content:
+                assistant_msg["reasoning_content"] = reasoning_content
+            context.history.append(assistant_msg)
 
             for tc in tool_calls:
                 t0 = time.monotonic()
                 is_error = False
+                tc_name = tc["function"]["name"]
                 try:
-                    result = await context.tool_runner.run(tc["name"], tc["arguments"])
+                    tc_args = json.loads(tc["function"]["arguments"])
+                except (json.JSONDecodeError, TypeError):
+                    tc_args = {"raw": tc["function"]["arguments"]}
+                try:
+                    result = await context.tool_runner.run(tc_name, tc_args)
                 except Exception as e:
-                    result = "Error executing {}: {}".format(tc["name"], e)
+                    result = "Error executing {}: {}".format(tc_name, e)
                 elapsed = int((time.monotonic() - t0) * 1000)
                 is_error = str(result).startswith("Error")
 
                 if context.hooks:
                     context.hooks.fire(
                         "tool_exec",
-                        name=tc["name"],
-                        args=tc["arguments"],
+                        name=tc_name,
+                        args=tc_args,
                         result=str(result)[:100],
                         ms=elapsed,
                     )
 
-                yield {
-                    "type": "tool_result",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "result": str(result),
-                    "ms": elapsed,
-                    "is_error": is_error,
-                }
-
-                context.history.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "tool_name": tc["name"],
-                    "content": str(result),
-                })
+                # Skill 指令：注入为 user message，让 LLM 按指令执行
+                result_str = str(result)
+                if result_str.startswith(SKILL_PROMPT_PREFIX):
+                    skill_prompt = result_str[len(SKILL_PROMPT_PREFIX):]
+                    yield {
+                        "type": "tool_result",
+                        "id": tc["id"],
+                        "name": tc_name,
+                        "result": f"Launching skill: {tc_name}",
+                        "ms": elapsed,
+                        "is_error": False,
+                    }
+                    context.history.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "name": tc_name,
+                        "content": f"Launching skill: {tc_name}",
+                    })
+                    context.history.append({
+                        "role": "user",
+                        "content": skill_prompt,
+                    })
+                else:
+                    yield {
+                        "type": "tool_result",
+                        "id": tc["id"],
+                        "name": tc_name,
+                        "result": result_str,
+                        "ms": elapsed,
+                        "is_error": is_error,
+                    }
+                    context.history.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "name": tc_name,
+                        "content": result_str,
+                    })
 
         # Exhausted iterations — yield a fallback
         fallback = f"I was unable to complete the request within {self.max_iterations} steps."

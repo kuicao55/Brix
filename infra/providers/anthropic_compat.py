@@ -11,8 +11,12 @@ from infra.llm_client import LLMResponse, ToolCall
 class AnthropicCompatProvider:
     """Anthropic compatible protocol adapter with long-lived HTTP client."""
 
-    def __init__(self, base_url: str, api_key: str):
+    # Beta header for interleaved thinking support
+    _THINKING_BETA = "interleaved-thinking-2025-05-14"
+
+    def __init__(self, base_url: str, api_key: str, enable_thinking: bool = True):
         self._client = AsyncAnthropic(base_url=base_url, api_key=api_key)
+        self._enable_thinking = enable_thinking
 
     async def close(self):
         await self._client.close()
@@ -35,19 +39,31 @@ class AnthropicCompatProvider:
         kwargs = {
             "model": model,
             "messages": anthropic_messages,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         }
         if system_msg:
             kwargs["system"] = system_msg
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
+        # 启用 thinking（extended thinking）
+        extra_headers = {}
+        if self._enable_thinking:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+            extra_headers["anthropic-beta"] = self._THINKING_BETA
+
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+
         response = await self._client.messages.create(**kwargs)
 
         content = ""
+        reasoning_content = ""
         tool_calls = []
         for block in response.content:
-            if block.type == "text":
+            if block.type == "thinking":
+                reasoning_content += block.thinking
+            elif block.type == "text":
                 content += block.text
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(
@@ -60,6 +76,7 @@ class AnthropicCompatProvider:
             content=content,
             tool_calls=tool_calls,
             finish_reason=response.stop_reason or "stop",
+            reasoning_content=reasoning_content,
         )
 
     async def chat_stream(
@@ -72,6 +89,7 @@ class AnthropicCompatProvider:
 
         Yields:
             {"type": "text_delta", "text": "..."} for text chunks
+            {"type": "thinking_delta", "text": "..."} for thinking chunks
             {"type": "tool_call", "id": ..., "name": ..., "input": ...} at end
         """
         system_msg = ""
@@ -85,20 +103,29 @@ class AnthropicCompatProvider:
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": anthropic_messages,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         }
         if system_msg:
             kwargs["system"] = system_msg
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
+        # 启用 thinking（extended thinking）
+        extra_headers = {}
+        if self._enable_thinking:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+            extra_headers["anthropic-beta"] = self._THINKING_BETA
+
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+
         async with self._client.messages.stream(**kwargs) as stream:
             async for event in stream:
-                if (
-                    event.type == "content_block_delta"
-                    and event.delta.type == "text_delta"
-                ):
-                    yield {"type": "text_delta", "text": event.delta.text}
+                if event.type == "content_block_delta":
+                    if event.delta.type == "text_delta":
+                        yield {"type": "text_delta", "text": event.delta.text}
+                    elif event.delta.type == "thinking_delta":
+                        yield {"type": "thinking_delta", "text": event.delta.thinking}
 
             # Get the final assembled message for tool_use blocks
             final_message = await stream.get_final_message()
@@ -140,7 +167,8 @@ class AnthropicCompatProvider:
                     "name": tc.get("name", ""),
                     "input": tc.get("arguments", {}),
                 })
-            return {"role": "assistant", "content": content}
+            result: dict[str, Any] = {"role": "assistant", "content": content}
+            return result
 
         # Tool result -> user message with tool_result content block
         if role == "tool":
@@ -153,4 +181,6 @@ class AnthropicCompatProvider:
                 }],
             }
 
-        return copy.deepcopy(msg)
+        # 仅保留 Anthropic API 认识的字段，过滤 tool_name 等非标准字段
+        cleaned = {k: v for k, v in msg.items() if k in ("role", "content", "name")}
+        return cleaned if cleaned else copy.deepcopy(msg)
