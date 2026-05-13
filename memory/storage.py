@@ -84,6 +84,13 @@ class MemoryStorage:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
+    def add_full_message(self, message: dict[str, Any]) -> None:
+        """添加完整消息（包含 tool_calls, reasoning_content 等字段）。"""
+        msg = dict(message)  # 浅拷贝，避免修改调用方的 dict
+        if "timestamp" not in msg:
+            msg["timestamp"] = datetime.now(timezone.utc).isoformat()
+        self._messages.append(msg)
+
     def get_history(self, limit: int | None = None) -> list[dict[str, Any]]:
         if limit is None:
             return list(self._messages)

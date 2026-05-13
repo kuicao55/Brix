@@ -152,23 +152,64 @@ class AnthropicCompatProvider:
         return anthropic_tools
 
     def _convert_message(self, msg: dict) -> dict:
-        """Convert an OpenAI-format message to Anthropic format."""
+        """Convert an OpenAI-format message to Anthropic format.
+
+        兼容两种 tool_calls 格式：
+        - 嵌套格式（state machine）：{id, type, function: {name, arguments}}
+        - 扁平格式（LangGraph）：{id, name, arguments}
+        """
+        import json as _json
+
         role = msg.get("role", "")
 
         # Assistant with tool_calls -> content blocks with tool_use
         if role == "assistant" and msg.get("tool_calls"):
-            content = []
+            content: list[dict[str, Any]] = []
+            # thinking block（reasoning_content）
+            if msg.get("reasoning_content"):
+                content.append({
+                    "type": "thinking",
+                    "thinking": msg["reasoning_content"],
+                })
             if msg.get("content"):
                 content.append({"type": "text", "text": msg["content"]})
             for tc in msg["tool_calls"]:
+                # 兼容嵌套/扁平两种格式
+                tc_name = tc.get("name", "")
+                if not tc_name and "function" in tc:
+                    tc_name = tc["function"].get("name", "")
+                tc_args = tc.get("arguments", {})
+                if "function" in tc and not tc.get("arguments"):
+                    raw_args = tc["function"].get("arguments", {})
+                    if isinstance(raw_args, str):
+                        try:
+                            tc_args = _json.loads(raw_args)
+                        except (_json.JSONDecodeError, TypeError):
+                            tc_args = {"raw": raw_args}
+                    else:
+                        tc_args = raw_args
+                elif isinstance(tc_args, str):
+                    try:
+                        tc_args = _json.loads(tc_args)
+                    except (_json.JSONDecodeError, TypeError):
+                        tc_args = {"raw": tc_args}
                 content.append({
                     "type": "tool_use",
                     "id": tc.get("id", ""),
-                    "name": tc.get("name", ""),
-                    "input": tc.get("arguments", {}),
+                    "name": tc_name,
+                    "input": tc_args,
                 })
-            result: dict[str, Any] = {"role": "assistant", "content": content}
-            return result
+            return {"role": "assistant", "content": content}
+
+        # Assistant with reasoning_content but no tool_calls
+        if role == "assistant" and msg.get("reasoning_content"):
+            content = [{
+                "type": "thinking",
+                "thinking": msg["reasoning_content"],
+            }]
+            if msg.get("content"):
+                content.append({"type": "text", "text": msg["content"]})
+            return {"role": "assistant", "content": content}
 
         # Tool result -> user message with tool_result content block
         if role == "tool":

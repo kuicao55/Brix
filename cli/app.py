@@ -225,6 +225,9 @@ class BrixCLI:
             hooks=hooks,
         )
 
+        # 记录 history 长度，用于提取本轮新增消息
+        original_history_count = len(context.history)
+
         try:
             response = await self._orchestrator.run(user_input, context)
         except Exception as exc:
@@ -238,9 +241,12 @@ class BrixCLI:
         if response.startswith("Error"):
             log.set_error(response)
 
-        self._memory.add_message("user", user_input)
+        # 持久化本轮新增的完整消息（包含 tool_calls、reasoning_content 等）
         if not response.startswith("Error"):
-            self._memory.add_message("assistant", response)
+            new_messages = context.history[original_history_count:]
+            for msg in new_messages:
+                if msg.get("role") != "system":
+                    self._memory.add_full_message(msg)
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not response.startswith("Error") else 1)
 
@@ -309,6 +315,9 @@ class BrixCLI:
             model=model,
             hooks=hooks,
         )
+
+        # 记录 history 长度，用于提取本轮新增消息
+        original_history_count = len(context.history)
 
         # Planning stage
         indicator.update("Planning", model.split("/")[-1])
@@ -422,10 +431,12 @@ class BrixCLI:
             has_error = True
             log.set_error(response)
 
-        # Persist conversation
-        self._memory.add_message("user", user_input)
+        # 持久化本轮新增的完整消息（包含 tool_calls、reasoning_content 等）
         if not has_error:
-            self._memory.add_message("assistant", response)
+            new_messages = context.history[original_history_count:]
+            for msg in new_messages:
+                if msg.get("role") != "system":
+                    self._memory.add_full_message(msg)
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not has_error else 1)
 

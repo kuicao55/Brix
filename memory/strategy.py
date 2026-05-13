@@ -1,6 +1,7 @@
 """记忆策略 — 构建系统提示词和上下文窗口。"""
 from __future__ import annotations
 
+import json as _json
 from string import Template
 from typing import Any
 
@@ -189,7 +190,7 @@ class MemoryStrategy:
 
         # Count system messages against budget
         system_tokens = sum(
-            self._count_tokens(m.get("content") or "") for m in system_msgs
+            self._count_message_tokens(m) for m in system_msgs
         )
         remaining = limit - system_tokens
 
@@ -230,8 +231,12 @@ class MemoryStrategy:
         total = 0
         window: list[dict[str, Any]] = []
         for msg in reversed(non_system):
-            msg_tokens = self._count_tokens(msg.get("content") or "")
+            msg_tokens = self._count_message_tokens(msg)
             if total + msg_tokens > remaining and window:
+                break
+            # 工具消息（有 tool_calls 或 role == "tool"）作为原子单元：放不下就整体跳过
+            is_tool_msg = msg.get("tool_calls") or msg.get("role") == "tool"
+            if is_tool_msg and total + msg_tokens > remaining:
                 break
             window.append(msg)
             total += msg_tokens
@@ -239,6 +244,24 @@ class MemoryStrategy:
 
         # Prepend system messages
         return system_msgs + window
+
+    def _count_message_tokens(self, msg: dict[str, Any]) -> int:
+        """计算消息的 token 数，包含 tool_calls、reasoning_content 等结构化字段。"""
+        total = self._count_tokens(msg.get("content") or "")
+        # tool_calls: JSON 序列化后计数
+        tool_calls = msg.get("tool_calls")
+        if tool_calls:
+            total += self._count_tokens(_json.dumps(tool_calls, ensure_ascii=False))
+        # reasoning_content
+        reasoning = msg.get("reasoning_content")
+        if reasoning:
+            total += self._count_tokens(reasoning)
+        # tool result 字段（tool_call_id, name 较小，约 10 tokens）
+        if msg.get("tool_call_id"):
+            total += self._count_tokens(str(msg["tool_call_id"]))
+        if msg.get("name"):
+            total += self._count_tokens(str(msg["name"]))
+        return total
 
     def _count_tokens(self, text: str) -> int:
         """Count tokens in text. Falls back to char/4 if tiktoken unavailable."""

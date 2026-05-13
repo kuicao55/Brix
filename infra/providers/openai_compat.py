@@ -61,12 +61,47 @@ class OpenAICompatProvider:
     async def close(self):
         await self._client.close()
 
+    @staticmethod
+    def _clean_messages(messages: list[dict]) -> list[dict]:
+        """归一化 tool_calls 格式（扁平 → 嵌套）。
+
+        注意：保留 reasoning_content，DeepSeek thinking 模式要求回传。
+        """
+        clean = []
+        for m in messages:
+            if m.get("tool_calls"):
+                normalized = []
+                for tc in m["tool_calls"]:
+                    if "function" in tc:
+                        normalized.append(tc)  # 已是嵌套格式
+                    else:
+                        # 扁平格式 → 嵌套格式
+                        args = tc.get("arguments", {})
+                        if isinstance(args, dict):
+                            args_str = json.dumps(args, ensure_ascii=False)
+                        else:
+                            args_str = str(args)
+                        normalized.append({
+                            "id": tc.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name", ""),
+                                "arguments": args_str,
+                            },
+                        })
+                m = {**m, "tool_calls": normalized}
+            clean.append(m)
+        return clean
+
     async def chat(
         self,
         messages: list[dict],
         model: str,
         tools: list[dict] | None,
     ) -> LLMResponse:
+        # 归一化 tool_calls 格式（扁平 → 嵌套）
+        messages = self._clean_messages(messages)
+
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -131,6 +166,9 @@ class OpenAICompatProvider:
             {"type": "thinking_delta", "text": "..."} for thinking/reasoning chunks
             {"type": "tool_call", "id": ..., "name": ..., "input": ...} at end
         """
+        # 归一化 tool_calls 格式（扁平 → 嵌套）
+        messages = self._clean_messages(messages)
+
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,

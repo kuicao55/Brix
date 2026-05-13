@@ -1478,3 +1478,261 @@ class TestConcurrentResume:
         assert len(final) >= 1
         contents = [m["content"] for m in final]
         assert "late-reply" in contents
+
+
+# ─── add_full_message 测试 ─────────────────────────────────────────────
+
+class TestAddFullMessage:
+    """add_full_message 持久化完整消息结构。"""
+
+    def test_storage_add_full_message_preserves_all_fields(self, tmp_path):
+        """add_full_message 应保留 tool_calls、reasoning_content 等字段。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(sm, sid)
+
+        msg = {
+            "role": "assistant",
+            "content": "I'll use a tool.",
+            "tool_calls": [
+                {"id": "call_123", "type": "function", "function": {"name": "bash", "arguments": '{"cmd":"ls"}'}},
+            ],
+            "reasoning_content": "Let me check the files.",
+        }
+        storage.add_full_message(msg)
+        storage.save()
+
+        loaded = sm.load_session(sid)
+        assert len(loaded) == 1
+        assert loaded[0]["tool_calls"] == msg["tool_calls"]
+        assert loaded[0]["reasoning_content"] == "Let me check the files."
+        assert loaded[0]["role"] == "assistant"
+
+    def test_storage_add_full_message_adds_timestamp(self, tmp_path):
+        """add_full_message 在消息没有 timestamp 时自动添加。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(sm, sid)
+
+        storage.add_full_message({"role": "tool", "tool_call_id": "call_123", "name": "bash", "content": "file.txt"})
+        storage.save()
+
+        loaded = sm.load_session(sid)
+        assert "timestamp" in loaded[0]
+        assert loaded[0]["tool_call_id"] == "call_123"
+        assert loaded[0]["name"] == "bash"
+
+    def test_storage_add_full_message_does_not_mutate_input(self, tmp_path):
+        """add_full_message 不应修改传入的 dict。"""
+        from memory.session import SessionManager
+        from memory.storage import MemoryStorage
+        sm = SessionManager(tmp_path)
+        sid = sm.create_session()
+        storage = MemoryStorage(sm, sid)
+
+        msg = {"role": "assistant", "content": "hi"}
+        storage.add_full_message(msg)
+        assert "timestamp" not in msg  # 原始 dict 不应被修改
+
+    def test_provider_add_full_message(self, tmp_path):
+        """BrixMemoryProvider.add_full_message 应正确持久化。"""
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+
+        provider.add_full_message({
+            "role": "assistant",
+            "content": "result",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        })
+        provider.save_session()
+
+        sessions = provider.list_sessions()
+        assert len(sessions) == 1
+        sid = sessions[0]["id"]
+        loaded = provider.load_session(sid)
+        assert loaded[0]["tool_calls"][0]["function"]["name"] == "x"
+
+
+# ─── Token 计数结构化消息测试 ─────────────────────────────────────────
+
+class TestCountMessageTokens:
+    """_count_message_tokens 应覆盖 tool_calls、reasoning_content 等字段。"""
+
+    def _make_strategy(self, tmp_path, max_tokens=8000):
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        from memory.strategy import MemoryStrategy
+        soul = SoulManager(tmp_path)
+        user = UserMemoryManager(tmp_path)
+        return MemoryStrategy(soul_manager=soul, user_manager=user, max_tokens=max_tokens)
+
+    def test_plain_text_message(self, tmp_path):
+        strategy = self._make_strategy(tmp_path)
+        tokens = strategy._count_message_tokens({"role": "user", "content": "hello world"})
+        assert tokens > 0
+
+    def test_tool_calls_add_tokens(self, tmp_path):
+        strategy = self._make_strategy(tmp_path)
+        plain = strategy._count_message_tokens({"role": "assistant", "content": "ok"})
+        with_tc = strategy._count_message_tokens({
+            "role": "assistant",
+            "content": "ok",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"cmd":"ls"}'}}],
+        })
+        assert with_tc > plain
+
+    def test_reasoning_content_adds_tokens(self, tmp_path):
+        strategy = self._make_strategy(tmp_path)
+        plain = strategy._count_message_tokens({"role": "assistant", "content": "ok"})
+        with_reasoning = strategy._count_message_tokens({
+            "role": "assistant",
+            "content": "ok",
+            "reasoning_content": "I need to think about this carefully.",
+        })
+        assert with_reasoning > plain
+
+    def test_tool_message_counts_fields(self, tmp_path):
+        strategy = self._make_strategy(tmp_path)
+        tokens = strategy._count_message_tokens({
+            "role": "tool",
+            "tool_call_id": "call_abc123",
+            "name": "bash",
+            "content": "file1.txt\nfile2.txt",
+        })
+        assert tokens > 0
+
+    def test_context_window_skips_tool_messages_when_full(self, tmp_path):
+        """工具消息放不下时应整体跳过（原子裁剪）。"""
+        strategy = self._make_strategy(tmp_path, max_tokens=50)
+
+        history = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "ok", "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"cmd":"ls"}'}},
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "name": "bash", "content": "result " * 200},
+            {"role": "assistant", "content": "done"},
+        ]
+        window = strategy.get_context_window(history, max_tokens=50)
+        roles = [m.get("role") for m in window if m.get("role") != "system"]
+        # assistant("done") 应保留（最后一条，往回走的第一个）
+        assert "assistant" in roles
+        # tool 消息太大（>50 tokens），应被原子跳过
+        assert "tool" not in roles
+
+
+# ─── Anthropic provider 转换测试 ─────────────────────────────────────
+
+class TestAnthropicConvertMessage:
+    """_convert_message 应正确处理 tool_calls 和 reasoning_content。"""
+
+    def _make_provider(self):
+        from infra.providers.anthropic_compat import AnthropicCompatProvider
+        return AnthropicCompatProvider.__new__(AnthropicCompatProvider)
+
+    def test_nested_tool_calls_format(self):
+        provider = self._make_provider()
+        msg = {
+            "role": "assistant",
+            "content": "using tool",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"cmd":"ls"}'}},
+            ],
+        }
+        result = provider._convert_message(msg)
+        assert result["role"] == "assistant"
+        assert len(result["content"]) == 2  # text + tool_use
+        assert result["content"][0]["type"] == "text"
+        assert result["content"][1]["type"] == "tool_use"
+        assert result["content"][1]["name"] == "bash"
+        assert result["content"][1]["input"] == {"cmd": "ls"}
+
+    def test_flat_tool_calls_format(self):
+        provider = self._make_provider()
+        msg = {
+            "role": "assistant",
+            "content": "using tool",
+            "tool_calls": [
+                {"id": "c1", "name": "bash", "arguments": {"cmd": "ls"}},
+            ],
+        }
+        result = provider._convert_message(msg)
+        assert result["content"][1]["type"] == "tool_use"
+        assert result["content"][1]["name"] == "bash"
+        assert result["content"][1]["input"] == {"cmd": "ls"}
+
+    def test_reasoning_content_to_thinking_block(self):
+        provider = self._make_provider()
+        msg = {
+            "role": "assistant",
+            "content": "answer",
+            "reasoning_content": "I thought about it.",
+        }
+        result = provider._convert_message(msg)
+        assert result["content"][0]["type"] == "thinking"
+        assert result["content"][0]["thinking"] == "I thought about it."
+        assert result["content"][1]["type"] == "text"
+        assert result["content"][1]["text"] == "answer"
+
+    def test_tool_calls_with_reasoning_content(self):
+        provider = self._make_provider()
+        msg = {
+            "role": "assistant",
+            "content": "let me check",
+            "tool_calls": [{"id": "c1", "name": "bash", "arguments": {"cmd": "ls"}}],
+            "reasoning_content": "need to see files",
+        }
+        result = provider._convert_message(msg)
+        assert result["content"][0]["type"] == "thinking"
+        assert result["content"][1]["type"] == "text"
+        assert result["content"][2]["type"] == "tool_use"
+
+    def test_tool_role_to_tool_result(self):
+        provider = self._make_provider()
+        msg = {"role": "tool", "tool_call_id": "c1", "name": "bash", "content": "output"}
+        result = provider._convert_message(msg)
+        assert result["role"] == "user"
+        assert result["content"][0]["type"] == "tool_result"
+        assert result["content"][0]["tool_use_id"] == "c1"
+
+
+# ─── OpenAI provider 清理测试 ─────────────────────────────────────────
+
+class TestOpenAICleanMessages:
+    """_clean_messages 应归一化 tool_calls 并保留 reasoning_content。"""
+
+    def test_preserves_reasoning_content(self):
+        from infra.providers.openai_compat import OpenAICompatProvider
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "ok", "reasoning_content": "thinking..."},
+        ]
+        cleaned = OpenAICompatProvider._clean_messages(messages)
+        assert cleaned[1]["reasoning_content"] == "thinking..."
+
+    def test_normalizes_flat_tool_calls_to_nested(self):
+        from infra.providers.openai_compat import OpenAICompatProvider
+        messages = [
+            {"role": "assistant", "content": "ok", "tool_calls": [
+                {"id": "c1", "name": "bash", "arguments": {"cmd": "ls"}},
+            ]},
+        ]
+        cleaned = OpenAICompatProvider._clean_messages(messages)
+        tc = cleaned[0]["tool_calls"][0]
+        assert "function" in tc
+        assert tc["function"]["name"] == "bash"
+        assert tc["function"]["arguments"] == '{"cmd": "ls"}'
+
+    def test_preserves_nested_tool_calls(self):
+        from infra.providers.openai_compat import OpenAICompatProvider
+        messages = [
+            {"role": "assistant", "content": "ok", "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"cmd":"ls"}'}},
+            ]},
+        ]
+        cleaned = OpenAICompatProvider._clean_messages(messages)
+        assert cleaned[0]["tool_calls"][0]["function"]["name"] == "bash"

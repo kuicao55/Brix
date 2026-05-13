@@ -92,6 +92,12 @@ class BrixMemoryProvider:
         self._has_messages = True
         self._storage.add_message(role, content)
 
+    def add_full_message(self, message: dict[str, Any]) -> None:
+        """向当前会话添加一条完整消息（包含 tool_calls 等结构化字段）。"""
+        self._ensure_session()
+        self._has_messages = True
+        self._storage.add_full_message(message)
+
     def save_session(self) -> None:
         """持久化当前会话消息到磁盘。无 session 时为空操作。
 

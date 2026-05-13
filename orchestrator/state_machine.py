@@ -44,7 +44,9 @@ class StateMachineOrchestrator:
 
     async def run(self, user_input: str, context: OrchestratorContext) -> str:
         """Main orchestrator loop. Returns the final assistant text."""
-        context.history.append({"role": "user", "content": user_input})
+        # resume 时去重：避免重复添加已持久化的 user 消息
+        if not context.history or context.history[-1].get("role") != "user" or context.history[-1].get("content") != user_input:
+            context.history.append({"role": "user", "content": user_input})
 
         for self._current_iter in range(1, self.max_iterations + 1):
             try:
@@ -171,7 +173,9 @@ class StateMachineOrchestrator:
 
     async def run_stream(self, user_input, context):
         """Streaming orchestrator loop. Yields event dicts to the caller."""
-        context.history.append({"role": "user", "content": user_input})
+        # resume 时去重：避免重复添加已持久化的 user 消息
+        if not context.history or context.history[-1].get("role") != "user" or context.history[-1].get("content") != user_input:
+            context.history.append({"role": "user", "content": user_input})
 
         for iteration in range(1, self.max_iterations + 1):
             tool_schemas = []
