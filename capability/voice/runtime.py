@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from enum import Enum
 from typing import Any, Callable, Optional
 
 from capability.voice.config import VoiceConfig
@@ -15,6 +16,15 @@ from capability.voice.protocol import VoiceRuntime
 from capability.voice.transport.local_audio import LocalAudioTransport
 
 logger = logging.getLogger(__name__)
+
+
+class VoiceConversationState(Enum):
+    """语音对话状态机。"""
+    IDLE = "idle"
+    SLEEPING = "sleeping"
+    LISTENING = "listening"
+    PROCESSING = "processing"
+    SPEAKING = "speaking"
 
 
 class VoiceRuntimeImpl:
@@ -31,6 +41,7 @@ class VoiceRuntimeImpl:
         self._llm_fn = llm_fn
         self._running = False
         self._shutdown = False
+        self._state = VoiceConversationState.IDLE
 
         self._on_voice_input: Optional[Callable[[str], None]] = None
         self._on_state_change: Optional[Callable[[str], None]] = None
@@ -44,6 +55,10 @@ class VoiceRuntimeImpl:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def state(self) -> VoiceConversationState:
+        return self._state
 
     def on_voice_input(self, callback: Callable[[str], None]) -> None:
         self._on_voice_input = callback
@@ -82,7 +97,13 @@ class VoiceRuntimeImpl:
             hooks=self._hooks,
         )
 
-        await self._run_pipeline()
+        try:
+            await self._run_pipeline()
+        except Exception as exc:
+            logger.error("Pipeline startup failed: %s", exc, exc_info=True)
+            self._state = VoiceConversationState.IDLE
+            self._hooks.fire("voice_state", state="error", error=str(exc))
+            return
 
         self._running = True
 
@@ -111,15 +132,10 @@ class VoiceRuntimeImpl:
         except Exception as exc:
             logger.error("Error stopping pipeline: %s", exc)
         finally:
-            if self._transport is not None:
-                await self._transport.stop()
-                self._transport = None
-
-            self._vad = None
-            self._stt = None
-            self._cleanup = None
+            await self._cleanup_audio()
 
             self._running = False
+            self._state = VoiceConversationState.IDLE
 
             self._hooks.fire("voice_state", state="idle")
             if self._on_state_change:
@@ -127,8 +143,19 @@ class VoiceRuntimeImpl:
 
             logger.info("VoiceRuntime stopped")
 
+    async def _cleanup_audio(self) -> None:
+        """清理音频资源。"""
+        if self._transport is not None:
+            await self._transport.stop()
+            self._transport = None
+
+        self._vad = None
+        self._stt = None
+        self._cleanup = None
+
     def _handle_final_text(self, text: str) -> None:
         if self._shutdown:
             return
+        self._state = VoiceConversationState.PROCESSING
         if self._on_voice_input:
             self._on_voice_input(text)
