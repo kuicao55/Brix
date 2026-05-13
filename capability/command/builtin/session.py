@@ -67,7 +67,7 @@ class HistoryCommand(Command):
             print("No history yet.")
             return CommandResult(type=CommandResultType.NONE)
 
-        sessions = context.memory.load_sessions_index()
+        sessions = context.memory.list_sessions()
         if not sessions:
             print("No history yet.")
             return CommandResult(type=CommandResultType.NONE)
@@ -102,15 +102,58 @@ class ResumeCommand(Command):
             print("No sessions yet.")
             return CommandResult(type=CommandResultType.NONE)
 
-        sessions = context.memory.load_sessions_index()
+        sessions = context.memory.list_sessions()
         if not sessions:
             print("No sessions yet.")
             return CommandResult(type=CommandResultType.NONE)
 
-        # 简化实现：打印会话列表
-        for i, s in enumerate(sessions[:10], 1):
+        # 带 ID 前缀时尝试直接匹配
+        if args.strip():
+            prefix = args.strip()
+            matches = [s for s in sessions if s["id"].startswith(prefix)]
+            if len(matches) == 1:
+                self._resume_and_render(context, matches[0]["id"])
+                return CommandResult(type=CommandResultType.NONE)
+            if len(matches) > 1:
+                print(f"Ambiguous prefix, {len(matches)} matches. Opening selector...")
+
+        # 交互式分页选择器
+        def format_session(s: dict, idx: int) -> str:
             sid = s.get("id", "?")[:8]
             count = s.get("message_count", 0)
-            print(f"  {i}. {sid} ({count} msgs)")
+            updated = s.get("updated", "")[:10]  # YYYY-MM-DD
+            preview = s.get("preview", "")[:40].replace("\n", " ")
+            return f"{sid}  {count:>3} msgs  {updated}  {preview}"
+
+        from cli.paginated_selector import PaginatedSelector
+
+        selector = PaginatedSelector(
+            items=sessions,
+            format_item=format_session,
+            page_size=10,
+            title="选择要恢复的会话",
+        )
+        selected = await selector.prompt_async()
+        if selected is not None:
+            self._resume_and_render(context, selected["id"])
 
         return CommandResult(type=CommandResultType.NONE)
+
+    @staticmethod
+    def _resume_and_render(context: CommandContext, session_id: str) -> None:
+        """恢复会话并用完整聊天 UI 渲染历史。"""
+        try:
+            msgs = context.memory.resume_session(session_id)
+            if context.console:
+                context.console.print(
+                    f"[dim]Resumed session {session_id[:8]}... ({len(msgs)} messages)[/]"
+                )
+                if msgs:
+                    from cli.display import render_history
+
+                    context.console.print()
+                    render_history(context.console, msgs)
+            else:
+                print(f"Resumed session {session_id[:8]}... ({len(msgs)} messages)")
+        except FileNotFoundError:
+            print(f"Session not found: {session_id[:8]}...")

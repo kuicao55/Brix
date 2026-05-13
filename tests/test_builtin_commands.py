@@ -83,7 +83,7 @@ async def test_help_command():
 async def test_history_command_no_sessions():
     """无会话时应返回 NONE。"""
     mock_memory = MagicMock()
-    mock_memory.load_sessions_index.return_value = []
+    mock_memory.list_sessions.return_value = []
     ctx = CommandContext(memory=mock_memory)
     cmd = HistoryCommand()
     result = await cmd.execute("", ctx)
