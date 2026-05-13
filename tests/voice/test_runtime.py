@@ -59,12 +59,25 @@ def test_three_state_machine():
     llm_fn = AsyncMock()
     runtime = VoiceRuntimeImpl(config=cfg, hooks=hooks, llm_fn=llm_fn)
 
+    # 初始状态为 IDLE
     assert runtime.state == VoiceConversationState.IDLE
+
+    # _handle_final_text 将状态转换为 PROCESSING
+    runtime._handle_final_text("test input")
+    assert runtime.state == VoiceConversationState.PROCESSING
+
+    # _on_voice_input 回调被触发
+    callback = MagicMock()
+    runtime.on_voice_input(callback)
+    runtime._handle_final_text("hello world")
+    callback.assert_called_once_with("hello world")
 
 
 @pytest.mark.asyncio
 async def test_runtime_pipeline_error_recovery():
     """VoiceRuntimeImpl 在 Pipeline 崩溃时恢复到 IDLE 状态。"""
+    from capability.voice.runtime import VoiceConversationState
+
     cfg = VoiceConfig()
     hooks = MagicMock()
     llm_fn = AsyncMock()
@@ -73,8 +86,11 @@ async def test_runtime_pipeline_error_recovery():
     # 模拟 Pipeline 崩溃
     with patch.object(runtime, "_run_pipeline", side_effect=Exception("Pipeline crashed")):
         await runtime.start()
-        # Pipeline 崩溃后应恢复到 IDLE
-        # 注：实际实现中 _run_pipeline 的异常会被顶层错误边界捕获
+
+    # Pipeline 崩溃后应恢复到 IDLE
+    assert runtime.state == VoiceConversationState.IDLE
+    assert not runtime.is_running
+    hooks.fire.assert_any_call("voice_state", state="error", error="Pipeline crashed")
 
 
 @pytest.mark.asyncio
@@ -100,4 +116,5 @@ async def test_runtime_graceful_shutdown():
         await runtime.stop()
 
     assert not runtime.is_running
+    assert "cleanup_audio" in shutdown_order
     hooks.fire.assert_any_call("voice_state", state="idle")
