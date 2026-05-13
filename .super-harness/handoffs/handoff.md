@@ -1,41 +1,28 @@
-# Handoff — 2026-05-13 00:30
+# Handoff — 2026-05-13 22:14
 
 ## State
-**Status:** MILESTONE_DONE
+**Status:** PLANNING
 
 ## Context Index
-- **spec:** .super-harness/specs/2026-05-12-skill-protocol.md
-- **plan:** .super-harness/plans/2026-05-12-milestone-11.md
+- **spec:** .super-harness/specs/2026-05-07-phase1-experience-upgrade.md
+- **plan:** .super-harness/plans/2026-05-13-milestone-12.md
 - **progress:** .super-harness/status/claude-progress.json
 - **project:** .super-harness/status/PROJECT.md
 
 ## Worktree
-(no worktree — merged back to version branch)
+## Worktree
+(no worktree — working on main)
 
 ## Current Position
-- milestone_id: milestone-11
-- tasks_completed: [1, 2, 3, 4, 5, 6]
-- All 6 tasks completed and Code Quality Review approved
-
-## Milestone Summary
-- **Task 1:** Core Command types (CommandType, CommandMeta, CommandResult, CommandContext, Command ABC) — 8 tests
-- **Task 2:** CommandRegistry (register/get/list_all/get_skill_listing_text) — 8 tests
-- **Task 3:** FileSkill loader (SKILL.md parsing + $ARGUMENTS substitution) — 9 tests
-- **Task 4:** SkillCommand (wraps FileSkill as Command) — 5 tests
-- **Task 5:** Builtin commands (9 system commands + commit SKILL.md) — 10 tests
-- **Task 6:** CLI integration (dispatch, completer, system prompt injection) — 48 tests
+- milestone_id: milestone-12
+- task_id: null (no task started yet)
+- tasks_completed: []
 
 ## Deferred Items
-- Prompt injection sanitization for skill metadata (Phase 2+)
-- Command collision protection (Phase 2+)
-- allowed_tools/model enforcement in CLI dispatch (Phase 2+)
-- /resume full interactive resume (Phase 2+)
-- /log redaction (Phase 2+)
+None
 
 ## Key Decisions
-- Used if/elif instead of match/case for Python 3.8 compatibility
-- Added allowed_tools, model, context, skill_root as proper CommandMeta fields (not dynamic attributes)
-- ResumeCommand simplified to session listing only
+语音模块分 3 个 milestone: P0(VAD+STT+Cleanup), P1+P2(TTS+WakeWord), P3+P4(CLI+Polish). 总计 13 tasks. Spec 已定稿含 TTS 流式策略、LLM Cleanup prompt、连续对话状态机、Pipeline 错误边界、音频重采样、句间缓冲、Hook 统一事件、优雅关闭顺序。
 
 ## Next Action
-/super-harness:resume — start next milestone
+/super-harness:resume
