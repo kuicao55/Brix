@@ -39,10 +39,13 @@ class CommandRegistry:
         ]
         if not skills:
             return ""
-        lines = ["可用的 Skills:"]
+        lines = ["The following skills are available for use with the Skill tool:"]
         for meta in skills:
-            line = f"- /{meta.name}: {meta.description}"
+            line = f"- {meta.name}: {meta.description}"
             if meta.when_to_use:
                 line += f" ({meta.when_to_use})"
             lines.append(line)
+        lines.append("")
+        lines.append("Use the Skill tool to execute them when the user's request matches a skill.")
+        lines.append("When users reference a \"/<name>\" command, invoke the Skill tool with that name.")
         return "\n".join(lines)

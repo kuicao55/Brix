@@ -192,7 +192,7 @@ class LangGraphOrchestrator:
             context.history.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "tool_name": tc["name"],
+                "name": tc["name"],
                 "content": str(result),
             })
 
@@ -317,7 +317,7 @@ class LangGraphOrchestrator:
                 context.history.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "tool_name": tc["name"],
+                    "name": tc["name"],
                     "content": str(result),
                 })
 

@@ -217,7 +217,7 @@ async def test_tool_execution_error():
     # History contains the assistant's tool-call message
     tool_call_msgs = [m for m in ctx.history if m.get("role") == "assistant" and m.get("tool_calls")]
     assert len(tool_call_msgs) >= 1
-    assert tool_call_msgs[0]["tool_calls"][0]["name"] == "failing_tool"
+    assert tool_call_msgs[0]["tool_calls"][0]["function"]["name"] == "failing_tool"
 
     # History contains the error tool response
     tool_responses = [m for m in ctx.history if m.get("role") == "tool"]

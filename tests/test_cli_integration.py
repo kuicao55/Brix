@@ -62,11 +62,13 @@ def test_skill_listing_injection():
 
     text = reg.get_skill_listing_text()
     lines = text.strip().splitlines()
-    # 第一行是标题，后续每行是一个 Skill 条目
-    entry_names = [line.split(":")[0].strip().lstrip("- ") for line in lines[1:]]
-    assert "/skill-stub" in entry_names
-    assert "/stub" not in entry_names  # 系统命令不应出现在 Skill 列表中
+    # 第一行是标题，后续每行是一个 Skill 条目（直到空行或 footer）
+    entry_lines = [l for l in lines[1:] if l.startswith("- ")]
+    entry_names = [l.split(":")[0].strip().lstrip("- ") for l in entry_lines]
+    assert "skill-stub" in entry_names
+    assert "stub" not in entry_names  # 系统命令不应出现在 Skill 列表中
     assert "当需要测试时" in text
+    assert "Skill tool" in text  # 应包含 Skill tool 调用提示
 
 
 @pytest.mark.asyncio
