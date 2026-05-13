@@ -159,11 +159,11 @@
       "title": "P3+P4: CLI Integration + Polish — /voice 命令 + 连续对话 + 配置化",
       "description": "P3+P4: CLI Integration + Polish — /voice 命令 + 连续对话 + 配置化",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-13-voice-module.md",
       "plan_file": ".super-harness/plans/2026-05-13-milestone-14.md",
       "session_date": "2026-05-13T22:14:16Z",
-      "notes": null
+      "notes": "Completed 2026-05-14. 4 tasks: /voice命令(7 tests), CLI集成(5 tests), 连续对话(9 tests), 配置集成(5 tests). 130 voice+CLI tests pass. CQR: 3 rounds Task 1 (Protocol violation, hollow tests, TDD order), 2 rounds Task 2 (hollow tests, cleanup, CancelledError), 2 rounds Task 3 (stop leak, shutdown guard, hollow test)."
     }
   ]
 }
