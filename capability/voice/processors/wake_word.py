@@ -70,7 +70,12 @@ class WakeWordProcessor:
         frames = []
         if self._awake:
             # 已唤醒：透传音频，检测是否该休眠
-            self._silence_count += 1
+            if audio_bytes:
+                # 有音频 → 重置静默计数
+                self._silence_count = 0
+            else:
+                # 静默 → 递增计数
+                self._silence_count += 1
             if self._silence_count >= self._silence_limit:
                 self._awake = False
                 frames.append(VoiceStateFrame(state="sleep"))
