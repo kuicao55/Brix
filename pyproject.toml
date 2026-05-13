@@ -17,11 +17,13 @@ dependencies = [
 
 [project.optional-dependencies]
 voice = [
-    "silero-vad>=4.0",
+    "silero-vad>=5.0",
     "faster-whisper>=1.0",
+    "openwakeword>=0.6",
     "pyaudio>=0.2.14",
+    "websockets>=12.0",
     "numpy>=1.24",
-    "torch>=2.0",
+    "scipy>=1.11",
 ]
 dev = [
     "pytest>=8.0",
