@@ -17,7 +17,8 @@ class VoiceConfig:
     # VAD
     vad_threshold: float = 0.5
     min_speech_ms: int = 250
-    min_silence_ms: int = 500
+    min_silence_ms: int = 800  # 中文自然停顿较长，避免说话中间被截断
+    post_speech_wait_ms: int = 1500  # speech_end 后等待续说的时间窗口
 
     # STT
     stt_model: str = "small"

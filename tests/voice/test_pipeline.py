@@ -68,6 +68,7 @@ async def test_pipeline_feeds_audio_to_stt():
         stt=mock_stt,
         cleanup=mock_cleanup,
         on_final_text=lambda t: final_texts.append(t),
+        post_speech_wait_ms=0,
     )
 
     # 放入 4 个音频 chunk

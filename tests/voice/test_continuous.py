@@ -19,9 +19,10 @@ def test_continuous_mode_initial_state():
     assert runtime._continuous is False
 
 
-def test_on_tts_complete_continuous_transitions_to_sleeping():
+@pytest.mark.asyncio
+async def test_on_tts_complete_continuous_transitions_to_sleeping():
     """连续模式下 TTS 完成后进入 SLEEPING 状态。"""
-    cfg = VoiceConfig(continuous_idle_timeout=10.0)
+    cfg = VoiceConfig(continuous_idle_timeout=10.0, tts_cooldown_ms=10)
     hooks = MagicMock()
     llm_fn = AsyncMock()
     runtime = VoiceRuntimeImpl(config=cfg, hooks=hooks, llm_fn=llm_fn)
@@ -30,6 +31,8 @@ def test_on_tts_complete_continuous_transitions_to_sleeping():
     runtime._state = VoiceConversationState.SPEAKING
 
     runtime._on_tts_complete()
+    # 等待异步的 _wait_for_playback_finish 完成
+    await asyncio.sleep(0.2)
 
     assert runtime.state == VoiceConversationState.SLEEPING
     hooks.fire.assert_called_with("voice_state", state="sleeping")
@@ -39,9 +42,10 @@ def test_on_tts_complete_continuous_transitions_to_sleeping():
         runtime._idle_timeout_task.cancel()
 
 
-def test_on_tts_complete_non_continuous_transitions_to_idle():
+@pytest.mark.asyncio
+async def test_on_tts_complete_non_continuous_transitions_to_idle():
     """非连续模式下 TTS 完成后回到 IDLE 状态。"""
-    cfg = VoiceConfig()
+    cfg = VoiceConfig(tts_cooldown_ms=10)
     hooks = MagicMock()
     llm_fn = AsyncMock()
     runtime = VoiceRuntimeImpl(config=cfg, hooks=hooks, llm_fn=llm_fn)
@@ -50,6 +54,8 @@ def test_on_tts_complete_non_continuous_transitions_to_idle():
     runtime._state = VoiceConversationState.SPEAKING
 
     runtime._on_tts_complete()
+    # 等待异步的 _wait_for_playback_finish 完成
+    await asyncio.sleep(0.2)
 
     assert runtime.state == VoiceConversationState.IDLE
     hooks.fire.assert_called_with("voice_state", state="idle")
@@ -139,7 +145,7 @@ async def test_start_stores_continuous_flag():
 @pytest.mark.asyncio
 async def test_stop_cancels_idle_timeout():
     """stop() 取消空闲超时任务，不触发残留 hook。"""
-    cfg = VoiceConfig(continuous_idle_timeout=5.0)
+    cfg = VoiceConfig(continuous_idle_timeout=5.0, tts_cooldown_ms=10)
     hooks = MagicMock()
     llm_fn = AsyncMock()
     runtime = VoiceRuntimeImpl(config=cfg, hooks=hooks, llm_fn=llm_fn)
@@ -149,6 +155,7 @@ async def test_stop_cancels_idle_timeout():
 
     # 触发 TTS 完成，进入 SLEEPING 并启动超时
     runtime._on_tts_complete()
+    await asyncio.sleep(0.2)
     assert runtime._idle_timeout_task is not None
 
     hooks.reset_mock()

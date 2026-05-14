@@ -128,7 +128,13 @@ class VoiceRuntimeImpl:
         self._audio_player = AudioPlayer(
             sample_rate=self._config.tts_sample_rate,
         )
-        self._vad = VADProcessor(threshold=self._config.vad_threshold)
+        # 每个 chunk 512 samples @ 16kHz = 32ms
+        chunk_ms = self._config.chunk_samples / self._config.sample_rate * 1000
+        min_silence_chunks = max(1, int(self._config.min_silence_ms / chunk_ms))
+        self._vad = VADProcessor(
+            threshold=self._config.vad_threshold,
+            min_silence_chunks=min_silence_chunks,
+        )
         self._stt = STTProcessor(
             model_name=self._config.stt_model,
             interim_model_name=self._config.stt_interim_model,
@@ -152,6 +158,7 @@ class VoiceRuntimeImpl:
             hooks=self._hooks,
             is_speaking=self._is_speaking_or_cooldown,
             cleanup_enabled=self._config.cleanup_enabled,
+            post_speech_wait_ms=self._config.post_speech_wait_ms,
         )
 
         # 监听 pipeline 的 VAD 事件，更新状态并通知 CLI

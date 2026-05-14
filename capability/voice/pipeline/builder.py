@@ -8,6 +8,8 @@ import threading
 from collections import deque
 from typing import Any, Callable, List, Optional
 
+from capability.voice.pipeline.frames import VoiceStateFrame
+
 logger = logging.getLogger(__name__)
 
 # interim 转录：连续静音超过此阈值时触发（约 400ms @ 32ms/chunk）
@@ -36,6 +38,7 @@ class SimpleVoicePipeline:
         hooks: Any = None,
         is_speaking: Optional[Callable[[], bool]] = None,
         cleanup_enabled: bool = True,
+        post_speech_wait_ms: float = 1500,
     ) -> None:
         self._audio_source = audio_source
         self._vad = vad
@@ -46,6 +49,10 @@ class SimpleVoicePipeline:
         self._hooks = hooks
         self._is_speaking = is_speaking
         self._cleanup_enabled = cleanup_enabled
+        self._post_speech_wait_sec = post_speech_wait_ms / 1000
+
+        # 续说等待状态
+        self._pending_speech_end_time: float | None = None
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
@@ -80,6 +87,8 @@ class SimpleVoicePipeline:
         logger.info("Voice pipeline stopped")
 
     async def _process_loop(self) -> None:
+        import time as _time
+
         try:
             while self._running:
                 try:
@@ -88,12 +97,16 @@ class SimpleVoicePipeline:
                         timeout=0.1,
                     )
                 except asyncio.TimeoutError:
+                    # 超时也检查续说等待是否到期
+                    await self._check_pending_speech_end()
                     continue
 
                 self._preroll_audio.append(audio_data)
 
                 # 回声消除：TTS 播放期间跳过音频处理
                 if self._is_speaking and self._is_speaking():
+                    # TTS 期间也取消待处理的 speech_end，避免 TTS 结束后立即处理旧语音
+                    self._pending_speech_end_time = None
                     continue
 
                 vad_frames = self._vad.process_frame_sync(audio_data)
@@ -112,6 +125,11 @@ class SimpleVoicePipeline:
                         self._hooks.fire("voice_state", state=frame.state)
 
                     if frame.state == "speech_start":
+                        # 续说：取消待处理的 speech_end，继续收集
+                        if self._pending_speech_end_time is not None:
+                            logger.info("Speech resumed during wait window, cancelling pending end")
+                            self._pending_speech_end_time = None
+
                         self._cancel_interim()
                         self._utterance_id += 1
                         self._speech_active = True
@@ -130,47 +148,15 @@ class SimpleVoicePipeline:
                         self._speech_active = False
                         self._silence_chunks = 0
                         self._chunks_since_interim = 0
-                        # 取消正在进行的 interim 任务
                         self._cancel_interim()
 
-                        import time as _time
+                        # 不立即处理，进入续说等待窗口
+                        self._pending_speech_end_time = _time.monotonic()
+                        logger.info("Speech end detected, waiting %.0fms for continuation...",
+                                   self._post_speech_wait_sec * 1000)
 
-                        # STT 转录（子进程运行，放线程池避免阻塞）
-                        _t0 = _time.monotonic()
-                        stt_frames = await asyncio.get_event_loop().run_in_executor(
-                            None, self._stt.process_frame_sync, frame
-                        )
-                        _stt_ms = (_time.monotonic() - _t0) * 1000
-                        if self._hooks:
-                            self._hooks.fire("voice_timing", step="stt", ms=round(_stt_ms))
-
-                        # STT 返回空（超时或错误）→ 重置状态回 idle
-                        if not stt_frames:
-                            logger.warning("STT returned empty (timeout or error), resetting state")
-                            if self._hooks:
-                                self._hooks.fire("voice_state", state="idle")
-                            continue
-
-                        for stt_frame in stt_frames:
-                            # LLM Cleanup（可禁用）
-                            if self._cleanup_enabled:
-                                _t1 = _time.monotonic()
-                                cleaned = await self._cleanup.process(stt_frame)
-                                _cleanup_ms = (_time.monotonic() - _t1) * 1000
-                                if self._hooks:
-                                    self._hooks.fire("voice_timing", step="cleanup", ms=round(_cleanup_ms))
-                            else:
-                                cleaned = stt_frame
-
-                            if cleaned is not None:
-                                if self._hooks:
-                                    self._hooks.fire(
-                                        "voice_input",
-                                        text=cleaned.text,
-                                        raw=cleaned.raw_text,
-                                    )
-                                if self._on_final_text:
-                                    self._on_final_text(cleaned.text)
+                # 检查续说等待是否到期
+                await self._check_pending_speech_end()
 
         except asyncio.CancelledError:
             logger.info("Voice pipeline loop cancelled")
@@ -179,6 +165,57 @@ class SimpleVoicePipeline:
             self._running = False
             if self._hooks:
                 self._hooks.fire("voice_state", state="error", error=str(exc))
+
+    async def _check_pending_speech_end(self) -> None:
+        """检查续说等待是否到期，到期则处理 STT。"""
+        import time as _time
+
+        if self._pending_speech_end_time is None:
+            return
+
+        elapsed = _time.monotonic() - self._pending_speech_end_time
+        if elapsed < self._post_speech_wait_sec:
+            return  # 还在等待中
+
+        # 等待到期，处理 STT
+        self._pending_speech_end_time = None
+        logger.info("Continuation wait expired, processing STT...")
+
+        frame = VoiceStateFrame(state="speech_end")
+
+        _t0 = _time.monotonic()
+        stt_frames = await asyncio.get_event_loop().run_in_executor(
+            None, self._stt.process_frame_sync, frame
+        )
+        _stt_ms = (_time.monotonic() - _t0) * 1000
+        if self._hooks:
+            self._hooks.fire("voice_timing", step="stt", ms=round(_stt_ms))
+
+        if not stt_frames:
+            logger.warning("STT returned empty (timeout or error), resetting state")
+            if self._hooks:
+                self._hooks.fire("voice_state", state="idle")
+            return
+
+        for stt_frame in stt_frames:
+            if self._cleanup_enabled:
+                _t1 = _time.monotonic()
+                cleaned = await self._cleanup.process(stt_frame)
+                _cleanup_ms = (_time.monotonic() - _t1) * 1000
+                if self._hooks:
+                    self._hooks.fire("voice_timing", step="cleanup", ms=round(_cleanup_ms))
+            else:
+                cleaned = stt_frame
+
+            if cleaned is not None:
+                if self._hooks:
+                    self._hooks.fire(
+                        "voice_input",
+                        text=cleaned.text,
+                        raw=cleaned.raw_text,
+                    )
+                if self._on_final_text:
+                    self._on_final_text(cleaned.text)
 
     def _update_speech_state(self, vad_frames: list) -> None:
         """追踪语音状态，周期性触发 interim 转录。"""
@@ -277,6 +314,7 @@ def build_voice_pipeline(
     hooks: Any = None,
     is_speaking: Optional[Callable[[], bool]] = None,
     cleanup_enabled: bool = True,
+    post_speech_wait_ms: float = 1500,
 ) -> SimpleVoicePipeline:
     """构建语音 Pipeline。"""
     return SimpleVoicePipeline(
@@ -289,4 +327,5 @@ def build_voice_pipeline(
         hooks=hooks,
         is_speaking=is_speaking,
         cleanup_enabled=cleanup_enabled,
+        post_speech_wait_ms=post_speech_wait_ms,
     )
