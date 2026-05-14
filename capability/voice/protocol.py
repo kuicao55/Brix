@@ -26,6 +26,24 @@ class VoiceRuntime(Protocol):
         """当前是否在运行。"""
         ...
 
+    @property
+    def input_enabled(self) -> bool:
+        """语音输入是否启用（STT）。"""
+        ...
+
+    @property
+    def output_enabled(self) -> bool:
+        """语音输出是否启用（TTS）。"""
+        ...
+
+    def set_mode(self, input_enabled: bool | None = None, output_enabled: bool | None = None) -> None:
+        """设置语音输入/输出模式（None 表示不改变）。下次 start() 时生效。"""
+        ...
+
+    def reset_mode(self) -> None:
+        """恢复到配置文件中的默认模式。"""
+        ...
+
     def on_voice_input(self, callback: Callable[[str], None]) -> None:
         """注册回调：语音识别出最终文本后调用。文本已过 LLM Cleanup。"""
         ...

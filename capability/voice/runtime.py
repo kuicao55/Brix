@@ -48,6 +48,8 @@ class VoiceRuntimeImpl:
         self._hooks = hooks
         self._llm_fn = llm_fn
         self._tts_client = tts_client
+        self._input_enabled = config.input_enabled
+        self._output_enabled = config.output_enabled
         self._running = False
         self._shutdown = False
         self._continuous = False
@@ -72,6 +74,26 @@ class VoiceRuntimeImpl:
         return self._running
 
     @property
+    def input_enabled(self) -> bool:
+        return self._input_enabled
+
+    @property
+    def output_enabled(self) -> bool:
+        return self._output_enabled
+
+    def set_mode(self, input_enabled: bool | None = None, output_enabled: bool | None = None) -> None:
+        """设置语音输入/输出模式（None 表示不改变）。下次 start() 时生效。"""
+        if input_enabled is not None:
+            self._input_enabled = input_enabled
+        if output_enabled is not None:
+            self._output_enabled = output_enabled
+
+    def reset_mode(self) -> None:
+        """恢复到配置文件中的默认模式。"""
+        self._input_enabled = self._config.input_enabled
+        self._output_enabled = self._config.output_enabled
+
+    @property
     def state(self) -> VoiceConversationState:
         return self._state
 
@@ -86,7 +108,7 @@ class VoiceRuntimeImpl:
 
     @property
     def tts_available(self) -> bool:
-        return self._tts_client is not None
+        return self._output_enabled and self._tts_client is not None
 
     def _is_speaking_or_cooldown(self) -> bool:
         """检查是否在 TTS 播放或冷却期内。"""
@@ -122,47 +144,51 @@ class VoiceRuntimeImpl:
 
         self._continuous = continuous
         self._shutdown = False
-        logger.info("Starting VoiceRuntime (continuous=%s)...", continuous)
+        logger.info("Starting VoiceRuntime (continuous=%s, input=%s, output=%s)...",
+                    continuous, self._input_enabled, self._output_enabled)
 
-        self._transport = LocalAudioTransport(self._config)
-        self._audio_player = AudioPlayer(
-            sample_rate=self._config.tts_sample_rate,
-        )
-        # 每个 chunk 512 samples @ 16kHz = 32ms
-        chunk_ms = self._config.chunk_samples / self._config.sample_rate * 1000
-        min_silence_chunks = max(1, int(self._config.min_silence_ms / chunk_ms))
-        self._vad = VADProcessor(
-            threshold=self._config.vad_threshold,
-            min_silence_chunks=min_silence_chunks,
-        )
-        self._stt = STTProcessor(
-            model_name=self._config.stt_model,
-            interim_model_name=self._config.stt_interim_model,
-            language=self._config.stt_language,
-            device=self._config.stt_device,
-            compute_type=self._config.stt_compute_type,
-        )
-        self._cleanup = LLMCleanupProcessor(
-            llm_fn=self._llm_fn,
-            timeout=self._config.cleanup_timeout,
-            min_length=self._config.cleanup_min_length,
-        )
+        # TTS 播放器（output_enabled 时创建）
+        if self._output_enabled:
+            self._audio_player = AudioPlayer(
+                sample_rate=self._config.tts_sample_rate,
+            )
 
-        self._pipeline = build_voice_pipeline(
-            audio_source=self._transport,
-            vad=self._vad,
-            stt=self._stt,
-            cleanup=self._cleanup,
-            on_final_text=self._handle_final_text,
-            on_interim_text=self._handle_interim_text,
-            hooks=self._hooks,
-            is_speaking=self._is_speaking_or_cooldown,
-            cleanup_enabled=self._config.cleanup_enabled,
-            post_speech_wait_ms=self._config.post_speech_wait_ms,
-        )
-
-        # 监听 pipeline 的 VAD 事件，更新状态并通知 CLI
-        self._hooks.register("voice_state", self._on_pipeline_voice_state)
+        # STT pipeline（input_enabled 时创建）
+        if self._input_enabled:
+            self._transport = LocalAudioTransport(self._config)
+            # 每个 chunk 512 samples @ 16kHz = 32ms
+            chunk_ms = self._config.chunk_samples / self._config.sample_rate * 1000
+            min_silence_chunks = max(1, int(self._config.min_silence_ms / chunk_ms))
+            self._vad = VADProcessor(
+                threshold=self._config.vad_threshold,
+                min_silence_chunks=min_silence_chunks,
+            )
+            self._stt = STTProcessor(
+                model_name=self._config.stt_model,
+                interim_model_name=self._config.stt_interim_model,
+                language=self._config.stt_language,
+                device=self._config.stt_device,
+                compute_type=self._config.stt_compute_type,
+            )
+            self._cleanup = LLMCleanupProcessor(
+                llm_fn=self._llm_fn,
+                timeout=self._config.cleanup_timeout,
+                min_length=self._config.cleanup_min_length,
+            )
+            self._pipeline = build_voice_pipeline(
+                audio_source=self._transport,
+                vad=self._vad,
+                stt=self._stt,
+                cleanup=self._cleanup,
+                on_final_text=self._handle_final_text,
+                on_interim_text=self._handle_interim_text,
+                hooks=self._hooks,
+                is_speaking=self._is_speaking_or_cooldown,
+                cleanup_enabled=self._config.cleanup_enabled,
+                post_speech_wait_ms=self._config.post_speech_wait_ms,
+            )
+            # 监听 pipeline 的 VAD 事件，更新状态并通知 CLI
+            self._hooks.register("voice_state", self._on_pipeline_voice_state)
 
         try:
             await self._run_pipeline()
@@ -182,11 +208,14 @@ class VoiceRuntimeImpl:
 
     async def _run_pipeline(self) -> None:
         """启动 transport 和 pipeline 的实际运行。"""
-        self._stt.start()  # 启动 STT 持久化子进程
-        await self._transport.start()
+        if self._stt is not None:
+            self._stt.start()  # 启动 STT 持久化子进程
+        if self._transport is not None:
+            await self._transport.start()
         if self._audio_player is not None:
             await self._audio_player.start()
-        await self._pipeline.start()
+        if self._pipeline is not None:
+            await self._pipeline.start()
 
     async def stop(self) -> None:
         if not self._running:
@@ -372,6 +401,8 @@ class VoiceRuntimeImpl:
                     type(self._tts_client).__name__ if self._tts_client else "None",
                     self._tts_buffer[:50] if self._tts_buffer else "")
 
+        if not self._output_enabled:
+            return
         if self._shutdown or not self._running or not self._tts_client:
             logger.warning("TTS flush_tts skipped: shutdown=%s, running=%s, tts_client=%s",
                           self._shutdown, self._running, self._tts_client is not None)
@@ -401,6 +432,8 @@ class VoiceRuntimeImpl:
         累积文本到缓冲区，统一在 flush_tts 时一次性合成。
         """
         if self._shutdown or not self._running:
+            return
+        if not self._output_enabled:
             return
         if not self._tts_client:
             return

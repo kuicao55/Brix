@@ -9,6 +9,10 @@ from dataclasses import dataclass
 class VoiceConfig:
     """语音模块配置。"""
 
+    # 独立控制 STT / TTS
+    input_enabled: bool = True   # 语音输入（麦克风 + VAD + STT）
+    output_enabled: bool = True  # 语音输出（TTS 合成 + 播放）
+
     # 音频采集
     sample_rate: int = 16000
     channels: int = 1

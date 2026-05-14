@@ -73,3 +73,19 @@ def test_voice_config_all_defaults():
     assert cfg.cleanup_timeout == 0.8
     assert cfg.tts_sample_rate == 24000
     assert cfg.continuous_idle_timeout == 10.0
+    assert cfg.input_enabled is True
+    assert cfg.output_enabled is True
+
+
+def test_voice_config_input_output_flags_from_brix_config():
+    """VoiceConfig 从 Brix 配置中读取 input_enabled / output_enabled。"""
+    brix_config = {
+        "voice": {
+            "enabled": True,
+            "input_enabled": False,
+            "output_enabled": True,
+        },
+    }
+    cfg = VoiceConfig.from_dict(brix_config)
+    assert cfg.input_enabled is False
+    assert cfg.output_enabled is True

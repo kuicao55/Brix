@@ -450,7 +450,8 @@ class BrixCLI:
         response = "".join(content_parts)
 
         # TTS 桥接：统一在完整回复后一次性触发，避免流式碎片丢失触发
-        if self._voice and self._voice.is_running and response.strip():
+        if (self._voice and self._voice.is_running
+                and self._voice.output_enabled and response.strip()):
             self._console.print(f"[dim]TTS trigger: chars={len(response)}[/]")
             self._voice.feed_response_text(response)
             self._voice.flush_tts()
