@@ -20,6 +20,7 @@ class SimpleVoicePipeline:
         cleanup: Any,
         on_final_text: Optional[Callable] = None,
         hooks: Any = None,
+        is_speaking: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._audio_source = audio_source
         self._vad = vad
@@ -27,6 +28,7 @@ class SimpleVoicePipeline:
         self._cleanup = cleanup
         self._on_final_text = on_final_text
         self._hooks = hooks
+        self._is_speaking = is_speaking
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
@@ -59,6 +61,10 @@ class SimpleVoicePipeline:
                         timeout=0.1,
                     )
                 except asyncio.TimeoutError:
+                    continue
+
+                # 回声消除：TTS 播放期间跳过音频处理
+                if self._is_speaking and self._is_speaking():
                     continue
 
                 vad_frames = self._vad.process_frame_sync(audio_data)
@@ -100,6 +106,7 @@ def build_voice_pipeline(
     cleanup: Any,
     on_final_text: Optional[Callable] = None,
     hooks: Any = None,
+    is_speaking: Optional[Callable[[], bool]] = None,
 ) -> SimpleVoicePipeline:
     """构建语音 Pipeline。"""
     return SimpleVoicePipeline(
@@ -109,4 +116,5 @@ def build_voice_pipeline(
         cleanup=cleanup,
         on_final_text=on_final_text,
         hooks=hooks,
+        is_speaking=is_speaking,
     )

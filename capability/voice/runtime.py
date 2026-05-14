@@ -13,6 +13,7 @@ from capability.voice.processors.llm_cleanup import LLMCleanupProcessor
 from capability.voice.processors.stt import STTProcessor
 from capability.voice.processors.vad import VADProcessor
 from capability.voice.protocol import VoiceRuntime
+from capability.voice.transport.audio_player import AudioPlayer
 from capability.voice.transport.local_audio import LocalAudioTransport
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class VoiceRuntimeImpl:
         self._on_state_change: Optional[Callable[[str], None]] = None
 
         self._transport: Optional[LocalAudioTransport] = None
+        self._audio_player: Optional[AudioPlayer] = None
         self._vad: Optional[VADProcessor] = None
         self._stt: Optional[STTProcessor] = None
         self._cleanup: Optional[LLMCleanupProcessor] = None
@@ -81,6 +83,9 @@ class VoiceRuntimeImpl:
         logger.info("Starting VoiceRuntime (continuous=%s)...", continuous)
 
         self._transport = LocalAudioTransport(self._config)
+        self._audio_player = AudioPlayer(
+            sample_rate=self._config.tts_sample_rate,
+        )
         self._vad = VADProcessor(threshold=self._config.vad_threshold)
         self._stt = STTProcessor(
             model_name=self._config.stt_model,
@@ -101,6 +106,7 @@ class VoiceRuntimeImpl:
             cleanup=self._cleanup,
             on_final_text=self._handle_final_text,
             hooks=self._hooks,
+            is_speaking=lambda: self._state == VoiceConversationState.SPEAKING,
         )
 
         try:
@@ -122,6 +128,8 @@ class VoiceRuntimeImpl:
     async def _run_pipeline(self) -> None:
         """启动 transport 和 pipeline 的实际运行。"""
         await self._transport.start()
+        if self._audio_player is not None:
+            await self._audio_player.start()
         await self._pipeline.start()
 
     async def stop(self) -> None:
@@ -160,6 +168,10 @@ class VoiceRuntimeImpl:
 
     async def _cleanup_audio(self) -> None:
         """清理音频资源。"""
+        if self._audio_player is not None:
+            await self._audio_player.stop()
+            self._audio_player = None
+
         if self._transport is not None:
             await self._transport.stop()
             self._transport = None
@@ -203,11 +215,17 @@ class VoiceRuntimeImpl:
     async def _synthesize_and_speak(self, text: str) -> None:
         """合成文本并通过音频输出播放。"""
         try:
-            async for chunk in self._tts_client.synthesize(text):
-                if self._shutdown:
-                    break
-                # TODO: 将 PCM chunks 送入音频播放器
-                logger.debug("TTS chunk: %d bytes", len(chunk))
+            if self._audio_player is not None and self._audio_player.is_active:
+                # 流式合成并播放
+                await self._audio_player.play_chunks(
+                    self._tts_client.synthesize(text)
+                )
+            else:
+                # 无播放器，仅合成（调试用）
+                async for chunk in self._tts_client.synthesize(text):
+                    if self._shutdown:
+                        break
+                    logger.debug("TTS chunk: %d bytes (no player)", len(chunk))
             self._hooks.fire("voice_tts", chars=len(text))
         except Exception as exc:
             logger.error("TTS synthesis error: %s", exc)
