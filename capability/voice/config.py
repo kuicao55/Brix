@@ -28,8 +28,8 @@ class VoiceConfig:
     # LLM Cleanup
     cleanup_enabled: bool = True
     cleanup_model: str = ""  # 空 = 使用 intent_model
-    cleanup_timeout: float = 2.0
-    cleanup_min_length: int = 4  # 短句跳过 cleanup（长度 <= 此值跳过）
+    cleanup_timeout: float = 0.8
+    cleanup_min_length: int = 10  # 短句跳过 cleanup（长度 <= 此值跳过）
 
     # TTS (P1)
     tts_model: str = "cosyvoice-v3-flash"

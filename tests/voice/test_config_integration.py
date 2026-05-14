@@ -70,6 +70,6 @@ def test_voice_config_all_defaults():
     assert cfg.vad_threshold == 0.5
     assert cfg.stt_model == "small"
     assert cfg.stt_language == "zh"
-    assert cfg.cleanup_timeout == 2.0
+    assert cfg.cleanup_timeout == 0.8
     assert cfg.tts_sample_rate == 24000
     assert cfg.continuous_idle_timeout == 10.0

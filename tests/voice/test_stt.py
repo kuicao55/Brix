@@ -24,52 +24,59 @@ def test_stt_processor_init():
 
 def test_stt_transcribes_audio():
     """STTProcessor 对音频数据进行转录。"""
-    mock_model = MagicMock()
-    mock_segment = MagicMock()
-    mock_segment.text = "你好世界"
-    mock_info = MagicMock()
-    mock_info.language = "zh"
-    mock_model.transcribe.return_value = ([mock_segment], mock_info)
-
     stt = STTProcessor(model_name="small", language="zh", device="cpu")
-    stt._model = mock_model
 
-    audio = make_audio_bytes(1000)
-    result_frames = stt.transcribe_sync(audio)
+    # Mock _transcribe_audio 避免实际子进程调用
+    with patch.object(stt, "_transcribe_audio", return_value="你好世界"):
+        audio = make_audio_bytes(1000)
+        result_frames = stt.transcribe_sync(audio)
 
     assert len(result_frames) == 1
     assert result_frames[0].text == "你好世界"
-    mock_model.transcribe.assert_called_once()
 
 
 def test_stt_empty_audio():
-    """STTProcessor 对空转录结果不输出帧。"""
-    mock_model = MagicMock()
-    mock_segment = MagicMock()
-    mock_segment.text = ""
-    mock_info = MagicMock()
-    mock_model.transcribe.return_value = ([mock_segment], mock_info)
-
+    """STTProcessor 对空音频不输出帧。"""
     stt = STTProcessor(model_name="small", language="zh", device="cpu")
-    stt._model = mock_model
 
-    result_frames = stt.transcribe_sync(b"")
+    with patch.object(stt, "_transcribe_audio", return_value=""):
+        result_frames = stt.transcribe_sync(b"")
     assert len(result_frames) == 0
 
 
 def test_stt_voice_end_triggers_transcribe():
     """收到 speech_end 帧时触发转录。"""
-    mock_model = MagicMock()
-    mock_segment = MagicMock()
-    mock_segment.text = "测试文本"
-    mock_info = MagicMock()
-    mock_model.transcribe.return_value = ([mock_segment], mock_info)
-
     stt = STTProcessor(model_name="small", language="zh", device="cpu")
-    stt._model = mock_model
     stt._audio_buffer = make_audio_bytes(500)
 
-    frames = stt.process_frame_sync(VoiceStateFrame(state="speech_end"))
+    with patch.object(stt, "_transcribe_audio", return_value="测试文本"):
+        frames = stt.process_frame_sync(VoiceStateFrame(state="speech_end"))
+
     assert len(frames) == 1
     assert frames[0].text == "测试文本"
-    assert stt._audio_buffer == b""
+    assert stt._audio_buffer == bytearray()
+
+
+def test_stt_audio_buffering():
+    """音频帧被正确缓冲。"""
+    stt = STTProcessor(model_name="small", language="zh", device="cpu")
+
+    audio = make_audio_bytes(100)
+    frame = type("AudioFrame", (), {"audio": audio})()
+    stt.process_frame_sync(frame)
+
+    assert len(stt._audio_buffer) == len(audio)
+
+
+def test_stt_interim_requires_minimum_audio():
+    """Interim 转录需要最少 0.5s 音频。"""
+    stt = STTProcessor(model_name="small", language="zh", device="cpu")
+
+    # 太短的音频返回空
+    short_audio = make_audio_bytes(100)  # 100ms
+    assert stt.transcribe_interim(short_audio) == ""
+
+    # 足够长的音频调用 _transcribe_audio
+    long_audio = make_audio_bytes(1000)  # 1s
+    with patch.object(stt, "_transcribe_audio", return_value="测试"):
+        assert stt.transcribe_interim(long_audio) == "测试"

@@ -34,6 +34,10 @@ class VoiceRuntime(Protocol):
         """注册回调：状态变化（listening / speaking / idle / error）。"""
         ...
 
+    def on_interim_text(self, callback: Callable[[str], None]) -> None:
+        """注册回调：interim 转录结果（说话过程中实时更新）。"""
+        ...
+
     def feed_response_text(self, text: str) -> None:
         """将 LLM 回复文本送入 TTS 合成。"""
         ...

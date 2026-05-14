@@ -9,12 +9,12 @@ from capability.voice.pipeline.frames import CleanedTextFrame, VoiceStateFrame
 
 @pytest.mark.asyncio
 async def test_cleanup_cleans_text():
-    mock_llm = AsyncMock(return_value="你好世界")
+    mock_llm = AsyncMock(return_value="你好世界，今天天气怎么样")
     cleanup = LLMCleanupProcessor(llm_fn=mock_llm)
-    frame = CleanedTextFrame(text="嗯 你好世界", raw_text="嗯 你好世界")
+    frame = CleanedTextFrame(text="嗯 你好世界 今天天气怎么样啊", raw_text="嗯 你好世界 今天天气怎么样啊")
     result = await cleanup.process(frame)
-    assert result.text == "你好世界"
-    assert result.raw_text == "嗯 你好世界"
+    assert result.text == "你好世界，今天天气怎么样"
+    assert result.raw_text == "嗯 你好世界 今天天气怎么样啊"
     mock_llm.assert_called_once()
 
 
@@ -32,7 +32,7 @@ async def test_cleanup_skips_short_text():
 async def test_cleanup_handles_empty_result():
     mock_llm = AsyncMock(return_value="")
     cleanup = LLMCleanupProcessor(llm_fn=mock_llm)
-    frame = CleanedTextFrame(text="嗯啊嗯啊", raw_text="嗯啊嗯啊")
+    frame = CleanedTextFrame(text="嗯啊嗯啊嗯啊嗯啊嗯啊", raw_text="嗯啊嗯啊嗯啊嗯啊嗯啊")
     result = await cleanup.process(frame)
     assert result is None
 
@@ -44,9 +44,9 @@ async def test_cleanup_timeout_fallback():
         await asyncio.sleep(10)
         return "cleaned"
     cleanup = LLMCleanupProcessor(llm_fn=slow_llm, timeout=0.1)
-    frame = CleanedTextFrame(text="嗯你好世界", raw_text="嗯你好世界")
+    frame = CleanedTextFrame(text="嗯你好世界，今天天气怎么样啊", raw_text="嗯你好世界，今天天气怎么样啊")
     result = await cleanup.process(frame)
-    assert result.text == "嗯你好世界"
+    assert result.text == "嗯你好世界，今天天气怎么样啊"
 
 
 @pytest.mark.asyncio

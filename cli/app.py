@@ -65,14 +65,15 @@ class BrixCLI:
         self._tool_runner = ToolRunner()
         self._register_tools()
         self._command_registry = CommandRegistry()
+        self._orchestrator = self._build_orchestrator()
+        self._console = Console(theme=BRIX_THEME)
         # 语音模块（可选，需在注册命令前初始化）
         self._voice = None
+        self._voice_display = None
         self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
         self._init_voice()
         self._register_commands()
         self._register_skill_tool()
-        self._orchestrator = self._build_orchestrator()
-        self._console = Console(theme=BRIX_THEME)
 
     # ------------------------------------------------------------------
     # Public API
@@ -136,7 +137,6 @@ class BrixCLI:
 
                 if voice_task in done:
                     text = voice_task.result()
-                    self._console.print(f"[dim]🎤 {text}[/]")
                 elif keyboard_task in done:
                     try:
                         text = keyboard_task.result()
@@ -450,6 +450,10 @@ class BrixCLI:
             renderer.flush()
         _tick("stream_end")
 
+        # Flush TTS buffer
+        if self._voice and self._voice.is_running:
+            self._voice.flush_tts()
+
         response = "".join(content_parts)
 
         # Write timing data for analysis
@@ -514,13 +518,33 @@ class BrixCLI:
             # 创建 TTS 客户端（可选，API key 缺失时跳过）
             tts_client = create_cosyvoice_client(self._config)
 
+            # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
+            cleanup_model = self._config.get("routing", {}).get(
+                "intent_model", "ali/qwen3.6-flash"
+            )
+
+            async def _cleanup_llm(prompt: str) -> str:
+                resp = await self._llm_client.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=cleanup_model,
+                )
+                return resp.content
+
             self._voice = VoiceRuntimeImpl(
                 config=cfg,
                 hooks=HookRegistry(),
-                llm_fn=self._llm_client.chat,
+                llm_fn=_cleanup_llm,
                 tts_client=tts_client,
             )
             self._voice.on_voice_input(self._handle_voice_input)
+
+            # 注册实时显示回调
+            from cli.voice_display import VoiceDisplay
+            self._voice_display = VoiceDisplay(self._console)
+            self._voice.on_state_change(self._handle_voice_state)
+            self._voice.on_interim_text(self._handle_interim_text)
+            # timing hook
+            self._voice._hooks.register("voice_timing", self._handle_voice_timing)
         except Exception as exc:
             self._console.print(f"[dim]语音模块加载失败: {exc}[/]")
 
@@ -530,7 +554,31 @@ class BrixCLI:
         注意：此方法必须在 asyncio event loop 线程中调用。
         如果从音频 I/O 工作线程调用，应使用 loop.call_soon_threadsafe()。
         """
+        # 用 VoiceDisplay 显示最终转录结果
+        if self._voice_display:
+            self._voice_display.finish(text)
         self._voice_input_queue.put_nowait(text)
+
+    def _handle_voice_state(self, state: str) -> None:
+        """语音状态变化回调 — 更新 VoiceDisplay。"""
+        if not self._voice_display:
+            return
+        if state == "listening":
+            self._voice_display.start_listening()
+        elif state in ("idle", "error"):
+            self._voice_display.stop()
+
+    def _handle_interim_text(self, text: str) -> None:
+        """Interim 转录回调 — 实时更新 VoiceDisplay。"""
+        if self._voice_display:
+            self._voice_display.update_interim(text)
+
+    def _handle_voice_timing(self, event) -> None:
+        """Voice timing hook — 更新 VoiceDisplay 的耗时显示。"""
+        if self._voice_display:
+            step = event.data.get("step", "")
+            ms = event.data.get("ms", 0)
+            self._voice_display.update_timing(step, ms)
 
     def _register_commands(self) -> None:
         """注册所有内置命令和 Skill 到 CommandRegistry。"""

@@ -49,6 +49,7 @@ class VoiceRuntimeImpl:
 
         self._on_voice_input: Optional[Callable[[str], None]] = None
         self._on_state_change: Optional[Callable[[str], None]] = None
+        self._on_interim_text: Optional[Callable[[str], None]] = None
 
         self._transport: Optional[LocalAudioTransport] = None
         self._audio_player: Optional[AudioPlayer] = None
@@ -72,6 +73,9 @@ class VoiceRuntimeImpl:
 
     def on_state_change(self, callback: Callable[[str], None]) -> None:
         self._on_state_change = callback
+
+    def on_interim_text(self, callback: Callable[[str], None]) -> None:
+        self._on_interim_text = callback
 
     async def start(self, continuous: bool = False) -> None:
         if self._running:
@@ -105,9 +109,13 @@ class VoiceRuntimeImpl:
             stt=self._stt,
             cleanup=self._cleanup,
             on_final_text=self._handle_final_text,
+            on_interim_text=self._handle_interim_text,
             hooks=self._hooks,
             is_speaking=lambda: self._state == VoiceConversationState.SPEAKING,
         )
+
+        # 监听 pipeline 的 VAD 事件，更新状态并通知 CLI
+        self._hooks.register("voice_state", self._on_pipeline_voice_state)
 
         try:
             await self._run_pipeline()
@@ -127,6 +135,7 @@ class VoiceRuntimeImpl:
 
     async def _run_pipeline(self) -> None:
         """启动 transport 和 pipeline 的实际运行。"""
+        self._stt.start()  # 启动 STT 持久化子进程
         await self._transport.start()
         if self._audio_player is not None:
             await self._audio_player.start()
@@ -177,6 +186,8 @@ class VoiceRuntimeImpl:
             self._transport = None
 
         self._vad = None
+        if self._stt is not None:
+            self._stt.stop()
         self._stt = None
         self._cleanup = None
 
@@ -186,6 +197,66 @@ class VoiceRuntimeImpl:
         self._state = VoiceConversationState.PROCESSING
         if self._on_voice_input:
             self._on_voice_input(text)
+
+    def _handle_interim_text(self, text: str) -> None:
+        if self._shutdown:
+            return
+        if self._on_interim_text:
+            self._on_interim_text(text)
+
+    def _on_pipeline_voice_state(self, event: Any) -> None:
+        """Pipeline VAD 事件处理 — 更新状态并通知 CLI。"""
+        if self._shutdown:
+            return
+        vad_state = event.data.get("state", "")
+        if vad_state == "speech_start" and self._state != VoiceConversationState.LISTENING:
+            self._state = VoiceConversationState.LISTENING
+            if self._on_state_change:
+                self._on_state_change("listening")
+        elif vad_state == "speech_end" and self._state == VoiceConversationState.LISTENING:
+            self._state = VoiceConversationState.PROCESSING
+            if self._on_state_change:
+                self._on_state_change("processing")
+
+    @staticmethod
+    def _sanitize_for_tts(text: str) -> str:
+        """清理文本供 TTS 使用 — 去除 emoji、markdown 等特殊字符。"""
+        import re
+
+        # 去除 emoji（保留中文、英文、数字、基本标点）
+        text = re.sub(
+            r'[\U0001F600-\U0001F64F'  # emoticons
+            r'\U0001F300-\U0001F5FF'  # symbols & pictographs
+            r'\U0001F680-\U0001F6FF'  # transport & map
+            r'\U0001F1E0-\U0001F1FF'  # flags
+            r'\U00002702-\U000027B0'
+            r'\U000024C2-\U0001F251'
+            r'\U0001f926-\U0001f937'
+            r'\U00010000-\U0010ffff'
+            r'\u2600-\u26FF'
+            r'\u2700-\u27BF'
+            r'\u200d'
+            r'\ufe0f]+',
+            '',
+            text,
+        )
+        # 去除 markdown 标记
+        text = re.sub(r'[*_`#~\[\]()]+', '', text)
+        # 去除多余空白
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
+    def flush_tts(self) -> None:
+        """Flush TTS buffer 中剩余文本（流结束时调用）。"""
+        if self._shutdown or not self._running or not self._tts_client:
+            return
+        if self._tts_buffer.strip():
+            sanitized = self._sanitize_for_tts(self._tts_buffer.strip())
+            self._tts_buffer = ""
+            if sanitized:
+                self._state = VoiceConversationState.SPEAKING
+                self._hooks.fire("voice_state", state="speaking")
+                asyncio.ensure_future(self._synthesize_and_speak(sanitized))
 
     def feed_response_text(self, text: str) -> None:
         """将 LLM 回复文本送入 TTS 合成。
@@ -201,16 +272,28 @@ class VoiceRuntimeImpl:
 
         # 检查是否有完整句子可以合成
         import re
-        # 在句号、问号、感叹号、换行处切分
+        # 在句号、问号、感叹号、换行处切分；逗号处仅当累积文本较长时切分
         sentences = re.split(r'(?<=[。！？\n])', self._tts_buffer)
         if len(sentences) > 1:
-            # 最后一段可能不完整，保留在缓冲区
             complete = "".join(sentences[:-1])
             self._tts_buffer = sentences[-1]
-            if complete.strip():
+        elif len(self._tts_buffer) > 30:
+            # 无句号但累积较长时，在逗号处切分
+            clauses = re.split(r'(?<=[，,])', self._tts_buffer)
+            if len(clauses) > 1:
+                complete = "".join(clauses[:-1])
+                self._tts_buffer = clauses[-1]
+            else:
+                complete = ""
+        else:
+            complete = ""
+
+        if complete.strip():
+            sanitized = self._sanitize_for_tts(complete.strip())
+            if sanitized:
                 self._state = VoiceConversationState.SPEAKING
                 self._hooks.fire("voice_state", state="speaking")
-                asyncio.ensure_future(self._synthesize_and_speak(complete.strip()))
+                asyncio.ensure_future(self._synthesize_and_speak(sanitized))
 
     async def _synthesize_and_speak(self, text: str) -> None:
         """合成文本并通过音频输出播放。"""

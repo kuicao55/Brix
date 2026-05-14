@@ -1,5 +1,9 @@
 """Entry point for the Brix CLI."""
 
+import os
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import asyncio
 
 from dotenv import load_dotenv

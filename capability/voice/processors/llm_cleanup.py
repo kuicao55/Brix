@@ -29,8 +29,8 @@ class LLMCleanupProcessor:
     def __init__(
         self,
         llm_fn: Callable[[str], Awaitable[str]],
-        timeout: float = 2.0,
-        min_length: int = 4,
+        timeout: float = 0.8,
+        min_length: int = 10,
     ) -> None:
         self._llm_fn = llm_fn
         self._timeout = timeout
