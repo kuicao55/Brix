@@ -32,7 +32,9 @@ class VoiceConfig:
     cleanup_min_length: int = 4  # 短句跳过 cleanup（长度 <= 此值跳过）
 
     # TTS (P1)
-    tts_voice: str = "cosyvoice-v3-flash-default"
+    tts_model: str = "cosyvoice-v3-flash"
+    tts_voice: str = "longxiaochun"
+    tts_api_key_env: str = "ALI_API_KEY"
     tts_sample_rate: int = 24000
     tts_prefetch_ms: int = 80
 
