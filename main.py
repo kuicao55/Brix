@@ -11,7 +11,10 @@ from cli.app import BrixCLI
 
 def main() -> None:
     cli = BrixCLI()
-    asyncio.run(cli.run())
+    try:
+        asyncio.run(cli.run())
+    except KeyboardInterrupt:
+        cli._memory.save_session()
 
 
 if __name__ == "__main__":

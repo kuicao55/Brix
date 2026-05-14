@@ -131,7 +131,7 @@ class BrixCLI:
                     task.cancel()
                     try:
                         await task
-                    except asyncio.CancelledError:
+                    except (asyncio.CancelledError, Exception):
                         pass
 
                 if voice_task in done:
@@ -163,9 +163,6 @@ class BrixCLI:
                     await self._process_streaming(text)
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
-        except KeyboardInterrupt:
-            self._memory.save_session()
-            self._console.print("\n[dim]Goodbye.[/]")
         finally:
             if self._voice and self._voice.is_running:
                 await self._voice.stop()
