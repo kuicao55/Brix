@@ -35,10 +35,12 @@ class VoiceRuntimeImpl:
         config: VoiceConfig,
         hooks: Any,
         llm_fn: Callable,
+        tts_client: Any = None,
     ) -> None:
         self._config = config
         self._hooks = hooks
         self._llm_fn = llm_fn
+        self._tts_client = tts_client
         self._running = False
         self._shutdown = False
         self._continuous = False
@@ -53,6 +55,7 @@ class VoiceRuntimeImpl:
         self._cleanup: Optional[LLMCleanupProcessor] = None
         self._pipeline: Any = None
         self._idle_timeout_task: Optional[asyncio.Task] = None
+        self._tts_buffer: str = ""  # TTS 文本累积缓冲区
 
     @property
     def is_running(self) -> bool:
@@ -173,11 +176,45 @@ class VoiceRuntimeImpl:
             self._on_voice_input(text)
 
     def feed_response_text(self, text: str) -> None:
-        """将 LLM 回复文本送入 TTS 合成。"""
+        """将 LLM 回复文本送入 TTS 合成。
+
+        累积文本到缓冲区，在句子边界触发合成。
+        """
         if self._shutdown or not self._running:
             return
-        # TODO: 当 TTSProcessor 集成后，将文本送入 TTS pipeline
-        logger.debug("TTS bridge received text: %s", text[:50])
+        if not self._tts_client:
+            return
+
+        self._tts_buffer += text
+
+        # 检查是否有完整句子可以合成
+        import re
+        # 在句号、问号、感叹号、换行处切分
+        sentences = re.split(r'(?<=[。！？\n])', self._tts_buffer)
+        if len(sentences) > 1:
+            # 最后一段可能不完整，保留在缓冲区
+            complete = "".join(sentences[:-1])
+            self._tts_buffer = sentences[-1]
+            if complete.strip():
+                self._state = VoiceConversationState.SPEAKING
+                self._hooks.fire("voice_state", state="speaking")
+                asyncio.ensure_future(self._synthesize_and_speak(complete.strip()))
+
+    async def _synthesize_and_speak(self, text: str) -> None:
+        """合成文本并通过音频输出播放。"""
+        try:
+            async for chunk in self._tts_client.synthesize(text):
+                if self._shutdown:
+                    break
+                # TODO: 将 PCM chunks 送入音频播放器
+                logger.debug("TTS chunk: %d bytes", len(chunk))
+            self._hooks.fire("voice_tts", chars=len(text))
+        except Exception as exc:
+            logger.error("TTS synthesis error: %s", exc)
+            self._hooks.fire("voice_tts_error", error=str(exc))
+        finally:
+            # TTS 完成，触发状态转换
+            self._on_tts_complete()
 
     def _on_tts_complete(self) -> None:
         """TTS 播放完成回调 — 决定下一步状态。"""

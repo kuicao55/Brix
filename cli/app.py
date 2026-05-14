@@ -507,12 +507,18 @@ class BrixCLI:
         try:
             from capability.voice.config import VoiceConfig
             from capability.voice.runtime import VoiceRuntimeImpl
+            from capability.voice.tts.cosyvoice_client import create_cosyvoice_client
 
             cfg = VoiceConfig.from_dict(self._config)
+
+            # 创建 TTS 客户端（可选，API key 缺失时跳过）
+            tts_client = create_cosyvoice_client(self._config)
+
             self._voice = VoiceRuntimeImpl(
                 config=cfg,
                 hooks=HookRegistry(),
                 llm_fn=self._llm_client.chat,
+                tts_client=tts_client,
             )
             self._voice.on_voice_input(self._handle_voice_input)
         except Exception as exc:
