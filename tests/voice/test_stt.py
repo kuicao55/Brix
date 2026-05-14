@@ -26,8 +26,8 @@ def test_stt_transcribes_audio():
     """STTProcessor 对音频数据进行转录。"""
     stt = STTProcessor(model_name="small", language="zh", device="cpu")
 
-    # Mock _transcribe_audio 避免实际子进程调用
-    with patch.object(stt, "_transcribe_audio", return_value="你好世界"):
+    # Mock _transcribe_final 避免实际子进程调用
+    with patch.object(stt, "_transcribe_final", return_value="你好世界"):
         audio = make_audio_bytes(1000)
         result_frames = stt.transcribe_sync(audio)
 
@@ -39,7 +39,7 @@ def test_stt_empty_audio():
     """STTProcessor 对空音频不输出帧。"""
     stt = STTProcessor(model_name="small", language="zh", device="cpu")
 
-    with patch.object(stt, "_transcribe_audio", return_value=""):
+    with patch.object(stt, "_transcribe_final", return_value=""):
         result_frames = stt.transcribe_sync(b"")
     assert len(result_frames) == 0
 
@@ -49,7 +49,7 @@ def test_stt_voice_end_triggers_transcribe():
     stt = STTProcessor(model_name="small", language="zh", device="cpu")
     stt._audio_buffer = make_audio_bytes(500)
 
-    with patch.object(stt, "_transcribe_audio", return_value="测试文本"):
+    with patch.object(stt, "_transcribe_final", return_value="测试文本"):
         frames = stt.process_frame_sync(VoiceStateFrame(state="speech_end"))
 
     assert len(frames) == 1
@@ -76,7 +76,11 @@ def test_stt_interim_requires_minimum_audio():
     short_audio = make_audio_bytes(100)  # 100ms
     assert stt.transcribe_interim(short_audio) == ""
 
-    # 足够长的音频调用 _transcribe_audio
+    # 足够长的音频调用 _send_and_wait（需要 mock interim worker）
     long_audio = make_audio_bytes(1000)  # 1s
-    with patch.object(stt, "_transcribe_audio", return_value="测试"):
+    with patch.object(stt, "_send_and_wait", return_value="测试"):
+        # 需要设置 interim worker 不为 None
+        stt._interim_worker = MagicMock()
+        stt._interim_request_queue = MagicMock()
+        stt._interim_result_queue = MagicMock()
         assert stt.transcribe_interim(long_audio) == "测试"

@@ -43,6 +43,11 @@ class VoiceCommand(Command):
                 await self._voice_runtime.start(continuous=continuous)
                 mode = "连续对话" if continuous else "唤醒模式"
                 context.console.print(f"[green]语音模式已开启 ({mode})[/]")
+                playback_mode = getattr(self._voice_runtime, "tts_playback_mode", "unknown")
+                tts_ready = getattr(self._voice_runtime, "tts_available", False)
+                context.console.print(f"[dim]TTS 状态: ready={tts_ready}, playback={playback_mode}[/]")
+                if playback_mode == "none":
+                    context.console.print("[yellow]TTS 播放不可用：未检测到可用 TTS client 或音频后端[/]")
         except Exception as exc:
             context.console.print(f"[red]语音操作失败: {exc}[/]")
 

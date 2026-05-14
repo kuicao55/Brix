@@ -21,6 +21,7 @@ async def test_voice_command_starts_voice():
     mock_runtime = MagicMock()
     mock_runtime.is_running = False
     mock_runtime.start = AsyncMock()
+    mock_runtime.tts_playback_mode = "pyaudio"
 
     cmd = VoiceCommand(voice_runtime=mock_runtime)
     ctx = MagicMock()
@@ -63,6 +64,7 @@ async def test_voice_command_continuous_flag():
     mock_runtime = MagicMock()
     mock_runtime.is_running = False
     mock_runtime.start = AsyncMock()
+    mock_runtime.tts_playback_mode = "afplay_pcm"
 
     cmd = VoiceCommand(voice_runtime=mock_runtime)
     ctx = MagicMock()
@@ -70,6 +72,22 @@ async def test_voice_command_continuous_flag():
 
     mock_runtime.start.assert_called_once_with(continuous=True)
     assert result.type == CommandResultType.NONE
+
+
+@pytest.mark.asyncio
+async def test_voice_command_prints_playback_mode_warning():
+    """/voice 启动后应提示 TTS 播放后端模式。"""
+    mock_runtime = MagicMock()
+    mock_runtime.is_running = False
+    mock_runtime.start = AsyncMock()
+    mock_runtime.tts_playback_mode = "none"
+
+    cmd = VoiceCommand(voice_runtime=mock_runtime)
+    ctx = MagicMock()
+    await cmd.execute("", ctx)
+
+    warning_calls = [c for c in ctx.console.print.call_args_list if "播放不可用" in str(c)]
+    assert len(warning_calls) == 1
 
 
 @pytest.mark.asyncio

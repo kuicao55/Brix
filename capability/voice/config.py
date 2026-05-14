@@ -21,12 +21,13 @@ class VoiceConfig:
 
     # STT
     stt_model: str = "small"
+    stt_interim_model: str = "tiny"
     stt_language: str = "zh"
     stt_device: str = "cpu"
     stt_compute_type: str = "int8"
 
     # LLM Cleanup
-    cleanup_enabled: bool = True
+    cleanup_enabled: bool = False  # 暂时禁用 LLM cleanup
     cleanup_model: str = ""  # 空 = 使用 intent_model
     cleanup_timeout: float = 0.8
     cleanup_min_length: int = 10  # 短句跳过 cleanup（长度 <= 此值跳过）
@@ -37,6 +38,7 @@ class VoiceConfig:
     tts_api_key_env: str = "ALI_API_KEY"
     tts_sample_rate: int = 24000
     tts_prefetch_ms: int = 80
+    tts_cooldown_ms: int = 800  # TTS 播放后冷却时间，防止回声循环
 
     # 唤醒词 (P2)
     wake_word_model: str = "hey_brix"

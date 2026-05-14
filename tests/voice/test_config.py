@@ -11,6 +11,7 @@ def test_voice_config_defaults():
     assert cfg.chunk_samples == 512  # Silero VAD 对齐
     assert cfg.vad_threshold == 0.5
     assert cfg.stt_model == "small"
+    assert cfg.stt_interim_model == "tiny"
     assert cfg.stt_language == "zh"
 
 
@@ -20,8 +21,10 @@ def test_voice_config_from_dict():
         "voice": {
             "sample_rate": 44100,
             "stt_model": "large-v3",
+            "stt_interim_model": "small",
         }
     })
     assert cfg.sample_rate == 44100
     assert cfg.stt_model == "large-v3"
+    assert cfg.stt_interim_model == "small"
     assert cfg.vad_threshold == 0.5  # 未指定的用默认值

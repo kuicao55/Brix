@@ -121,15 +121,21 @@ class VoiceDisplay:
         display.append(_MARKER, style="cyan")
 
         if self._state == "listening":
-            display.append("listening...", style="dim")
+            if self._text:
+                display.append(self._text, style="cyan")
+            else:
+                display.append("listening...", style="dim")
             display.append(f" {spinner}", style="cyan")
             display.append(f"  {elapsed:.1f}s", style="dim")
 
         elif self._state in ("processing", "cleanup"):
-            # 显示已完成的步骤耗时
+            # 有 interim 文本时优先显示文本，否则显示 timing
+            if self._text:
+                display.append(self._text, style="cyan")
+                display.append("  ")
             timing_str = self._format_timing()
             if timing_str:
-                display.append(timing_str, style="yellow")
+                display.append(timing_str, style="dim")
             display.append(f" {spinner}", style="cyan")
             display.append(f"  {elapsed:.1f}s", style="dim")
 

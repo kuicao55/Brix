@@ -31,10 +31,16 @@ class AudioPlayer:
         self._active = False
         self._play_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=200)
         self._play_task: asyncio.Task | None = None
+        self._playback_active = False  # 是否有音频正在播放（包括缓冲区中的音频）
 
     @property
     def is_active(self) -> bool:
         return self._active
+
+    @property
+    def is_playing(self) -> bool:
+        """是否有音频正在播放（包括缓冲区中的音频）。"""
+        return self._playback_active
 
     async def start(self) -> None:
         """启动播放器。"""
@@ -97,6 +103,10 @@ class AudioPlayer:
 
     async def play_chunks(self, chunks: Any) -> None:
         """播放异步迭代器产出的 PCM chunks。"""
+        # 确保播放循环正在运行
+        if self._play_task is None or self._play_task.done():
+            self._play_task = asyncio.ensure_future(self._play_loop())
+
         async for chunk in chunks:
             if not self._active:
                 break
@@ -107,26 +117,59 @@ class AudioPlayer:
             except asyncio.TimeoutError:
                 logger.warning("AudioPlayer: play queue full, dropping chunk")
 
+        # 发送停止信号，让播放循环在 drain 后退出
+        try:
+            self._play_queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+        # 等待播放循环完成（drain + 清理）
+        if self._play_task is not None:
+            try:
+                await asyncio.wait_for(self._play_task, timeout=30.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            self._play_task = None
+
     async def _play_loop(self) -> None:
         """播放循环 — 从队列读取数据写入 PyAudio 输出流。"""
         loop = asyncio.get_event_loop()
-        while self._active:
-            try:
-                chunk = await asyncio.wait_for(
-                    self._play_queue.get(), timeout=0.5
-                )
-            except asyncio.TimeoutError:
-                continue
+        bytes_per_second = self._sample_rate * self._channels * self._sample_width
+        last_chunk_bytes = 0
+        try:
+            while self._active:
+                try:
+                    chunk = await asyncio.wait_for(
+                        self._play_queue.get(), timeout=0.5
+                    )
+                except asyncio.TimeoutError:
+                    continue
 
-            if chunk is None:
-                # 停止信号
-                break
+                if chunk is None:
+                    # 停止信号
+                    break
 
-            # 在线程池中执行阻塞的 PyAudio 写入
-            try:
-                await loop.run_in_executor(None, self._write_audio, chunk)
-            except Exception as exc:
-                logger.error("AudioPlayer write error: %s", exc)
+                # 收到第一个音频块时标记播放开始
+                if not self._playback_active:
+                    self._playback_active = True
+
+                last_chunk_bytes = len(chunk)
+
+                # 在线程池中执行阻塞的 PyAudio 写入
+                try:
+                    await loop.run_in_executor(None, self._write_audio, chunk)
+                except Exception as exc:
+                    logger.error("AudioPlayer write error: %s", exc)
+
+            # 等待最后一个 chunk 播放完成
+            # PyAudio 阻塞 write() 已按实时速度写入，只需等待最后一点缓冲数据播完
+            if last_chunk_bytes > 0 and bytes_per_second > 0:
+                remaining_sec = last_chunk_bytes / bytes_per_second + 0.05
+                await asyncio.sleep(remaining_sec)
+                logger.debug("AudioPlayer: waited %.2fs for playback to finish", remaining_sec)
+        finally:
+            self._playback_active = False  # 标记播放结束
+            logger.debug("AudioPlayer: playback finished")
 
     def _write_audio(self, data: bytes) -> None:
         """阻塞写入 PyAudio 流（在线程池中调用）。"""

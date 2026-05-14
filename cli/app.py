@@ -398,9 +398,6 @@ class BrixCLI:
                             renderer.start()
                         renderer.push_delta(text)
                         content_parts.append(text)
-                        # TTS 桥接：将 LLM 回复送入语音模块
-                        if self._voice and self._voice.is_running:
-                            self._voice.feed_response_text(text)
 
                 elif event_type == "tool_call":
                     indicator.finish()
@@ -450,11 +447,13 @@ class BrixCLI:
             renderer.flush()
         _tick("stream_end")
 
-        # Flush TTS buffer
-        if self._voice and self._voice.is_running:
-            self._voice.flush_tts()
-
         response = "".join(content_parts)
+
+        # TTS 桥接：统一在完整回复后一次性触发，避免流式碎片丢失触发
+        if self._voice and self._voice.is_running and response.strip():
+            self._console.print(f"[dim]TTS trigger: chars={len(response)}[/]")
+            self._voice.feed_response_text(response)
+            self._voice.flush_tts()
 
         # Write timing data for analysis
         try:
@@ -545,6 +544,10 @@ class BrixCLI:
             self._voice.on_interim_text(self._handle_interim_text)
             # timing hook
             self._voice._hooks.register("voice_timing", self._handle_voice_timing)
+            self._voice._hooks.register("voice_tts_queue", self._handle_voice_tts_queue)
+            self._voice._hooks.register("voice_tts_skip", self._handle_voice_tts_skip)
+            self._voice._hooks.register("voice_tts", self._handle_voice_tts)
+            self._voice._hooks.register("voice_tts_error", self._handle_voice_tts_error)
         except Exception as exc:
             self._console.print(f"[dim]语音模块加载失败: {exc}[/]")
 
@@ -579,6 +582,37 @@ class BrixCLI:
             step = event.data.get("step", "")
             ms = event.data.get("ms", 0)
             self._voice_display.update_timing(step, ms)
+
+    def _handle_voice_tts(self, event) -> None:
+        """TTS 成功回调 — 输出简短诊断信息。"""
+        backend = event.data.get("backend", "unknown")
+        chunks = event.data.get("chunks", 0)
+        bytes_ = event.data.get("bytes", 0)
+        self._console.print(
+            f"[dim]TTS ok: backend={backend}, chunks={chunks}, bytes={bytes_}[/]"
+        )
+
+    def _handle_voice_tts_error(self, event) -> None:
+        """TTS 错误回调 — 输出可见错误。"""
+        error = event.data.get("error", "unknown")
+        backend = event.data.get("backend", "unknown")
+        self._console.print(
+            f"[yellow]TTS error: {error} (backend={backend})[/]"
+        )
+
+    def _handle_voice_tts_queue(self, event) -> None:
+        source = event.data.get("source", "unknown")
+        text = event.data.get("text", "")
+        self._console.print(
+            f"[dim]TTS queue: source={source}, text='{text}'[/]"
+        )
+
+    def _handle_voice_tts_skip(self, event) -> None:
+        source = event.data.get("source", "unknown")
+        text = event.data.get("text", "")
+        self._console.print(
+            f"[dim]TTS skip: source={source}, text='{text}'[/]"
+        )
 
     def _register_commands(self) -> None:
         """注册所有内置命令和 Skill 到 CommandRegistry。"""

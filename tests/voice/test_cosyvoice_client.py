@@ -50,6 +50,47 @@ def test_create_cosyvoice_client_no_api_key():
     assert client is None
 
 
+def test_cosyvoice_normalize_text():
+    """规整文本应去除异常符号并保留可读内容。"""
+    client = CosyVoiceClient(api_key="test-key")
+    text = "∴ 你好…\n`code` ⏺ ### 在干啥呀 😄"
+    normalized = client._normalize_text(text)
+    assert "你好" in normalized
+    assert "在干啥呀" in normalized
+    assert "∴" not in normalized
+    assert "⏺" not in normalized
+    assert "😄" not in normalized
+
+
+def test_cosyvoice_prepare_text_segments():
+    """长文本应被分段且每段不超过上限。"""
+    client = CosyVoiceClient(api_key="test-key")
+    long_text = "你好呀。" * 200
+    segments = client._prepare_text_segments(long_text)
+    assert len(segments) > 1
+    assert all(len(seg) <= 180 for seg in segments)
+    assert all(seg.strip() for seg in segments)
+
+
+def test_cosyvoice_fallback_text():
+    """fallback 文本应更简单且长度受限。"""
+    client = CosyVoiceClient(api_key="test-key")
+    text = "“你好”，（老大）《这是一个很长很长的句子》" * 20
+    fallback = client._fallback_text(text)
+    assert len(fallback) <= 80
+    assert "“" not in fallback
+    assert "（" not in fallback
+
+
+def test_cosyvoice_is_speakable_segment_filters_short_english():
+    """短英文或纯标点应被过滤。"""
+    client = CosyVoiceClient(api_key="test-key")
+    assert client._is_speakable_segment("你好呀") is True
+    assert client._is_speakable_segment("........") is False
+    assert client._is_speakable_segment("bug") is False
+    assert client._is_speakable_segment("bug fixes today") is True
+
+
 @pytest.mark.asyncio
 async def test_synthesize_empty_text():
     """空文本不产生任何输出。"""
