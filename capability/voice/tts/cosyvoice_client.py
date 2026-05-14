@@ -145,119 +145,127 @@ class CosyVoiceClient:
             return ""
         return simplified
 
-    async def _synthesize_one(self, text: str) -> AsyncIterator[bytes]:
-        """合成单个文本片段。"""
+    async def _synthesize_one(self, text: str, max_retries: int = 2) -> AsyncIterator[bytes]:
+        """合成单个文本片段，网络错误自动重试。"""
+        for attempt in range(max_retries + 1):
+            try:
+                async for chunk in self._synthesize_one_attempt(text):
+                    yield chunk
+                return  # 成功，退出重试循环
+            except (ConnectionResetError, OSError, websockets.exceptions.ConnectionClosed) as exc:
+                if attempt < max_retries:
+                    wait = 0.5 * (attempt + 1)
+                    logger.warning("CosyVoice: connection error (attempt %d/%d), retrying in %.1fs: %s",
+                                   attempt + 1, max_retries + 1, wait, exc)
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error("CosyVoice: all %d retries exhausted: %s", max_retries + 1, exc)
+
+    async def _synthesize_one_attempt(self, text: str) -> AsyncIterator[bytes]:
+        """单次合成尝试。网络异常向上抛出，由 _synthesize_one 负责重试。"""
         task_id = str(uuid.uuid4())
         headers = {"Authorization": f"Bearer {self._api_key}"}
         logger.info("CosyVoice: Starting synthesis for text: '%s...' (task_id=%s)", text[:30], task_id)
 
-        try:
-            logger.info("CosyVoice: Connecting to WebSocket: %s", self._url)
-            async with websockets.connect(
-                self._url,
-                additional_headers=headers,
-                max_size=2**24,
-            ) as ws:
-                logger.info("CosyVoice: WebSocket connected successfully")
+        logger.info("CosyVoice: Connecting to WebSocket: %s", self._url)
+        async with websockets.connect(
+            self._url,
+            additional_headers=headers,
+            max_size=2**24,
+        ) as ws:
+            logger.info("CosyVoice: WebSocket connected successfully")
 
-                # 1. 发送 run-task
-                run_msg = {
-                    "header": {
-                        "action": "run-task",
-                        "task_id": task_id,
-                        "streaming": "duplex",
+            # 1. 发送 run-task
+            run_msg = {
+                "header": {
+                    "action": "run-task",
+                    "task_id": task_id,
+                    "streaming": "duplex",
+                },
+                "payload": {
+                    "task_group": "audio",
+                    "task": "tts",
+                    "function": "SpeechSynthesizer",
+                    "model": self._model,
+                    "parameters": {
+                        "text_type": "PlainText",
+                        "voice": self._voice,
+                        "format": "pcm",
+                        "sample_rate": self._sample_rate,
                     },
-                    "payload": {
-                        "task_group": "audio",
-                        "task": "tts",
-                        "function": "SpeechSynthesizer",
-                        "model": self._model,
-                        "parameters": {
-                            "text_type": "PlainText",
-                            "voice": self._voice,
-                            "format": "pcm",
-                            "sample_rate": self._sample_rate,
-                        },
-                        "input": {},
+                    "input": {},
+                },
+            }
+            await ws.send(json.dumps(run_msg))
+            logger.info("CosyVoice: Sent run-task message")
+
+            # 2. 等待 task-started
+            resp = await ws.recv()
+            data = json.loads(resp)
+            event = data.get("header", {}).get("event", "")
+            logger.info("CosyVoice: Received event: %s", event)
+
+            if event != "task-started":
+                if event == "task-failed":
+                    error = data.get("header", {}).get("error_message", "unknown")
+                    logger.error("CosyVoice task failed before streaming: %s", error)
+                else:
+                    logger.error("CosyVoice: unexpected start event: %s", event)
+                return
+
+            logger.info("CosyVoice: Task started, sending text...")
+
+            # 3. 发送 continue-task（文本）
+            continue_msg = {
+                "header": {
+                    "action": "continue-task",
+                    "task_id": task_id,
+                    "streaming": "duplex",
+                },
+                "payload": {
+                    "input": {
+                        "text": text,
                     },
-                }
-                await ws.send(json.dumps(run_msg))
-                logger.info("CosyVoice: Sent run-task message")
+                },
+            }
+            await ws.send(json.dumps(continue_msg))
+            logger.info("CosyVoice: Sent continue-task with text")
 
-                # 2. 等待 task-started
-                resp = await ws.recv()
-                data = json.loads(resp)
-                event = data.get("header", {}).get("event", "")
-                logger.info("CosyVoice: Received event: %s", event)
+            # 4. 发送 finish-task
+            finish_msg = {
+                "header": {
+                    "action": "finish-task",
+                    "task_id": task_id,
+                    "streaming": "duplex",
+                },
+                "payload": {
+                    "input": {},
+                },
+            }
+            await ws.send(json.dumps(finish_msg))
+            logger.info("CosyVoice: Sent finish-task, waiting for audio...")
 
-                if event != "task-started":
-                    if event == "task-failed":
+            # 5. 接收音频数据直到 task-finished
+            audio_chunks = 0
+            while True:
+                msg = await ws.recv()
+                if isinstance(msg, bytes):
+                    audio_chunks += 1
+                    if audio_chunks <= 3:
+                        logger.info("CosyVoice: Received audio chunk %d, size=%d bytes", audio_chunks, len(msg))
+                    yield msg
+                else:
+                    data = json.loads(msg)
+                    event = data.get("header", {}).get("event", "")
+                    if event == "task-finished":
+                        logger.info("CosyVoice: Task finished, total audio chunks=%d", audio_chunks)
+                        break
+                    elif event == "result-generated":
+                        continue
+                    elif event == "task-failed":
                         error = data.get("header", {}).get("error_message", "unknown")
-                        logger.error("CosyVoice task failed before streaming: %s", error)
-                    else:
-                        logger.error("CosyVoice: unexpected start event: %s", event)
-                    return
-
-                logger.info("CosyVoice: Task started, sending text...")
-
-                # 3. 发送 continue-task（文本）
-                continue_msg = {
-                    "header": {
-                        "action": "continue-task",
-                        "task_id": task_id,
-                        "streaming": "duplex",
-                    },
-                    "payload": {
-                        "input": {
-                            "text": text,
-                        },
-                    },
-                }
-                await ws.send(json.dumps(continue_msg))
-                logger.info("CosyVoice: Sent continue-task with text")
-
-                # 4. 发送 finish-task
-                finish_msg = {
-                    "header": {
-                        "action": "finish-task",
-                        "task_id": task_id,
-                        "streaming": "duplex",
-                    },
-                    "payload": {
-                        "input": {},
-                    },
-                }
-                await ws.send(json.dumps(finish_msg))
-                logger.info("CosyVoice: Sent finish-task, waiting for audio...")
-
-                # 5. 接收音频数据直到 task-finished
-                audio_chunks = 0
-                while True:
-                    msg = await ws.recv()
-                    if isinstance(msg, bytes):
-                        # 二进制音频数据
-                        audio_chunks += 1
-                        if audio_chunks <= 3:
-                            logger.info("CosyVoice: Received audio chunk %d, size=%d bytes", audio_chunks, len(msg))
-                        yield msg
-                    else:
-                        data = json.loads(msg)
-                        event = data.get("header", {}).get("event", "")
-                        if event == "task-finished":
-                            logger.info("CosyVoice: Task finished, total audio chunks=%d", audio_chunks)
-                            break
-                        elif event == "result-generated":
-                            # 中间结果，继续接收
-                            continue
-                        elif event == "task-failed":
-                            error = data.get("header", {}).get("error_message", "unknown")
-                            logger.error("CosyVoice task failed: %s", error)
-                            break
-
-        except websockets.exceptions.ConnectionClosed as exc:
-            logger.error("CosyVoice WebSocket closed unexpectedly: %s", exc)
-        except Exception as exc:
-            logger.error("CosyVoice error: %s", exc, exc_info=True)
+                        logger.error("CosyVoice task failed: %s", error)
+                        break
 
 
 def create_cosyvoice_client(config: dict) -> CosyVoiceClient | None:
