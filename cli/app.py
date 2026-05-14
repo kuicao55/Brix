@@ -122,10 +122,10 @@ class BrixCLI:
                         [keyboard_task, voice_task],
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                except Exception:
+                except (KeyboardInterrupt, asyncio.CancelledError):
                     keyboard_task.cancel()
                     voice_task.cancel()
-                    raise
+                    break
 
                 for task in pending:
                     task.cancel()
@@ -163,6 +163,9 @@ class BrixCLI:
                     await self._process_streaming(text)
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
+        except KeyboardInterrupt:
+            self._memory.save_session()
+            self._console.print("\n[dim]Goodbye.[/]")
         finally:
             if self._voice and self._voice.is_running:
                 await self._voice.stop()
