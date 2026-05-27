@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class VoiceCleanupTask(SideTask):
                 ],
                 model=ctx.side_model,
             )
-            return response.content.strip() if response.content else raw_text
+            return _strip_control_chars(response.content).strip() if response.content else raw_text
         except Exception:
             logger.warning("VoiceCleanupTask 执行失败", exc_info=True)
             return raw_text

@@ -5,6 +5,7 @@ import logging
 import time
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class SessionSummaryTask(SideTask):
                 ],
                 model=ctx.side_model,
             )
-            return response.content if response.content else None
+            return _strip_control_chars(response.content).strip() if response.content else None
         except Exception:
             logger.warning("SessionSummaryTask 执行失败", exc_info=True)
             return None

@@ -1429,6 +1429,29 @@ async def test_voice_cleanup_short():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("llm_response", ["", None])
+async def test_voice_cleanup_llm_empty_fallback(llm_response):
+    """VoiceCleanupTask LLM 返回空/None 时回退到 raw_text。"""
+    from side.tasks.voice_cleanup import VoiceCleanupTask
+    task = VoiceCleanupTask()
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = llm_response
+    mock_client.chat = AsyncMock(return_value=mock_response)
+    ctx = SideTaskContext(
+        llm_client=mock_client,
+        side_model="test-model",
+        config={"_side_task_args": {"raw_text": "嗯 你好啊 请帮我看看"}},
+        memory=None,
+        session_messages=[],
+        user_input="",
+        hooks=None,
+    )
+    result = await task.execute(ctx)
+    assert result == "嗯 你好啊 请帮我看看"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bad_value", [123, 45.6, [], {}, None, True])
 async def test_voice_cleanup_non_string_returns_none(bad_value):
     """CQR-3 MEDIUM: raw_text 非字符串时应返回 None。"""
@@ -1464,6 +1487,26 @@ async def test_context_compress_below_threshold():
     ctx = _make_ctx(
         session_messages=messages,
         config={"side": {"tasks": {"context_compress": {"message_threshold": 50}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_context_compress_llm_exception_returns_none():
+    """ContextCompressTask LLM 异常时返回 None。"""
+    from side.tasks.context_compress import ContextCompressTask
+    task = ContextCompressTask()
+    mock_client = MagicMock()
+    mock_client.chat = AsyncMock(side_effect=RuntimeError("LLM down"))
+    ctx = SideTaskContext(
+        llm_client=mock_client,
+        side_model="test-model",
+        session_messages=[{"role": "user", "content": f"msg {i}"} for i in range(60)],
+        config={"side": {"tasks": {"context_compress": {"message_threshold": 50}}}},
+        memory=None,
+        user_input="",
+        hooks=None,
     )
     result = await task.execute(ctx)
     assert result is None

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,8 @@ class ContextCompressTask(SideTask):
             )
             if not response.content:
                 return None
-            # 归一化：strip 首尾空白
-            result = response.content.strip()
+            # 归一化：strip 控制字符 + 首尾空白
+            result = _strip_control_chars(response.content).strip()
             if not result:
                 return None
             # 硬输出预算：超过上限时截断
