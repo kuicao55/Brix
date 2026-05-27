@@ -11,6 +11,23 @@ logger = logging.getLogger(__name__)
 
 MAX_TITLE_LEN = 80
 
+# --- 控制字符清理 ---
+
+# 匹配 ANSI/CSI 转义序列：ESC[ ... 任意中间字符 ... 终止字母
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# 匹配残留 ESC 字符（孤立 ESC 或非 CSI 形式）
+_RESIDUAL_ESC_RE = re.compile(r"\x1b.")
+# 匹配 C0 控制字符（0x00-0x1F），保留 \t(0x09)、\n(0x0A)、\r(0x0D)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+
+
+def _strip_control_chars(text: str) -> str:
+    """剥离 ANSI 转义序列和控制字符，仅保留可打印内容。"""
+    text = _ANSI_ESCAPE_RE.sub("", text)
+    text = _RESIDUAL_ESC_RE.sub("", text)
+    text = _CONTROL_CHAR_RE.sub("", text)
+    return text
+
 PROMPT = """\
 Generate a concise title (3-7 words) that captures the main topic of this conversation.
 Use sentence case. Return JSON with a single "title" field.
@@ -46,11 +63,12 @@ def _extract_json_object(text: str) -> dict | None:
 
 
 def _sanitize_title(raw: str | None) -> str | None:
-    """校验并清理标题：要求字符串、折叠换行、截断长度。"""
+    """校验并清理标题：剥离控制字符、折叠换行、截断长度。"""
     if not isinstance(raw, str):
         return None
+    cleaned = _strip_control_chars(raw)
     # 折叠换行为空格，去首尾空白
-    cleaned = " ".join(raw.split()).strip()
+    cleaned = " ".join(cleaned.split()).strip()
     if not cleaned:
         return None
     return cleaned[:MAX_TITLE_LEN]

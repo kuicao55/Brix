@@ -351,3 +351,250 @@ async def test_tool_summary_non_string_output():
     )
     result = await task.execute(ctx)
     assert result is None
+
+
+# --- Secret redaction tests (CQR-2 HIGH) ---
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_redacts_api_key_in_input():
+    """ToolSummaryTask 将 tool_input 中的 api_key 红act后再发给 LLM。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Called API",
+        config={
+            "_side_task_args": {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "curl -H 'Authorization: Bearer sk-abc123secrettoken'",
+                    "api_key": "sk-proj-SECRETKEY123456789",
+                    "token": "ghp_XXXXXXXXXXXXXXXXXXXX",
+                    "password": "hunter2",
+                },
+                "tool_result": "ok",
+            },
+        },
+    )
+    # 捕获发给 LLM 的实际 prompt 内容
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    # 合并所有 prompt 内容用于断言
+    all_text = " ".join(m["content"] for m in captured_messages)
+    assert "sk-abc123secrettoken" not in all_text, "Bearer token 应被红act"
+    assert "sk-proj-SECRETKEY123456789" not in all_text, "api_key 值应被红act"
+    assert "ghp_XXXXXXXXXXXXXXXXXXXX" not in all_text, "token 值应被红act"
+    assert "hunter2" not in all_text, "password 值应被红act"
+    # 确认工具名和操作类型仍然保留
+    assert "Bash" in all_text, "工具名应保留"
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_redacts_secrets_in_result():
+    """ToolSummaryTask 将 tool_result 中的凭证模式红act。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Fetched data",
+        config={
+            "_side_task_args": {
+                "tool_name": "Bash",
+                "tool_input": {"command": "curl https://api.example.com"},
+                "tool_result": (
+                    "HTTP 200\n"
+                    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc\n"
+                    "X-Api-Key: secret-key-value-12345\n"
+                    '{"access_token": "ya29.secretvalue", "status": "ok"}'
+                ),
+            },
+        },
+    )
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    all_text = " ".join(m["content"] for m in captured_messages)
+    assert "eyJhbGciOiJIUzI1NiJ9" not in all_text, "JWT token 应被红act"
+    assert "secret-key-value-12345" not in all_text, "X-Api-Key 值应被红act"
+    assert "ya29.secretvalue" not in all_text, "access_token 值应被红act"
+    # 非敏感内容应保留
+    assert "HTTP 200" in all_text or "200" in all_text, "非敏感状态码应保留"
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_redacts_nested_dict_secrets():
+    """ToolSummaryTask 红act嵌套字典中的凭证字段。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Updated config",
+        config={
+            "_side_task_args": {
+                "tool_name": "Write",
+                "tool_input": {
+                    "file_path": "config.yaml",
+                    "content": "db_password: supersecret\napi_token: tok_abc123",
+                },
+                "tool_result": "written",
+            },
+        },
+    )
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    all_text = " ".join(m["content"] for m in captured_messages)
+    # dict 键名含有 secret 类关键字时值应被红act
+    # 但 content 字段内的自由文本（如写入文件的内容）需要更精细处理；
+    # 至少顶层敏感键名的值必须被红act
+    assert "supersecret" not in all_text, "db_password 值应被红act"
+    assert "tok_abc123" not in all_text, "api_token 值应被红act"
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_preserves_non_sensitive_fields():
+    """ToolSummaryTask 非敏感字段应保留原样。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Searched files",
+        config={
+            "_side_task_args": {
+                "tool_name": "Grep",
+                "tool_input": {"pattern": "def main", "path": "/src"},
+                "tool_result": "Found 5 matches in 3 files",
+            },
+        },
+    )
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    all_text = " ".join(m["content"] for m in captured_messages)
+    assert "def main" in all_text, "非敏感搜索 pattern 应保留"
+    assert "/src" in all_text, "非敏感路径应保留"
+    assert "Found 5 matches" in all_text, "非敏感 result 应保留"
+
+
+# --- Control character / escape sequence tests (CQR-2 MEDIUM) ---
+
+
+def test_sanitize_summary_strips_ansi_escapes():
+    """_sanitize_summary 应剥离 ANSI 转义序列。"""
+    from side.tasks.tool_summary import _sanitize_summary
+
+    # 常见 ANSI 颜色码
+    payload = "\x1b[31mRed Error\x1b[0m in auth"
+    result = _sanitize_summary(payload)
+    assert result is not None
+    assert "\x1b" not in result, "ANSI ESC 字符应被剥离"
+    assert "[" not in result or "Red" not in result, "ANSI 控制序列内容应被剥离"
+    # 清理后应保留可读文本
+    assert "Error" in result or "auth" in result
+
+
+def test_sanitize_summary_strips_csi_sequences():
+    """_sanitize_summary 应剥离 CSI (Control Sequence Introducer) 序列。"""
+    from side.tasks.tool_summary import _sanitize_summary
+
+    # 光标移动、清屏等 CSI 序列
+    payload = "\x1b[2J\x1b[1;1HDone\x1b[?25l"
+    result = _sanitize_summary(payload)
+    assert result is not None
+    assert "\x1b" not in result
+    assert "Done" in result
+
+
+def test_sanitize_summary_strips_control_chars():
+    """_sanitize_summary 应剥离 NUL、BEL、BS 等控制字符。"""
+    from side.tasks.tool_summary import _sanitize_summary
+
+    payload = "\x00\x07\x08Result\x1b[0m"
+    result = _sanitize_summary(payload)
+    assert result is not None
+    assert "\x00" not in result
+    assert "\x07" not in result
+    assert "\x08" not in result
+    assert "\x1b" not in result
+    assert "Result" in result
+
+
+def test_sanitize_title_strips_ansi_escapes():
+    """_sanitize_title 应剥离 ANSI 转义序列。"""
+    from side.tasks.session_title import _sanitize_title
+
+    payload = "\x1b[1m\x1b[34mFix login bug\x1b[0m"
+    result = _sanitize_title(payload)
+    assert result is not None
+    assert "\x1b" not in result
+    assert "Fix login bug" in result
+
+
+def test_sanitize_title_strips_csi_sequences():
+    """_sanitize_title 应剥离 CSI 序列。"""
+    from side.tasks.session_title import _sanitize_title
+
+    payload = "\x1b[32mAuth flow\x1b[0m\x1b[2K"
+    result = _sanitize_title(payload)
+    assert result is not None
+    assert "\x1b" not in result
+    assert "Auth flow" in result
+
+
+def test_sanitize_title_strips_control_chars():
+    """_sanitize_title 应剥离控制字符。"""
+    from side.tasks.session_title import _sanitize_title
+
+    payload = "\x00\x07Title\x08\x1b[0m"
+    result = _sanitize_title(payload)
+    assert result is not None
+    assert "\x00" not in result
+    assert "\x07" not in result
+    assert "\x08" not in result
+    assert "\x1b" not in result
+    assert "Title" in result
+
+
+def test_sanitize_summary_all_escapes_only():
+    """_sanitize_summary 处理纯 ANSI 序列无可读文本的情况。"""
+    from side.tasks.tool_summary import _sanitize_summary
+
+    payload = "\x1b[31m\x1b[1m\x1b[0m"
+    result = _sanitize_summary(payload)
+    # 纯控制序列清理后为空或 None
+    assert result is None
+
+
+def test_sanitize_title_all_escapes_only():
+    """_sanitize_title 处理纯 ANSI 序列无可读文本的情况。"""
+    from side.tasks.session_title import _sanitize_title
+
+    payload = "\x1b[31m\x1b[1m\x1b[0m"
+    result = _sanitize_title(payload)
+    assert result is None
