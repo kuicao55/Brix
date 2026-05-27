@@ -677,3 +677,101 @@ def test_sanitize_title_all_escapes_only():
     payload = "\x1b[31m\x1b[1m\x1b[0m"
     result = _sanitize_title(payload)
     assert result is None
+
+
+# --- CQR-4: Expanded header redaction tests ---
+
+
+def test_redact_tool_result_cookie_header():
+    """Cookie header 值应被红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "HTTP 200\n"
+        "Cookie: session_id=abc123; token=xyz789\n"
+        "Content-Type: application/json"
+    )
+    assert "abc123" not in result, "Cookie 值应被红act"
+    assert "xyz789" not in result, "Cookie token 值应被红act"
+    assert "HTTP 200" in result, "非敏感内容应保留"
+
+
+def test_redact_tool_result_set_cookie_header():
+    """Set-Cookie header 值应被红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "HTTP 200\n"
+        "Set-Cookie: session=secret_session_value; HttpOnly\n"
+        "Content-Type: text/html"
+    )
+    assert "secret_session_value" not in result, "Set-Cookie 值应被红act"
+    assert "HTTP 200" in result, "非敏感内容应保留"
+
+
+def test_redact_tool_result_proxy_authorization_header():
+    """Proxy-Authorization header 值应被红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "HTTP 200\n"
+        "Proxy-Authorization: Basic dXNlcjpwYXNz\n"
+        "Content-Length: 42"
+    )
+    assert "dXNlcjpwYXNz" not in result, "Proxy-Authorization 值应被红act"
+    assert "HTTP 200" in result, "非敏感内容应保留"
+
+
+def test_redact_tool_result_x_auth_token_header():
+    """X-Auth-Token header 值应被红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "HTTP 200\n"
+        "X-Auth-Token: my-secret-auth-token-value\n"
+        "X-Request-Id: req-123"
+    )
+    assert "my-secret-auth-token-value" not in result, "X-Auth-Token 值应被红act"
+    assert "req-123" in result, "非敏感 header 应保留"
+
+
+def test_redact_tool_result_generic_token_header_fallback():
+    """header 名含 token/secret/key/auth 的未知 header 应被 fallback 红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "HTTP 200\n"
+        "X-Custom-Auth: bearer_custom_value_here\n"
+        "X-Some-Token: another_secret_token\n"
+        "X-My-Key: my_api_key_value\n"
+        "X-Secret-Header: super_secret_stuff\n"
+        "Content-Type: application/json"
+    )
+    assert "bearer_custom_value_here" not in result, "X-Custom-Auth 值应被红act"
+    assert "another_secret_token" not in result, "X-Some-Token 值应被红act"
+    assert "my_api_key_value" not in result, "X-My-Key 值应被红act"
+    assert "super_secret_stuff" not in result, "X-Secret-Header 值应被红act"
+    assert "application/json" in result, "Content-Type 非敏感应保留"
+
+
+def test_redact_tool_result_all_new_headers_together():
+    """多个敏感 header 同时出现时应全部被红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "HTTP 200\n"
+        "Cookie: sid=abc123\n"
+        "Set-Cookie: token=xyz789; Path=/\n"
+        "Proxy-Authorization: Bearer proxy_secret\n"
+        "X-Auth-Token: auth_token_value\n"
+        "X-Api-Key: api_key_12345\n"
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc\n"
+        "Content-Type: application/json"
+    )
+    assert "abc123" not in result, "Cookie 应被红act"
+    assert "xyz789" not in result, "Set-Cookie 应被红act"
+    assert "proxy_secret" not in result, "Proxy-Authorization 应被红act"
+    assert "auth_token_value" not in result, "X-Auth-Token 应被红act"
+    assert "api_key_12345" not in result, "X-Api-Key 应被红act"
+    assert "eyJhbGciOiJIUzI1NiJ9" not in result, "Authorization JWT 应被红act"
+    assert "application/json" in result, "Content-Type 非敏感应保留"

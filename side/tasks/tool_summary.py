@@ -49,6 +49,21 @@ _SENSITIVE_KEY_PATTERN = re.compile(
 )
 
 # 值中的凭证模式（不使用跨行匹配，避免行间串扰）
+# 敏感 HTTP header 名（小写），精确匹配
+_SENSITIVE_HEADERS_EXACT = {
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-auth-token",
+}
+
+# 敏感 header 名 fallback 模式：header 名归一化后含以下子串即视为敏感
+_SENSITIVE_HEADER_KEYWORDS = re.compile(
+    r"token|secret|key|auth", re.IGNORECASE
+)
+
 _CREDENTIAL_PATTERNS: list[re.Pattern] = [
     # Bearer token（匹配 Bearer 后面的非空白字符）
     re.compile(r"Bearer\s+\S+", re.IGNORECASE),
@@ -56,6 +71,14 @@ _CREDENTIAL_PATTERNS: list[re.Pattern] = [
     re.compile(r"Authorization:\s*[^\r\n]+", re.IGNORECASE),
     # X-Api-Key header value（匹配到行尾）
     re.compile(r"X-Api-Key:\s*[^\r\n]+", re.IGNORECASE),
+    # Cookie header value（匹配到行尾）
+    re.compile(r"Cookie:\s*[^\r\n]+", re.IGNORECASE),
+    # Set-Cookie header value（匹配到行尾）
+    re.compile(r"Set-Cookie:\s*[^\r\n]+", re.IGNORECASE),
+    # Proxy-Authorization header value（匹配到行尾）
+    re.compile(r"Proxy-Authorization:\s*[^\r\n]+", re.IGNORECASE),
+    # X-Auth-Token header value（匹配到行尾）
+    re.compile(r"X-Auth-Token:\s*[^\r\n]+", re.IGNORECASE),
     # 含 password/token/secret 的 YAML/JSON 键值对（如 "db_password: value"）
     re.compile(r"\w*password\w*[:=]\s*\S+", re.IGNORECASE),
     re.compile(r"\w*token\w*[:=]\s*\S+", re.IGNORECASE),
@@ -72,6 +95,28 @@ _CREDENTIAL_PATTERNS: list[re.Pattern] = [
     # ya29. 风格 Google OAuth token
     re.compile(r"ya29\.[A-Za-z0-9_-]+"),
 ]
+
+
+def _redact_http_headers(text: str) -> str:
+    """识别并红act HTTP header 行中的敏感值。
+
+    精确匹配已知敏感 header 名 + fallback 模式匹配 header 名含
+    token/secret/key/auth 的未知 header。
+    """
+    lines = text.split("\n")
+    result: list[str] = []
+    for line in lines:
+        if ":" in line:
+            name, _, _rest = line.partition(":")
+            name_lower = name.strip().lower()
+            if (
+                name_lower in _SENSITIVE_HEADERS_EXACT
+                or _SENSITIVE_HEADER_KEYWORDS.search(name_lower)
+            ):
+                result.append(f"{name}: {_REDACT_PLACEHOLDER}")
+                continue
+        result.append(line)
+    return "\n".join(result)
 
 _REDACT_PLACEHOLDER = "[REDACTED]"
 
@@ -129,6 +174,7 @@ def _serialize_tool_input(tool_input: object) -> str:
 def _redact_tool_result(tool_result: object) -> str:
     """序列化并红act tool_result 中的凭证模式。"""
     result_str = str(tool_result)[:300]
+    result_str = _redact_http_headers(result_str)
     return _redact_value(result_str)
 
 
