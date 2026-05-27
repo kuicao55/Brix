@@ -172,8 +172,21 @@ def _serialize_tool_input(tool_input: object) -> str:
 
 
 def _redact_tool_result(tool_result: object) -> str:
-    """序列化并红act tool_result 中的凭证模式。"""
-    result_str = str(tool_result)[:300]
+    """序列化并红act tool_result 中的凭证模式。
+
+    - str：直接 header + 值级红act（保留原始换行以匹配 header 行）
+    - Mapping / Sequence：先递归红act键值（_redact_object），再 JSON 序列化，
+      最后对文本执行 header / 值级红act
+    """
+    if isinstance(tool_result, str):
+        result_str = tool_result[:300]
+        result_str = _redact_http_headers(result_str)
+        return _redact_value(result_str)
+    redacted = _redact_object(tool_result)
+    try:
+        result_str = json.dumps(redacted, ensure_ascii=False, default=str)[:300]
+    except (TypeError, ValueError):
+        result_str = repr(redacted)[:300]
     result_str = _redact_http_headers(result_str)
     return _redact_value(result_str)
 

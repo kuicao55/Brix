@@ -775,3 +775,93 @@ def test_redact_tool_result_all_new_headers_together():
     assert "api_key_12345" not in result, "X-Api-Key 应被红act"
     assert "eyJhbGciOiJIUzI1NiJ9" not in result, "Authorization JWT 应被红act"
     assert "application/json" in result, "Content-Type 非敏感应保留"
+
+
+# --- CQR-5: Structured tool_result secret redaction ---
+
+
+def test_redact_tool_result_dict_with_api_key():
+    """_redact_tool_result 对 dict 类型的 tool_result 应递归红act api_key。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result({
+        "status": "ok",
+        "api_key": "sk-proj-SECRETKEY123456789",
+        "data": {"count": 42},
+    })
+    assert "sk-proj-SECRETKEY123456789" not in result, "api_key 值应被红act"
+    assert "ok" in result, "非敏感字段应保留"
+    assert "42" in result, "嵌套非敏感值应保留"
+
+
+def test_redact_tool_result_dict_with_private_key():
+    """_redact_tool_result 对 dict 类型的 tool_result 应递归红act private_key。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result({
+        "file": "id_rsa",
+        "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIE...",
+        "comment": "generated key",
+    })
+    assert "MIIE..." not in result, "private_key 值应被红act"
+    assert "id_rsa" in result, "非敏感字段应保留"
+
+
+def test_redact_tool_result_dict_with_auth_token():
+    """_redact_tool_result 对 dict 类型的 tool_result 应递归红act auth_token。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result({
+        "user": "admin",
+        "auth_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc",
+        "expires": 3600,
+    })
+    assert "eyJhbGciOiJIUzI1NiJ9" not in result, "auth_token JWT 应被红act"
+    assert "admin" in result, "非敏感字段应保留"
+    assert "3600" in result, "非敏感字段应保留"
+
+
+def test_redact_tool_result_nested_dict_secrets():
+    """_redact_tool_result 对嵌套 dict 中的敏感键应递归红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result({
+        "config": {
+            "db_password": "supersecret123",
+            "host": "localhost",
+        },
+        "token": "tok_live_abc123",
+        "status": "ok",
+    })
+    assert "supersecret123" not in result, "嵌套 db_password 应被红act"
+    assert "tok_live_abc123" not in result, "顶层 token 应被红act"
+    assert "localhost" in result, "非敏感嵌套字段应保留"
+    assert "ok" in result, "非敏感顶层字段应保留"
+
+
+def test_redact_tool_result_list_of_dicts():
+    """_redact_tool_result 对 list[dict] 类型的 tool_result 应递归红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result([
+        {"name": "user1", "secret": "s3cret_value"},
+        {"name": "user2", "api_key": "sk-abc123def456"},
+    ])
+    assert "s3cret_value" not in result, "list 中 dict 的 secret 应被红act"
+    assert "sk-abc123def456" not in result, "list 中 dict 的 api_key 应被红act"
+    assert "user1" in result, "非敏感字段应保留"
+    assert "user2" in result, "非敏感字段应保留"
+
+
+def test_redact_tool_result_string_still_works():
+    """_redact_tool_result 对字符串类型的 tool_result 仍应正常红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result(
+        "Authorization: Bearer sk-abc123secrettoken\n"
+        "X-Api-Key: my-api-key-value\n"
+        "HTTP 200"
+    )
+    assert "sk-abc123secrettoken" not in result, "Bearer token 应被红act"
+    assert "my-api-key-value" not in result, "X-Api-Key 值应被红act"
+    assert "HTTP 200" in result, "非敏感内容应保留"
