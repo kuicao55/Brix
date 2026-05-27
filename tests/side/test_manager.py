@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -223,3 +225,72 @@ def test_should_run_pref_detection(manager):
     manager.on_user_message()
     manager.on_user_message()
     assert manager.should_run_pref_detection() is True
+
+
+# ------------------------------------------------------------------
+# Fix 1: interval 校验 — 防止 ZeroDivisionError / TypeError
+# ------------------------------------------------------------------
+
+
+class TestPrefDetectionIntervalSanitization:
+    """should_run_pref_detection 必须处理非法 interval 值。"""
+
+    def test_interval_zero_defaults_to_5(self, manager):
+        """interval=0 会 ZeroDivisionError，必须回退到默认值 5。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": 0}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        # 不应抛异常
+        for _ in range(5):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+    def test_interval_negative_defaults_to_5(self, manager):
+        """interval=-3 语义无效，必须回退到默认值 5。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": -3}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        for _ in range(5):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+    def test_interval_string_defaults_to_5(self, manager):
+        """interval="abc" 会 TypeError，必须回退到默认值 5。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": "abc"}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        for _ in range(5):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+    def test_interval_none_defaults_to_5(self, manager):
+        """interval=None 会 TypeError，必须回退到默认值 5。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": None}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        for _ in range(5):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+    def test_interval_float_is_coerced(self, manager):
+        """interval=3.5 应被转为 int(3)，基于转换后的值判断。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": 3.5}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        for _ in range(3):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+
+# ------------------------------------------------------------------
+# Fix 2: fire_and_forget 缺少 event loop
+# ------------------------------------------------------------------
+
+
+class TestFireAndForgetNoLoop:
+    """fire_and_forget 在没有运行中 event loop 时应安全跳过。"""
+
+    def test_fire_and_forget_no_running_loop(self, manager, config_enabled, caplog):
+        """没有 event loop 时，fire_and_forget 不抛异常，仅警告。"""
+        manager.configure(config=config_enabled, llm_client=None, memory=None)
+        manager.register(MockTask())
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            manager.fire_and_forget("mock")
+        # 不应抛 RuntimeError
+        assert any("event loop" in r.message.lower() or "running" in r.message.lower()
+                    for r in caplog.records if r.levelno >= logging.WARNING)

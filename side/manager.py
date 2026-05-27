@@ -10,6 +10,26 @@ from side.base import SideTask, SideTaskContext
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_INTERVAL = 5
+
+
+def _sanitize_interval(raw: object) -> int:
+    """校验并清洗 interval 配置值。
+
+    规则：
+    - 尝试 int(raw)，失败则回退默认值
+    - 结果 <= 0 则回退默认值
+    """
+    try:
+        interval = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("pref_detection interval=%r 无法转换为 int，使用默认值 %d", raw, _DEFAULT_INTERVAL)
+        return _DEFAULT_INTERVAL
+    if interval <= 0:
+        logger.warning("pref_detection interval=%r 非正整数，使用默认值 %d", raw, _DEFAULT_INTERVAL)
+        return _DEFAULT_INTERVAL
+    return interval
+
 
 class SideTaskManager:
     """管理所有 side tasks 的生命周期。
@@ -78,17 +98,23 @@ class SideTaskManager:
             return None
 
     def fire_and_forget(self, task_name: str, **kwargs: Any) -> None:
-        """异步执行 task，不等待结果。"""
-        asyncio.create_task(self.run_task(task_name, **kwargs))
+        """异步执行 task，不等待结果。无运行中 event loop 时安全跳过。"""
+        coro = self.run_task(task_name, **kwargs)
+        try:
+            asyncio.create_task(coro)
+        except RuntimeError:
+            coro.close()  # 避免 RuntimeWarning: coroutine was never awaited
+            logger.warning("fire_and_forget: 没有运行中的 event loop，跳过 task '%s'", task_name)
 
     def should_run_pref_detection(self) -> bool:
         """检查是否应该运行偏好检测（基于间隔）。"""
-        interval = (
+        raw_interval = (
             self._config.get("side", {})
             .get("tasks", {})
             .get("pref_detection", {})
             .get("interval", 5)
         )
+        interval = _sanitize_interval(raw_interval)
         return self._user_message_count > 0 and self._user_message_count % interval == 0
 
     def on_user_message(self) -> None:
