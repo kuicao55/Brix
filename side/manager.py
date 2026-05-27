@@ -72,12 +72,11 @@ class SideTaskManager:
     def _build_context(self, **kwargs: Any) -> SideTaskContext:
         """构建 task 执行上下文。传入原始值，SideTaskContext 内部处理深拷贝+冻结。
 
-        额外的 kwargs（如 tool_name, tool_input, tool_result）会注入到
-        config["_side_task_args"] 中，供需要工具调用信息的 task 读取。
+        非核心 kwargs（排除 session_messages/user_input/hooks）会注入到
+        config["_side_task_args"] 中，供需要额外参数的 task 读取。
         """
-        # 提取 task 额外参数，注入到 config 副本中
-        _EXTRA_KEYS = {"tool_name", "tool_input", "tool_result"}
-        extra = {k: kwargs[k] for k in _EXTRA_KEYS if k in kwargs}
+        _CORE_KEYS = {"session_messages", "user_input", "hooks"}
+        extra = {k: v for k, v in kwargs.items() if k not in _CORE_KEYS}
         config = self._config
         if extra:
             config = {**self._config, "_side_task_args": extra}

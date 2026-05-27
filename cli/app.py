@@ -369,6 +369,7 @@ class BrixCLI:
         content_parts = []
         has_error = False
         tool_display = ToolDisplay(self._console)
+        _last_tool_input: dict = {}  # 缓存 tool_call 的 input，供 tool_result 使用
 
         try:
             async for event in self._orchestrator.run_stream(user_input, context):
@@ -414,8 +415,9 @@ class BrixCLI:
                         renderer = None
                     self._console.print()  # 工具调用前的间隔
                     tool_name = event.get("name", "unknown")
+                    _last_tool_input = event.get("input", {})
                     tool_display.show_tool_start(
-                        tool_name, event.get("input", {})
+                        tool_name, _last_tool_input
                     )
 
                 elif event_type == "tool_result":
@@ -441,7 +443,7 @@ class BrixCLI:
                         user_input=user_input,
                         hooks=hooks,
                         tool_name=tool_name,
-                        tool_input=event.get("input", ""),
+                        tool_input=_last_tool_input,
                         tool_result=event.get("result", ""),
                     )
 
@@ -552,8 +554,9 @@ class BrixCLI:
 
             # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
             # 模型在调用时延迟解析，避免 _side_manager 未初始化时拿到默认值
+            _CLEANUP_DEFAULT_MODEL = "ali/qwen3.6-flash"
             async def _cleanup_llm(prompt: str) -> str:
-                model = self._side_manager.get_side_model() if self._side_manager else "ali/qwen3.6-flash"
+                model = (self._side_manager.get_side_model() if self._side_manager else "") or _CLEANUP_DEFAULT_MODEL
                 resp = await self._llm_client.chat(
                     messages=[{"role": "user", "content": prompt}],
                     model=model,
