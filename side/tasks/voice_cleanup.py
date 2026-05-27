@@ -24,6 +24,13 @@ class VoiceCleanupTask(SideTask):
 
     async def execute(self, ctx: SideTaskContext) -> str | None:
         raw_text = ctx.config.get("_side_task_args", {}).get("raw_text", "")
+        # 类型校验：raw_text 必须是 str
+        if not isinstance(raw_text, str):
+            logger.warning(
+                "VoiceCleanupTask: raw_text 类型无效 (%s)，期望 str",
+                type(raw_text).__name__,
+            )
+            return None
         if not raw_text or len(raw_text) < 3:
             return raw_text
         try:

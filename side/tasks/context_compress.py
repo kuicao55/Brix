@@ -7,6 +7,9 @@ from side.base import SideTask, SideTaskContext
 
 logger = logging.getLogger(__name__)
 
+# 输出硬上限（字符数）
+_MAX_OUTPUT_CHARS = 2000
+
 PROMPT = """\
 将以下对话历史压缩为简明摘要，保留：
 1. 关键决策和结论
@@ -48,7 +51,21 @@ class ContextCompressTask(SideTask):
                 ],
                 model=ctx.side_model,
             )
-            return response.content if response.content else None
+            if not response.content:
+                return None
+            # 归一化：strip 首尾空白
+            result = response.content.strip()
+            if not result:
+                return None
+            # 硬输出预算：超过上限时截断
+            if len(result) > _MAX_OUTPUT_CHARS:
+                logger.warning(
+                    "ContextCompressTask 输出超限 (%d > %d)，截断",
+                    len(result),
+                    _MAX_OUTPUT_CHARS,
+                )
+                result = result[:_MAX_OUTPUT_CHARS]
+            return result
         except Exception:
             logger.warning("ContextCompressTask 执行失败", exc_info=True)
             return None

@@ -1427,6 +1427,17 @@ async def test_voice_cleanup_short():
     result = await task.execute(ctx)
     assert result == "hi"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_value", [123, 45.6, [], {}, None, True])
+async def test_voice_cleanup_non_string_returns_none(bad_value):
+    """CQR-3 MEDIUM: raw_text 非字符串时应返回 None。"""
+    from side.tasks.voice_cleanup import VoiceCleanupTask
+    task = VoiceCleanupTask()
+    ctx = _make_ctx(config={"_side_task_args": {"raw_text": bad_value}})
+    result = await task.execute(ctx)
+    assert result is None
+
 # --- ContextCompressTask ---
 
 @pytest.mark.asyncio
@@ -1457,6 +1468,26 @@ async def test_context_compress_below_threshold():
     result = await task.execute(ctx)
     assert result is None
 
+
+@pytest.mark.asyncio
+async def test_context_compress_overlong_output_truncated():
+    """CQR-3 HIGH: 模型输出超限时应截断到 2000 字符。"""
+    from side.tasks.context_compress import ContextCompressTask
+    task = ContextCompressTask()
+    messages = [{"role": "user", "content": f"msg {i}"} for i in range(60)]
+    # 模拟模型返回超过 2000 字符的输出
+    overlong = "这是一段很长的摘要。" * 300  # 远超 2000 字符
+    ctx = _make_ctx(
+        llm_response=overlong,
+        session_messages=messages,
+        config={"side": {"tasks": {"context_compress": {"message_threshold": 50}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) <= 2000
+    # 截断后应保留前 2000 个字符
+    assert result == overlong[:2000]
+
 # --- SessionSummaryTask ---
 
 @pytest.mark.asyncio
@@ -1481,6 +1512,37 @@ async def test_session_summary_empty():
     from side.tasks.session_summary import SessionSummaryTask
     task = SessionSummaryTask()
     ctx = _make_ctx(session_messages=[])
+    result = await task.execute(ctx)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_session_summary_threshold_not_met():
+    """CQR-3 MEDIUM: 空闲时间未达阈值时应返回 None。"""
+    import time
+    from side.tasks.session_summary import SessionSummaryTask
+    task = SessionSummaryTask()
+    # last_active_at 设为刚刚（0.1 分钟前），阈值 5 分钟
+    now = time.time()
+    ctx = _make_ctx(
+        llm_response="用户正在开发项目。",
+        session_messages=[
+            {"role": "user", "content": "帮我写代码"},
+            {"role": "assistant", "content": "好的"},
+        ],
+        config={
+            "side": {
+                "tasks": {
+                    "session_summary": {
+                        "idle_threshold_minutes": 5,
+                    },
+                },
+            },
+            "_side_task_args": {
+                "last_active_at": now - 6,  # 6 秒前，远低于 5 分钟
+            },
+        },
+    )
     result = await task.execute(ctx)
     assert result is None
 
