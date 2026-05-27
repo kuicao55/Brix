@@ -41,28 +41,21 @@ def _strip_control_chars(text: str) -> str:
 
 # --- Secret redaction ---
 
-# 顶层敏感键名（不区分大小写匹配）
-_SENSITIVE_KEYS = frozenset({
-    "api_key", "apikey", "api-key",
-    "token", "access_token", "refresh_token", "id_token",
-    "secret", "client_secret",
-    "password", "passwd",
-    "authorization", "auth",
-    "credential", "credentials",
-    "bearer",
-    "private_key", "private-key",
-    "ssh_key", "ssh-key",
-    "cookie", "session_id", "session-id",
-})
+# 敏感键名模式：键名归一化后（小写 + 分隔符移除）匹配以下子串即视为敏感
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"password|passwd|token|secret|apikey|api_key|privatekey|private_key"
+    r"|sshkey|ssh_key|sessionid|session_id|authorization|auth|credential"
+    r"|bearer|cookie",
+)
 
 # 值中的凭证模式（不使用跨行匹配，避免行间串扰）
 _CREDENTIAL_PATTERNS: list[re.Pattern] = [
     # Bearer token（匹配 Bearer 后面的非空白字符）
     re.compile(r"Bearer\s+\S+", re.IGNORECASE),
-    # Authorization header value（单行）
-    re.compile(r"Authorization:\s*\S+", re.IGNORECASE),
-    # X-Api-Key header value（单行）
-    re.compile(r"X-Api-Key:\s*\S+", re.IGNORECASE),
+    # Authorization header value（匹配到行尾，含 Basic dXNlcj... 等多 token 值）
+    re.compile(r"Authorization:\s*[^\r\n]+", re.IGNORECASE),
+    # X-Api-Key header value（匹配到行尾）
+    re.compile(r"X-Api-Key:\s*[^\r\n]+", re.IGNORECASE),
     # 含 password/token/secret 的 YAML/JSON 键值对（如 "db_password: value"）
     re.compile(r"\w*password\w*[:=]\s*\S+", re.IGNORECASE),
     re.compile(r"\w*token\w*[:=]\s*\S+", re.IGNORECASE),
@@ -84,8 +77,13 @@ _REDACT_PLACEHOLDER = "[REDACTED]"
 
 
 def _is_sensitive_key(key: str) -> bool:
-    """判断键名是否属于敏感字段。"""
-    return key.lower() in _SENSITIVE_KEYS
+    """判断键名是否属于敏感字段（模式匹配：归一化后含敏感子串即命中）。
+
+    归一化：casefold + 移除分隔符（_ - 空格），使 db_password / apiToken /
+    auth-header 等变体均可匹配。
+    """
+    normalized = re.sub(r"[\s_-]+", "", key.casefold())
+    return bool(_SENSITIVE_KEY_PATTERN.search(normalized))
 
 
 def _redact_value(value: str) -> str:

@@ -505,6 +505,85 @@ async def test_tool_summary_preserves_non_sensitive_fields():
 # --- Control character / escape sequence tests (CQR-2 MEDIUM) ---
 
 
+# --- CQR-3: Pattern-based key redaction tests ---
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_redacts_db_password_key():
+    """db_password 等组合键名应被红act（模式匹配而非精确匹配）。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Updated config",
+        config={
+            "_side_task_args": {
+                "tool_name": "Write",
+                "tool_input": {
+                    "file_path": "config.yaml",
+                    "db_password": "supersecret123",
+                    "apiToken": "tok_live_abc",
+                    "auth_header": "Bearer xyz",
+                    "github_token": "ghp_FAKE00000000000000000000000000000000",
+                    "secret_key": "my_secret_value",
+                },
+                "tool_result": "written",
+            },
+        },
+    )
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    all_text = " ".join(m["content"] for m in captured_messages)
+    assert "supersecret123" not in all_text, "db_password 值应被红act"
+    assert "tok_live_abc" not in all_text, "apiToken 值应被红act"
+    assert "my_secret_value" not in all_text, "secret_key 值应被红act"
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_redacts_basic_auth_header():
+    """Authorization: Basic <credential> 整行应被红act（含多 token 值）。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Fetched data",
+        config={
+            "_side_task_args": {
+                "tool_name": "Bash",
+                "tool_input": {"command": "curl https://api.example.com"},
+                "tool_result": (
+                    "HTTP 200\n"
+                    "Authorization: Basic dXNlcjpwYXNz\n"
+                    "X-Api-Key: secret-long-key-value-here\n"
+                    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc\n"
+                ),
+            },
+        },
+    )
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    all_text = " ".join(m["content"] for m in captured_messages)
+    assert "dXNlcjpwYXNz" not in all_text, "Basic auth credential 应被红act"
+    assert "secret-long-key-value-here" not in all_text, "X-Api-Key 完整值应被红act"
+
+
+# --- CQR-3: sanitize tests ---
+
+
 def test_sanitize_summary_strips_ansi_escapes():
     """_sanitize_summary 应剥离 ANSI 转义序列。"""
     from side.tasks.tool_summary import _sanitize_summary
