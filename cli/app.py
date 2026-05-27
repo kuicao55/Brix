@@ -415,7 +415,9 @@ class BrixCLI:
                         renderer = None
                     self._console.print()  # 工具调用前的间隔
                     tool_name = event.get("name", "unknown")
-                    _tool_input_cache[event.get("id", "")] = event.get("input", {})
+                    _tc_id = event.get("id", "")
+                    if _tc_id:
+                        _tool_input_cache[_tc_id] = event.get("input", {})
                     tool_display.show_tool_start(
                         tool_name, event.get("input", {})
                     )
@@ -556,11 +558,12 @@ class BrixCLI:
 
             # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
             # 模型在调用时延迟解析，避免 _side_manager 未初始化时拿到默认值
-            # 回退顺序：side model → routing.default_model → 硬编码默认值
+            # 回退顺序：voice.cleanup_model → side model → routing.default_model → 硬编码默认值
             _CLEANUP_FALLBACK = "ali/qwen3.6-flash"
             async def _cleanup_llm(prompt: str) -> str:
                 model = (
-                    (self._side_manager.get_side_model() if self._side_manager else "")
+                    voice_cfg.get("cleanup_model", "")
+                    or (self._side_manager.get_side_model() if self._side_manager else "")
                     or self._config.get("routing", {}).get("default_model", "")
                     or _CLEANUP_FALLBACK
                 )
