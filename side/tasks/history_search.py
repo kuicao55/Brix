@@ -30,12 +30,16 @@ class HistorySearchTask(SideTask):
     def name(self) -> str:
         return "history_search"
 
-    def should_trigger(self, user_input: str) -> bool:
+    def should_trigger(self, user_input: str, config: dict | None = None) -> bool:
+        keywords = (
+            (config or {}).get("side", {}).get("tasks", {})
+            .get("history_search", {}).get("trigger_keywords", TRIGGER_KEYWORDS)
+        )
         text = user_input.lower()
-        return any(kw in text for kw in TRIGGER_KEYWORDS)
+        return any(kw in text for kw in keywords)
 
     async def execute(self, ctx: SideTaskContext) -> list[dict] | None:
-        if not self.should_trigger(ctx.user_input):
+        if not self.should_trigger(ctx.user_input, ctx.config):
             return None
         if not ctx.memory:
             return None
@@ -49,8 +53,9 @@ class HistorySearchTask(SideTask):
         top_k = ctx.config.get("side", {}).get("tasks", {}).get(
             "history_search", {}
         ).get("top_k", 3)
+        candidate_sessions = sessions[-20:]
         candidates = []
-        for s in sessions[-20:]:
+        for s in candidate_sessions:
             summary = s.get("summary", s.get("title", ""))
             candidates.append(
                 f"标题: {s.get('title', '无标题')}\n摘要: {summary[:200]}"
@@ -68,8 +73,8 @@ class HistorySearchTask(SideTask):
             indices = json.loads(response.content or "[]")
             results = []
             for i in indices[:top_k]:
-                if 0 <= i < len(sessions):
-                    results.append(sessions[i])
+                if 0 <= i < len(candidate_sessions):
+                    results.append(candidate_sessions[i])
             return results
         except Exception:
             logger.warning("HistorySearchTask 执行失败", exc_info=True)

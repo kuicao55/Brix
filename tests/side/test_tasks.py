@@ -975,6 +975,7 @@ async def test_pref_detection_basic():
         session_messages=[
             {"role": "user", "content": "请用中文回复我"},
             {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都用中文"},
         ],
     )
     result = await task.execute(ctx)
@@ -991,6 +992,7 @@ async def test_pref_detection_no_prefs():
         session_messages=[
             {"role": "user", "content": "你好"},
             {"role": "assistant", "content": "你好"},
+            {"role": "user", "content": "今天天气怎么样"},
         ],
     )
     result = await task.execute(ctx)
@@ -1042,5 +1044,133 @@ async def test_history_search_no_memory():
     from side.tasks.history_search import HistorySearchTask
     task = HistorySearchTask()
     ctx = _make_ctx(user_input="之前说过什么", memory=None)
+    result = await task.execute(ctx)
+    assert result is None
+
+
+# --- SPEC / CQR 修复测试 ---
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_two_messages_returns_none():
+    """SPEC FIX: 2 条消息不满足 len(recent) < 3 阈值，应返回 None。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        session_messages=[
+            {"role": "user", "content": "请用中文回复"},
+            {"role": "assistant", "content": "好的"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_greedy_regex_extra_prose():
+    """SPEC FIX: LLM 响应含额外文字和多个括号时，非贪婪正则只提取第一个 JSON 数组。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    # 模拟 LLM 返回：前言 + 第一个 JSON 数组 + 中间文字 + 第二个方括号内容
+    llm_response = (
+        '这是分析结果：\n'
+        '[{"preference": "用中文", "context": "用户要求"}]\n'
+        '注意 [这是干扰文本] 不是 JSON'
+    )
+    ctx = _make_ctx(
+        llm_response=llm_response,
+        session_messages=[
+            {"role": "user", "content": "请用中文回复我"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都用中文"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "用中文"
+
+
+@pytest.mark.asyncio
+async def test_history_search_index_mapping_with_many_sessions():
+    """HIGH FIX: 超过 20 个会话时，索引应映射到 candidate_sessions 而非完整列表。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    # 创建 25 个会话，索引 0-24
+    sessions = [
+        {"title": f"会话{i}", "summary": f"摘要{i}"}
+        for i in range(25)
+    ]
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = sessions
+    # LLM 返回 [0]，应该映射到 candidate_sessions[0] 即 sessions[-20:][0] = sessions[5]
+    ctx = _make_ctx(
+        llm_response='[0]',
+        user_input="之前说过什么",
+        memory=mock_memory,
+        config={"side": {"tasks": {"history_search": {"top_k": 3}}}},
+    )
+    result = await task.execute(ctx)
+    assert len(result) == 1
+    # candidate_sessions = sessions[-20:] -> sessions[5] 到 sessions[24]
+    # index 0 映射到 sessions[5]，不是 sessions[0]
+    assert result[0]["title"] == "会话5"
+    assert result[0]["title"] != "会话0"
+
+
+@pytest.mark.asyncio
+async def test_history_search_custom_trigger_keywords():
+    """MEDIUM FIX: 配置中的自定义 trigger_keywords 应覆盖默认关键词。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "部署记录", "summary": "部署了 v2.0"},
+    ]
+    # 自定义关键词包含 "部署"，不包含默认的 "之前"
+    ctx = _make_ctx(
+        llm_response='[0]',
+        user_input="上次部署是什么时候",
+        memory=mock_memory,
+        config={
+            "side": {
+                "tasks": {
+                    "history_search": {
+                        "top_k": 3,
+                        "trigger_keywords": ["部署", "上线", "发布"],
+                    },
+                },
+            },
+        },
+    )
+    # "上次部署" 包含自定义关键词 "部署"，应触发
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["title"] == "部署记录"
+
+
+@pytest.mark.asyncio
+async def test_history_search_custom_keywords_no_match():
+    """MEDIUM FIX: 自定义关键词不匹配时不应触发。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "部署记录", "summary": "部署了 v2.0"},
+    ]
+    ctx = _make_ctx(
+        user_input="今天天气怎么样",
+        memory=mock_memory,
+        config={
+            "side": {
+                "tasks": {
+                    "history_search": {
+                        "trigger_keywords": ["部署", "上线", "发布"],
+                    },
+                },
+            },
+        },
+    )
     result = await task.execute(ctx)
     assert result is None

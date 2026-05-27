@@ -34,7 +34,7 @@ class PrefDetectionTask(SideTask):
 
     async def execute(self, ctx: SideTaskContext) -> list[dict] | None:
         recent = ctx.session_messages[-10:]
-        if len(recent) < 2:
+        if len(recent) < 3:
             return None
         conversation = "\n".join(
             f"{'用户' if m.get('role') == 'user' else '助手'}: "
@@ -51,7 +51,7 @@ class PrefDetectionTask(SideTask):
                 model=ctx.side_model,
             )
             content = response.content or "[]"
-            match = re.search(r'\[.*\]', content, re.DOTALL)
+            match = re.search(r'\[.*?\]', content, re.DOTALL)
             if match:
                 preferences = json.loads(match.group())
             else:
