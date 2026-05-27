@@ -1393,3 +1393,106 @@ async def test_history_search_indices_non_int_filtered():
     assert len(result) == 2
     assert result[0]["title"] == "登录修复"
     assert result[1]["title"] == "数据库优化"
+
+
+# --- VoiceCleanupTask ---
+
+@pytest.mark.asyncio
+async def test_voice_cleanup_basic():
+    """VoiceCleanupTask 清理语音文本。"""
+    from side.tasks.voice_cleanup import VoiceCleanupTask
+    task = VoiceCleanupTask()
+    ctx = _make_ctx(
+        llm_response="你好，请帮我看看这个问题",
+        config={"_side_task_args": {"raw_text": "嗯 你好啊 那个 请帮我看看这个问题"}},
+    )
+    result = await task.execute(ctx)
+    assert result == "你好，请帮我看看这个问题"
+
+@pytest.mark.asyncio
+async def test_voice_cleanup_empty():
+    """VoiceCleanupTask 空文本时返回原文。"""
+    from side.tasks.voice_cleanup import VoiceCleanupTask
+    task = VoiceCleanupTask()
+    ctx = _make_ctx(config={"_side_task_args": {"raw_text": ""}})
+    result = await task.execute(ctx)
+    assert result == ""
+
+@pytest.mark.asyncio
+async def test_voice_cleanup_short():
+    """VoiceCleanupTask 文本太短时返回原文。"""
+    from side.tasks.voice_cleanup import VoiceCleanupTask
+    task = VoiceCleanupTask()
+    ctx = _make_ctx(config={"_side_task_args": {"raw_text": "hi"}})
+    result = await task.execute(ctx)
+    assert result == "hi"
+
+# --- ContextCompressTask ---
+
+@pytest.mark.asyncio
+async def test_context_compress_above_threshold():
+    """ContextCompressTask 超过阈值时压缩。"""
+    from side.tasks.context_compress import ContextCompressTask
+    task = ContextCompressTask()
+    messages = [{"role": "user", "content": f"msg {i}"} for i in range(60)]
+    ctx = _make_ctx(
+        llm_response="用户进行了多轮对话，讨论了各种话题。",
+        session_messages=messages,
+        config={"side": {"tasks": {"context_compress": {"message_threshold": 50}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert "对话" in result
+
+@pytest.mark.asyncio
+async def test_context_compress_below_threshold():
+    """ContextCompressTask 低于阈值时返回 None。"""
+    from side.tasks.context_compress import ContextCompressTask
+    task = ContextCompressTask()
+    messages = [{"role": "user", "content": f"msg {i}"} for i in range(10)]
+    ctx = _make_ctx(
+        session_messages=messages,
+        config={"side": {"tasks": {"context_compress": {"message_threshold": 50}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is None
+
+# --- SessionSummaryTask ---
+
+@pytest.mark.asyncio
+async def test_session_summary_basic():
+    """SessionSummaryTask 生成会话摘要。"""
+    from side.tasks.session_summary import SessionSummaryTask
+    task = SessionSummaryTask()
+    ctx = _make_ctx(
+        llm_response="用户正在开发一个 Python 项目，下一步是添加测试。",
+        session_messages=[
+            {"role": "user", "content": "帮我写一个函数"},
+            {"role": "assistant", "content": "好的，这是函数"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert "Python" in result
+
+@pytest.mark.asyncio
+async def test_session_summary_empty():
+    """SessionSummaryTask 无消息时返回 None。"""
+    from side.tasks.session_summary import SessionSummaryTask
+    task = SessionSummaryTask()
+    ctx = _make_ctx(session_messages=[])
+    result = await task.execute(ctx)
+    assert result is None
+
+# --- ALL_TASKS 注册 ---
+
+def test_all_tasks_registered():
+    """ALL_TASKS 包含所有 7 个 task。"""
+    from side.tasks import ALL_TASKS
+    task_names = {t.name for t in ALL_TASKS}
+    expected = {
+        "session_title", "tool_summary", "pref_detection",
+        "history_search", "voice_cleanup", "context_compress",
+        "session_summary",
+    }
+    assert task_names == expected
