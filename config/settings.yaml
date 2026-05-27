@@ -178,8 +178,42 @@ engine: "state_machine"
 routing:
   default_model: "minimax/MiniMax-M2.7"
   fallback_model: "minimax/MiniMax-M2.7"
-  chat_model: "zenmux-openai/deepseek/deepseek-v4-flash"
-  intent_model: "ali/qwen3.6-flash"
+
+# ============================================================
+# Side 层 — 辅助任务配置（完全可选）
+# ============================================================
+side:
+  enabled: true
+  model: "ali/qwen3.6-flash"           # side 任务专用小模型
+
+  tasks:
+    session_title:
+      enabled: true
+    tool_summary:
+      enabled: true
+    pref_detection:
+      enabled: true
+      interval: 5                       # 每 N 轮用户消息检测一次
+    history_search:
+      enabled: true
+      top_k: 3
+      trigger_keywords:
+        - "之前"
+        - "上次"
+        - "记得"
+        - "曾经"
+        - "以前"
+        - "previously"
+        - "last time"
+        - "remember"
+    voice_cleanup:
+      enabled: true
+    context_compress:
+      enabled: true
+      message_threshold: 50
+    session_summary:
+      enabled: true
+      idle_threshold_minutes: 5
 
 retry:
   max_retries: 3
