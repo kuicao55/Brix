@@ -17,6 +17,7 @@ from capability.voice.config import VoiceConfig
 from capability.voice.pipeline.builder import build_voice_pipeline
 from capability.voice.processors.llm_cleanup import LLMCleanupProcessor
 from capability.voice.processors.stt import STTProcessor
+from capability.voice.processors.stt_online import OnlineSTTProcessor, create_online_stt_processor
 from capability.voice.processors.vad import VADProcessor
 from capability.voice.protocol import VoiceRuntime
 from capability.voice.transport.audio_player import AudioPlayer
@@ -62,7 +63,7 @@ class VoiceRuntimeImpl:
         self._transport: Optional[LocalAudioTransport] = None
         self._audio_player: Optional[AudioPlayer] = None
         self._vad: Optional[VADProcessor] = None
-        self._stt: Optional[STTProcessor] = None
+        self._stt: Optional[STTProcessor | OnlineSTTProcessor] = None
         self._cleanup: Optional[LLMCleanupProcessor] = None
         self._pipeline: Any = None
         self._idle_timeout_task: Optional[asyncio.Task] = None
@@ -163,13 +164,7 @@ class VoiceRuntimeImpl:
                 threshold=self._config.vad_threshold,
                 min_silence_chunks=min_silence_chunks,
             )
-            self._stt = STTProcessor(
-                model_name=self._config.stt_model,
-                interim_model_name=self._config.stt_interim_model,
-                language=self._config.stt_language,
-                device=self._config.stt_device,
-                compute_type=self._config.stt_compute_type,
-            )
+            self._stt = self._create_stt()
             self._cleanup = LLMCleanupProcessor(
                 llm_fn=self._llm_fn,
                 timeout=self._config.cleanup_timeout,
@@ -206,6 +201,47 @@ class VoiceRuntimeImpl:
 
         logger.info("VoiceRuntime started")
 
+    def _create_stt(self) -> STTProcessor | OnlineSTTProcessor:
+        """根据配置创建 STT 处理器。"""
+        if self._config.stt_provider == "online":
+            import os
+            from pathlib import Path
+            api_key_env = self._config.stt_online_api_key_env
+            api_key = os.environ.get(api_key_env, "")
+            if not api_key:
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
+                    load_dotenv(override=False)
+                    api_key = os.environ.get(api_key_env, "")
+                except Exception:
+                    pass
+            if not api_key:
+                logger.warning("Online STT: API key not found (env: %s), falling back to local", api_key_env)
+                return STTProcessor(
+                    model_name=self._config.stt_model,
+                    interim_model_name=self._config.stt_interim_model,
+                    language=self._config.stt_language,
+                    device=self._config.stt_device,
+                    compute_type=self._config.stt_compute_type,
+                )
+            logger.info("Using online STT: %s", self._config.stt_online_model)
+            return OnlineSTTProcessor(
+                api_key=api_key,
+                model=self._config.stt_online_model,
+                language=self._config.stt_online_language,
+                on_interim_text=self._handle_interim_text,
+            )
+        else:
+            logger.info("Using local STT: %s", self._config.stt_model)
+            return STTProcessor(
+                model_name=self._config.stt_model,
+                interim_model_name=self._config.stt_interim_model,
+                language=self._config.stt_language,
+                device=self._config.stt_device,
+                compute_type=self._config.stt_compute_type,
+            )
+
     async def _run_pipeline(self) -> None:
         """启动 transport 和 pipeline 的实际运行。"""
         if self._stt is not None:
@@ -234,6 +270,9 @@ class VoiceRuntimeImpl:
             self._idle_timeout_task = None
 
         try:
+            # 先停止 STT，中断阻塞等待，再停止 pipeline
+            if self._stt is not None:
+                self._stt.stop()
             if self._pipeline is not None:
                 await self._pipeline.stop()
                 self._pipeline = None

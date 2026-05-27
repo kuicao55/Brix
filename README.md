@@ -15,6 +15,10 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
 - **Rich Terminal UI** — Thinking spinner during LLM gap, tool execution panels, content indentation with compact paragraph spacing, styled banner, custom theme, inline response markers
 - **Slash Autocomplete** — Type `/` to see command suggestions with fuzzy matching; Tab to accept, Up/Down to navigate
+- **Voice Interaction** — STT + TTS with independent control, pluggable Protocol architecture
+  - STT: Local faster-whisper / Online Qwen-ASR Realtime (switchable via config)
+  - TTS: CosyVoice v3 Flash, streaming synthesis + multi-level playback fallback (PyAudio / afplay / system TTS)
+  - Continuous conversation, echo cancellation, real-time transcription display
 - **Extensible Config** — Add new providers and models by editing a single YAML file
 - **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
 - **Hook System** — Event-driven architecture with `HookRegistry`; core modules fire events via `hooks.fire()`, FlowLog acts as default listener, easily extensible with custom hooks
@@ -125,6 +129,7 @@ To remove, delete the `alias brix=...` line from your shell config and reload.
 | `/user` | Show user profile (user.md) |
 | `/model` | Show current model |
 | `/log` | Interactive log viewer (arrow keys to select) |
+| `/voice` | Toggle voice mode (supports `--input-only`, `--output-only`, `--continuous`) |
 
 Type `/` to trigger autocomplete — fuzzy matching filters commands as you type. Tab accepts, Up/Down navigates, Escape dismisses.
 
@@ -332,7 +337,68 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 
 ---
 
-## Architecture
+## Voice Interaction
+
+Brix supports voice input (STT) and voice output (TTS), independently controllable.
+
+### Usage
+
+```bash
+# Toggle voice mode in REPL
+/voice
+
+# STT only (no TTS playback)
+/voice --input-only
+
+# TTS only (no microphone)
+/voice --output-only
+
+# Continuous conversation (auto-resume after TTS)
+/voice --continuous
+```
+
+### Configuration
+
+```yaml
+voice:
+  enabled: true
+  input_enabled: true
+  output_enabled: true
+
+  # STT — local or online
+  stt_provider: "online"  # local = faster-whisper / online = Qwen-ASR Realtime
+
+  # Local STT (faster-whisper)
+  stt_model: "small"
+  stt_language: "zh"
+
+  # Online STT (Qwen-ASR Realtime via WebSocket, no SDK required)
+  stt_online_model: "qwen3-asr-flash-realtime"
+  stt_online_api_key_env: "ALI_API_KEY"
+
+  # TTS — CosyVoice v3 Flash
+  tts_model: "cosyvoice-v3-flash"
+  tts_voice: "loongeric_v3"
+  tts_api_key_env: "ALI_API_KEY"
+  tts_cooldown_ms: 800
+```
+
+### Install Voice Dependencies
+
+```bash
+pip install -e ".[voice]"
+```
+
+### Architecture
+
+Voice module interacts with CLI via `VoiceRuntime` Protocol, fully pluggable:
+
+- **STT Pipeline**: Microphone → VAD → STT (local/online) → LLM Cleanup → text callback
+- **TTS Pipeline**: LLM response → text cleanup → CosyVoice synthesis → audio playback
+- **Echo Cancellation**: VAD paused during TTS playback, resumes after cooldown
+- **Fallback**: PyAudio → afplay → macOS system TTS
+
+---
 
 ```
 +-----------------------------------------------------+
@@ -356,6 +422,14 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  capability/tools/file_read.py                       |
 |  capability/tools/file_write.py                      |
 |  capability/tools/file_edit.py                       |
++-----------------------------------------------------+
+|                   Voice Layer                        |
+|  capability/voice/protocol.py (VoiceRuntime Protocol)|
+|  capability/voice/runtime.py (VoiceRuntimeImpl)      |
+|  capability/voice/pipeline/ (SimpleVoicePipeline)    |
+|  capability/voice/processors/ (VAD, STT, TTS, etc.)  |
+|  capability/voice/transport/ (Microphone, Speaker)   |
+|  capability/voice/tts/ (CosyVoice TTS Client)       |
 +-----------------------------------------------------+
 |                   Infra Layer                        |
 |  infra/llm_client.py (Unified LLM Client)            |
@@ -461,6 +535,14 @@ brix/
 |       +-- file_read.py            # Local file reader
 |       +-- file_write.py           # File writer (memory/data/ sandboxed)
 |       +-- file_edit.py            # File editor (memory/data/ sandboxed)
+|   +-- voice/                      # Voice module
+|       +-- protocol.py             # VoiceRuntime Protocol
+|       +-- runtime.py              # VoiceRuntimeImpl (lifecycle)
+|       +-- config.py               # VoiceConfig dataclass
+|       +-- pipeline/               # Voice processing pipeline
+|       +-- processors/             # VAD, STT (local + online), TTS, cleanup
+|       +-- transport/              # Microphone, speaker
+|       +-- tts/                    # CosyVoice TTS client
 +-- memory/
 |   +-- __init__.py                 # MemoryProvider Protocol + factory
 |   +-- provider.py                 # BrixMemoryProvider implementation
@@ -539,6 +621,10 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 | LLM (OpenAI) | openai SDK |
 | LLM (Anthropic) | anthropic SDK |
 | Orchestrator | langgraph (optional) |
+| Speech-to-Text | faster-whisper (local) / Qwen-ASR Realtime (online, WebSocket) |
+| Text-to-Speech | CosyVoice v3 Flash (DashScope WebSocket) |
+| Voice Activity Detection | Silero VAD |
+| Audio I/O | PyAudio |
 | Env Loading | python-dotenv |
 | Testing | pytest + pytest-asyncio |
 

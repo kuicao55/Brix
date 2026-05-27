@@ -25,11 +25,16 @@ class VoiceConfig:
     post_speech_wait_ms: int = 1500  # speech_end 后等待续说的时间窗口
 
     # STT
+    stt_provider: str = "local"  # local / online
     stt_model: str = "small"
     stt_interim_model: str = "tiny"
     stt_language: str = "zh"
     stt_device: str = "cpu"
     stt_compute_type: str = "int8"
+    # 在线 STT (Qwen-ASR Realtime)
+    stt_online_model: str = "qwen3-asr-flash-realtime"
+    stt_online_language: str = "zh"
+    stt_online_api_key_env: str = "ALI_API_KEY"
 
     # LLM Cleanup
     cleanup_enabled: bool = False  # 暂时禁用 LLM cleanup

@@ -19,7 +19,7 @@
 - **流程日志** — 每轮对话自动记录完整数据流，便于调试和审计
 - **Hook 系统** — 事件驱动架构，核心模块通过 `hooks.fire()` 触发事件，FlowLog 作为默认监听者
 - **语音交互** — 语音输入（STT）+ 语音输出（TTS），可独立开关，Protocol 可插拔架构
-  - 语音输入：Silero VAD → faster-whisper STT → LLM Cleanup 全链路
+  - 语音输入：Silero VAD → STT（本地 faster-whisper / 在线 Qwen-ASR 可切换）→ LLM Cleanup 全链路
   - 语音输出：CosyVoice v3 Flash TTS，流式合成 + 多级播放回退（PyAudio / afplay / 系统 TTS）
   - 连续对话模式、回声消除、实时转录可视化
 
@@ -368,13 +368,23 @@ voice:
   input_enabled: true     # 语音输入（STT）
   output_enabled: true    # 语音输出（TTS）
 
-  # STT — 本地 faster-whisper 模型
+  # STT — 支持本地和在线两种模式
+  stt_provider: "online"  # local = faster-whisper 本地模型 / online = Qwen-ASR 线上模型
+
+  # 本地 STT (faster-whisper) — 首次使用自动下载
   stt_model: "small"      # tiny/base/small/medium/large-v3
   stt_language: "zh"
+  stt_device: "cpu"       # cpu/cuda
+  stt_compute_type: "int8"
+
+  # 在线 STT (Qwen-ASR Realtime) — 通过 WebSocket 连接阿里云，无需安装 SDK
+  stt_online_model: "qwen3-asr-flash-realtime"
+  stt_online_language: "zh"
+  stt_online_api_key_env: "ALI_API_KEY"  # 复用阿里云 API Key
 
   # TTS — 阿里云 CosyVoice v3 Flash
   tts_model: "cosyvoice-v3-flash"
-  tts_voice: "longanyang"
+  tts_voice: "loongeric_v3"
   tts_api_key_env: "ALI_API_KEY"
   tts_cooldown_ms: 800    # 回声消除冷却时间
 
@@ -392,8 +402,9 @@ pip install -e ".[voice]"
 
 语音模块通过 `VoiceRuntime` Protocol 与 CLI 交互，完全可插拔：
 
-- **语音输入管线**：麦克风 → VAD → STT → LLM Cleanup → 文本回调
+- **语音输入管线**：麦克风 → VAD → STT（本地/在线可切换）→ LLM Cleanup → 文本回调
 - **语音输出管线**：LLM 响应 → 文本清理 → CosyVoice 合成 → 音频播放
+- **STT 双模式**：本地 faster-whisper（离线、低延迟）/ 在线 Qwen-ASR Realtime（高精度、实时转录），通过 `stt_provider` 配置切换
 - **回声消除**：TTS 播放期间暂停 VAD 检测，冷却期后恢复监听
 - **多级回退**：PyAudio → afplay → macOS 系统 TTS
 
@@ -554,7 +565,8 @@ brix/
 |   |   |   +-- frames.py           # 自定义 Frame 类型
 |   |   +-- processors/             # 信号处理组件
 |   |   |   +-- vad.py              # Silero VAD 语音活动检测
-|   |   |   +-- stt.py              # faster-whisper 语音识别
+|   |   |   +-- stt.py              # faster-whisper 本地语音识别
+|   |   |   +-- stt_online.py       # Qwen-ASR 在线语音识别（WebSocket）
 |   |   |   +-- tts.py              # TTS 按句切分 + 预缓冲
 |   |   |   +-- llm_cleanup.py      # LLM 文本清理
 |   |   |   +-- wake_word.py        # openWakeWord 唤醒词检测
@@ -657,8 +669,8 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 | LLM (OpenAI) | openai SDK |
 | LLM (Anthropic) | anthropic SDK |
 | 编排 | langgraph（可选） |
-| 语音识别 (STT) | faster-whisper (Whisper) |
-| 语音合成 (TTS) | CosyVoice v3 Flash（阿里云 DashScope） |
+| 语音识别 (STT) | faster-whisper (本地) / Qwen-ASR Realtime (在线，WebSocket) |
+| 语音合成 (TTS) | CosyVoice v3 Flash（阿里云 DashScope WebSocket） |
 | 语音活动检测 | Silero VAD |
 | 唤醒词 | openWakeWord |
 | 音频 I/O | PyAudio |
