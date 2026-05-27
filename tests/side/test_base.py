@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from types import MappingProxyType
 from unittest.mock import MagicMock
 
 from side.base import SideTask, SideTaskContext
@@ -34,7 +35,7 @@ class TestSideTaskName:
 
 
 # ------------------------------------------------------------------
-# test_side_task_is_enabled_default
+# test_side_task_is_enabled — 严格布尔检查
 # ------------------------------------------------------------------
 
 class TestSideTaskIsEnabled:
@@ -52,9 +53,53 @@ class TestSideTaskIsEnabled:
         task = DummyTask()
         assert task.is_enabled({}) is False
 
+    # --- CQR: 边界情况，非布尔值必须视为 disabled ---
+
+    def test_string_false_is_disabled(self):
+        """enabled: "false" 是非空字符串，bool("false") == True — 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": "false"}}}}
+        assert task.is_enabled(config) is False
+
+    def test_string_zero_is_disabled(self):
+        """enabled: "0" 是非空字符串 — 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": "0"}}}}
+        assert task.is_enabled(config) is False
+
+    def test_int_zero_is_disabled(self):
+        """enabled: 0 是 falsy 但不是 bool — 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": 0}}}}
+        assert task.is_enabled(config) is False
+
+    def test_none_is_disabled(self):
+        """enabled: None 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": None}}}}
+        assert task.is_enabled(config) is False
+
+    def test_int_one_is_disabled(self):
+        """enabled: 1 不是严格布尔 — 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": 1}}}}
+        assert task.is_enabled(config) is False
+
+    def test_string_true_is_disabled(self):
+        """enabled: "true" 是字符串，不是布尔 — 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": "true"}}}}
+        assert task.is_enabled(config) is False
+
+    def test_missing_key_is_disabled(self):
+        """完全缺少 enabled 键 — 必须拒绝。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {}}}}
+        assert task.is_enabled(config) is False
+
 
 # ------------------------------------------------------------------
-# test_side_task_context_fields
+# test_side_task_context — 只读性
 # ------------------------------------------------------------------
 
 class TestSideTaskContext:
@@ -71,9 +116,57 @@ class TestSideTaskContext:
         )
         assert ctx.llm_client is llm
         assert ctx.side_model == "gemini-2.5-flash"
-        assert ctx.config == {"key": "val"}
-        assert ctx.session_messages == [{"role": "user", "content": "hi"}]
+        assert ctx.config["key"] == "val"
+        assert ctx.session_messages[0] == {"role": "user", "content": "hi"}
         assert ctx.user_input == "hello"
+
+    def test_config_is_readonly_mapping(self):
+        """config 必须是 MappingProxyType，不允许写入。"""
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config={"a": 1},
+            memory=MagicMock(),
+            session_messages=[],
+            user_input="",
+            hooks=MagicMock(),
+        )
+        assert isinstance(ctx.config, MappingProxyType)
+        with pytest.raises(TypeError):
+            ctx.config["b"] = 2  # type: ignore[index]
+
+    def test_session_messages_is_tuple(self):
+        """session_messages 必须是 tuple 拷贝，不允许原地修改。"""
+        original = [{"role": "user", "content": "hi"}]
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config={},
+            memory=MagicMock(),
+            session_messages=original,
+            user_input="",
+            hooks=MagicMock(),
+        )
+        assert isinstance(ctx.session_messages, tuple)
+        with pytest.raises(AttributeError):
+            ctx.session_messages.append({"role": "assistant", "content": "yo"})
+        # 修改原始列表不影响 context
+        original.append({"role": "assistant", "content": "yo"})
+        assert len(ctx.session_messages) == 1
+
+    def test_frozen_no_setattr(self):
+        """SideTaskContext 应为 frozen dataclass。"""
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config={},
+            memory=MagicMock(),
+            session_messages=[],
+            user_input="",
+            hooks=MagicMock(),
+        )
+        with pytest.raises(AttributeError):
+            ctx.user_input = "mutated"
 
 
 # ------------------------------------------------------------------
