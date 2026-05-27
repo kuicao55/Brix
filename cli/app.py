@@ -84,6 +84,15 @@ class BrixCLI:
         self._register_skill_tool()
 
     # ------------------------------------------------------------------
+    # 内部辅助
+    # ------------------------------------------------------------------
+
+    def _resolve_model(self) -> str:
+        """解析主模型：default_model → fallback_model → 空字符串。"""
+        routing = self._config.get("routing", {})
+        return routing.get("default_model", "") or routing.get("fallback_model", "")
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -249,8 +258,8 @@ class BrixCLI:
         hooks.fire("memory", msgs=len(context_messages),
                  chars=sum(len(m.get("content", "")) for m in context_messages))
 
-        # 直接使用 config 中的主模型
-        model = self._config.get("routing", {}).get("default_model", "")
+        # 直接使用 config 中的主模型（default_model → fallback_model）
+        model = self._resolve_model()
         hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
 
@@ -341,8 +350,8 @@ class BrixCLI:
                 })
             _tick("side:history_search")
 
-        # 直接使用 config 中的主模型
-        model = self._config.get("routing", {}).get("default_model", "")
+        # 直接使用 config 中的主模型（default_model → fallback_model）
+        model = self._resolve_model()
         hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
 
