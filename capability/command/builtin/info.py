@@ -63,12 +63,16 @@ class ModelCommand(Command):
         )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        # 安全提取 models 列表（防御畸形配置）
+        raw_models = self._config.get("models", [])
+        models = [m for m in raw_models if isinstance(m, dict)]
+
         # 无参数：显示当前模型和可用模型列表
         if not args.strip():
             default_model = self._config.get("routing", {}).get("default_model", "unknown")
             print(f"\n  当前主模型: {default_model}")
             print(f"\n  可用模型:")
-            for model in self._config.get("models", []):
+            for model in models:
                 model_id = model.get("id", "")
                 cost = model.get("cost_tier", "?")
                 marker = " *" if model_id == default_model else ""
@@ -78,16 +82,15 @@ class ModelCommand(Command):
 
         # 有参数：切换模型
         model_id = args.strip()
-        models = self._config.get("models", [])
         valid_ids = {m.get("id") for m in models}
         if model_id not in valid_ids:
             print(f"\n  未知模型: {model_id}")
             print(f"  使用 /model 查看可用模型列表\n")
             return CommandResult(type=CommandResultType.NONE)
 
-        # 运行时切换（不持久化）
+        # 运行时切换（本次会话内有效，重启后恢复默认值）
         self._config.setdefault("routing", {})["default_model"] = model_id
-        print(f"\n  已切换到: {model_id}\n")
+        print(f"\n  已切换到: {model_id}（本次会话有效）\n")
         return CommandResult(type=CommandResultType.NONE)
 
 
