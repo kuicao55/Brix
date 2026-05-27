@@ -1174,3 +1174,222 @@ async def test_history_search_custom_keywords_no_match():
     )
     result = await task.execute(ctx)
     assert result is None
+
+
+# --- CQR-2: Tolerant JSON extraction + keyword validation ---
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_bracketed_prose_before_json():
+    """CQR-2: 方括号散文在有效 JSON 之前时，应提取第一个可解析的 JSON 数组。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    # LLM 返回：带方括号的散文干扰 + 后面的有效 JSON 数组
+    llm_response = (
+        '分析结果如下 [请注意这不是JSON] 是一些说明文字。\n'
+        '[{"preference": "用中文回复", "context": "用户要求用中文"}]'
+    )
+    ctx = _make_ctx(
+        llm_response=llm_response,
+        session_messages=[
+            {"role": "user", "content": "请用中文回复我"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都用中文"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "用中文回复"
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_fenced_json_array():
+    """CQR-2: PrefDetectionTask 能从 ```json fenced 代码块中提取数组。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='```json\n[{"preference": "先写测试", "context": "用户要求TDD"}]\n```',
+        session_messages=[
+            {"role": "user", "content": "请先写测试"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都先写测试"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "先写测试"
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_direct_json_array():
+    """CQR-2: PrefDetectionTask 直接返回纯 JSON 数组时正常解析。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='[{"preference": "简洁回复", "context": "用户说太长了"}]',
+        session_messages=[
+            {"role": "user", "content": "你的回复太长了"},
+            {"role": "assistant", "content": "好的我会简洁"},
+            {"role": "user", "content": "以后都简洁点"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "简洁回复"
+
+
+@pytest.mark.asyncio
+async def test_history_search_malformed_keywords_scalar_string():
+    """CQR-2: trigger_keywords 为标量字符串时，回退到默认关键词。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "登录修复", "summary": "修复登录问题"},
+    ]
+    # 故意传入标量字符串而非列表
+    ctx = _make_ctx(
+        llm_response='[0]',
+        user_input="之前说过什么",
+        memory=mock_memory,
+        config={
+            "side": {
+                "tasks": {
+                    "history_search": {
+                        "trigger_keywords": "之前",  # 标量，非列表
+                    },
+                },
+            },
+        },
+    )
+    # 标量字符串应回退到默认关键词，"之前" 在默认列表中，应触发
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_search_malformed_keywords_int_in_list():
+    """CQR-2: trigger_keywords 含非字符串元素时，回退到默认关键词。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "部署记录", "summary": "部署 v2.0"},
+    ]
+    ctx = _make_ctx(
+        user_input="今天天气怎么样",
+        memory=mock_memory,
+        config={
+            "side": {
+                "tasks": {
+                    "history_search": {
+                        "trigger_keywords": [123, 456],  # 非字符串
+                    },
+                },
+            },
+        },
+    )
+    # 非字符串列表回退到默认关键词，"今天天气" 不含默认关键词，不触发
+    result = await task.execute(ctx)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_history_search_keywords_normalized():
+    """CQR-2: trigger_keywords 自动 lowercase + strip。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "部署记录", "summary": "部署 v2.0"},
+    ]
+    ctx = _make_ctx(
+        llm_response='[0]',
+        user_input="上次部署是什么时候",
+        memory=mock_memory,
+        config={
+            "side": {
+                "tasks": {
+                    "history_search": {
+                        "trigger_keywords": ["  部署  ", "UPPER"],
+                    },
+                },
+            },
+        },
+    )
+    # "部署" 经 strip+lower 后应匹配 "上次部署"
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_search_fenced_json_indices():
+    """CQR-2: HistorySearchTask 能从 fenced JSON 响应中提取索引。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "登录修复", "summary": "修复登录问题"},
+        {"title": "数据库优化", "summary": "优化查询"},
+    ]
+    ctx = _make_ctx(
+        llm_response='```json\n[1]\n```',
+        user_input="之前说过什么",
+        memory=mock_memory,
+        config={"side": {"tasks": {"history_search": {"top_k": 3}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["title"] == "数据库优化"
+
+
+@pytest.mark.asyncio
+async def test_history_search_prose_with_json_indices():
+    """CQR-2: HistorySearchTask 能从散文+JSON 响应中提取索引。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "登录修复", "summary": "修复登录问题"},
+        {"title": "数据库优化", "summary": "优化查询"},
+    ]
+    ctx = _make_ctx(
+        llm_response='根据分析，最相关的会话是：\n[0, 1]\n以上是推荐结果。',
+        user_input="之前说过什么",
+        memory=mock_memory,
+        config={"side": {"tasks": {"history_search": {"top_k": 3}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 2
+    assert result[0]["title"] == "登录修复"
+    assert result[1]["title"] == "数据库优化"
+
+
+@pytest.mark.asyncio
+async def test_history_search_indices_non_int_filtered():
+    """CQR-2: HistorySearchTask 过滤非整数索引条目。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "登录修复", "summary": "修复登录问题"},
+        {"title": "数据库优化", "summary": "优化查询"},
+    ]
+    ctx = _make_ctx(
+        llm_response='[0, "invalid", 1, null]',
+        user_input="之前说过什么",
+        memory=mock_memory,
+        config={"side": {"tasks": {"history_search": {"top_k": 3}}}},
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 2
+    assert result[0]["title"] == "登录修复"
+    assert result[1]["title"] == "数据库优化"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from side.base import SideTask, SideTaskContext
 
@@ -25,16 +26,87 @@ PROMPT = """\
 如果没有相关会话，返回空数组：[]"""
 
 
+def _validate_keywords(raw: object, defaults: list[str]) -> list[str]:
+    """校验 trigger_keywords 配置项。
+
+    要求为字符串序列，每项非空。自动 lowercase + strip。
+    标量、含非字符串元素、全为空串等情况回退到 defaults。
+    """
+    if not isinstance(raw, list):
+        return defaults
+    cleaned: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            return defaults
+        kw = item.strip().lower()
+        if kw:
+            cleaned.append(kw)
+    return cleaned if cleaned else defaults
+
+
+def _extract_int_list(text: str) -> list[int]:
+    """容错提取：从 LLM 响应中解析 JSON 整数数组。
+
+    策略与 _extract_json_array 相同，但额外过滤非 int 元素。
+    """
+    raw_list = _extract_json_array(text)
+    if raw_list is None:
+        return []
+    return [i for i in raw_list if isinstance(i, int)]
+
+
+def _extract_json_array(text: str) -> list | None:
+    """容错提取：从 LLM 响应中解析第一个 JSON 数组。"""
+    # 1) 直接解析
+    try:
+        result = json.loads(text)
+        if isinstance(result, list):
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2) fenced 代码块
+    fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
+    if fenced:
+        try:
+            result = json.loads(fenced.group(1))
+            if isinstance(result, list):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # 3) 逐个扫描方括号片段（支持嵌套括号）
+    for i, ch in enumerate(text):
+        if ch != "[":
+            continue
+        depth = 0
+        for j in range(i, len(text)):
+            if text[j] == "[":
+                depth += 1
+            elif text[j] == "]":
+                depth -= 1
+            if depth == 0:
+                try:
+                    result = json.loads(text[i : j + 1])
+                    if isinstance(result, list):
+                        return result
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                break
+    return None
+
+
 class HistorySearchTask(SideTask):
     @property
     def name(self) -> str:
         return "history_search"
 
     def should_trigger(self, user_input: str, config: dict | None = None) -> bool:
-        keywords = (
+        raw_keywords = (
             (config or {}).get("side", {}).get("tasks", {})
             .get("history_search", {}).get("trigger_keywords", TRIGGER_KEYWORDS)
         )
+        keywords = _validate_keywords(raw_keywords, TRIGGER_KEYWORDS)
         text = user_input.lower()
         return any(kw in text for kw in keywords)
 
@@ -70,7 +142,7 @@ class HistorySearchTask(SideTask):
                 ],
                 model=ctx.side_model,
             )
-            indices = json.loads(response.content or "[]")
+            indices = _extract_int_list(response.content or "[]")
             results = []
             for i in indices[:top_k]:
                 if 0 <= i < len(candidate_sessions):
