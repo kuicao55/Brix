@@ -960,3 +960,87 @@ async def test_tool_summary_redacts_url_credentials_in_input():
     all_text = " ".join(m["content"] for m in captured_messages)
     assert "sk-secret12345" not in all_text, "URL 中的 api_key 值应被红act"
     assert "api.example.com" in all_text, "非敏感 URL 部分应保留"
+
+
+# --- PrefDetectionTask ---
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_basic():
+    """PrefDetectionTask 检测用户偏好。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='[{"preference": "总是用中文回复", "context": "用户说请用中文"}]',
+        session_messages=[
+            {"role": "user", "content": "请用中文回复我"},
+            {"role": "assistant", "content": "好的"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert len(result) == 1
+    assert result[0]["preference"] == "总是用中文回复"
+
+@pytest.mark.asyncio
+async def test_pref_detection_no_prefs():
+    """PrefDetectionTask 无偏好时返回空列表。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='[]',
+        session_messages=[
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result == []
+
+@pytest.mark.asyncio
+async def test_pref_detection_short_conversation():
+    """PrefDetectionTask 对话太短时返回 None。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(session_messages=[{"role": "user", "content": "hi"}])
+    result = await task.execute(ctx)
+    assert result is None
+
+# --- HistorySearchTask ---
+
+@pytest.mark.asyncio
+async def test_history_search_triggered():
+    """HistorySearchTask 在关键词触发时搜索历史。"""
+    from side.tasks.history_search import HistorySearchTask
+    mock_memory = MagicMock()
+    mock_memory.list_sessions.return_value = [
+        {"title": "登录 bug 修复", "summary": "修复了登录页面的问题"},
+        {"title": "数据库优化", "summary": "优化了查询性能"},
+    ]
+    task = HistorySearchTask()
+    ctx = _make_ctx(
+        llm_response='[0]',
+        user_input="之前那个登录 bug 怎么修的",
+        memory=mock_memory,
+        config={"side": {"tasks": {"history_search": {"top_k": 3}}}},
+    )
+    result = await task.execute(ctx)
+    assert len(result) == 1
+    assert result[0]["title"] == "登录 bug 修复"
+
+@pytest.mark.asyncio
+async def test_history_search_not_triggered():
+    """HistorySearchTask 无关键词时不触发。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    ctx = _make_ctx(user_input="今天天气怎么样")
+    result = await task.execute(ctx)
+    assert result is None
+
+@pytest.mark.asyncio
+async def test_history_search_no_memory():
+    """HistorySearchTask 无 memory 时返回 None。"""
+    from side.tasks.history_search import HistorySearchTask
+    task = HistorySearchTask()
+    ctx = _make_ctx(user_input="之前说过什么", memory=None)
+    result = await task.execute(ctx)
+    assert result is None
