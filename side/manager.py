@@ -70,11 +70,21 @@ class SideTaskManager:
         self._tasks[task.name] = task
 
     def _build_context(self, **kwargs: Any) -> SideTaskContext:
-        """构建 task 执行上下文。传入原始值，SideTaskContext 内部处理深拷贝+冻结。"""
+        """构建 task 执行上下文。传入原始值，SideTaskContext 内部处理深拷贝+冻结。
+
+        额外的 kwargs（如 tool_name, tool_input, tool_result）会注入到
+        config["_side_task_args"] 中，供需要工具调用信息的 task 读取。
+        """
+        # 提取 task 额外参数，注入到 config 副本中
+        _EXTRA_KEYS = {"tool_name", "tool_input", "tool_result"}
+        extra = {k: kwargs[k] for k in _EXTRA_KEYS if k in kwargs}
+        config = self._config
+        if extra:
+            config = {**self._config, "_side_task_args": extra}
         return SideTaskContext(
             llm_client=self._llm_client,
             side_model=self._side_model,
-            config=self._config,
+            config=config,
             memory=self._memory,
             session_messages=kwargs.get("session_messages", []),
             user_input=kwargs.get("user_input", ""),

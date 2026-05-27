@@ -66,15 +66,7 @@ class BrixCLI:
         self._command_registry = CommandRegistry()
         self._orchestrator = self._build_orchestrator()
         self._console = Console(theme=BRIX_THEME)
-        # 语音模块（可选，需在注册命令前初始化）
-        self._side_manager: SideTaskManager | None = None
-        self._voice = None
-        self._voice_display = None
-        self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._init_voice()
-        self._register_commands()
-        self._register_skill_tool()
-        # SideTaskManager 初始化
+        # SideTaskManager 初始化（需在 _init_voice 前，voice cleanup 依赖 get_side_model）
         self._side_manager = SideTaskManager()
         self._side_manager.configure(
             config=self._config,
@@ -83,6 +75,13 @@ class BrixCLI:
         )
         for task in ALL_TASKS:
             self._side_manager.register(task)
+        # 语音模块（可选，需在注册命令前初始化）
+        self._voice = None
+        self._voice_display = None
+        self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._init_voice()
+        self._register_commands()
+        self._register_skill_tool()
 
     # ------------------------------------------------------------------
     # Public API
@@ -434,11 +433,16 @@ class BrixCLI:
                 # fire-and-forget 工具摘要
                 if (event_type == "tool_result"
                         and self._side_manager and self._side_manager.enabled):
+                    # NOTE: fire-and-forget 任务的返回值当前被丢弃。
+                    # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
                     self._side_manager.fire_and_forget(
                         "tool_summary",
                         session_messages=context_messages,
                         user_input=user_input,
                         hooks=hooks,
+                        tool_name=tool_name,
+                        tool_input=event.get("input", ""),
+                        tool_result=event.get("result", ""),
                     )
 
         except Exception as exc:
@@ -501,6 +505,8 @@ class BrixCLI:
         hooks.fire("persist", saved=2 if not has_error else 1)
 
         # 偏好检测（按间隔触发）
+        # NOTE: fire-and-forget 任务的返回值当前被丢弃。
+        # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
         if (self._side_manager and self._side_manager.enabled
                 and self._side_manager.should_run_pref_detection()):
             self._side_manager.fire_and_forget(
@@ -545,12 +551,12 @@ class BrixCLI:
             tts_client = create_cosyvoice_client(self._config)
 
             # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
-            side_model = self._side_manager.get_side_model() if self._side_manager else "ali/qwen3.6-flash"
-
+            # 模型在调用时延迟解析，避免 _side_manager 未初始化时拿到默认值
             async def _cleanup_llm(prompt: str) -> str:
+                model = self._side_manager.get_side_model() if self._side_manager else "ali/qwen3.6-flash"
                 resp = await self._llm_client.chat(
                     messages=[{"role": "user", "content": prompt}],
-                    model=side_model,
+                    model=model,
                 )
                 return resp.content
 
