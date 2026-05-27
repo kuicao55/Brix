@@ -8,7 +8,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from side.base import SideTask, SideTaskContext
-from side.manager import SideTaskManager
+from side.manager import SideTaskManager, _sanitize_interval
 
 
 class MockTask(SideTask):
@@ -294,3 +294,48 @@ class TestFireAndForgetNoLoop:
         # 不应抛 RuntimeError
         assert any("event loop" in r.message.lower() or "running" in r.message.lower()
                     for r in caplog.records if r.levelno >= logging.WARNING)
+
+
+# ------------------------------------------------------------------
+# Fix 3: interval 布尔值 — bool 是 int 子类，True 会变成 interval=1
+# ------------------------------------------------------------------
+
+
+class TestPrefDetectionIntervalBool:
+    """_sanitize_interval 必须拒绝布尔值，防止 interval: true 变成每轮触发。"""
+
+    def test_interval_true_defaults_to_5(self, manager):
+        """interval=True 会变成 1（每轮触发），必须回退到默认值 5。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        # interval 应为 5，所以第 1-4 条消息不触发
+        for _ in range(4):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is False
+        # 第 5 条触发
+        manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+    def test_interval_false_defaults_to_5(self, manager):
+        """interval=False 会变成 0（ZeroDivisionError），必须回退到默认值 5。"""
+        config = {"side": {"tasks": {"pref_detection": {"interval": False}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        for _ in range(5):
+            manager.on_user_message()
+        assert manager.should_run_pref_detection() is True
+
+    def test_sanitize_interval_true_warns(self, caplog):
+        """_sanitize_interval(True) 应发出警告并返回默认值。"""
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            result = _sanitize_interval(True)
+        assert result == 5
+        assert any("bool" in r.message.lower() or "true" in r.message.lower()
+                    for r in caplog.records)
+
+    def test_sanitize_interval_false_warns(self, caplog):
+        """_sanitize_interval(False) 应发出警告并返回默认值。"""
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            result = _sanitize_interval(False)
+        assert result == 5
+        assert any("bool" in r.message.lower() or "false" in r.message.lower()
+                    for r in caplog.records)

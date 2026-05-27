@@ -17,9 +17,13 @@ def _sanitize_interval(raw: object) -> int:
     """校验并清洗 interval 配置值。
 
     规则：
+    - 布尔值直接拒绝（bool 是 int 子类，True 会变成 1，导致每轮触发）
     - 尝试 int(raw)，失败则回退默认值
     - 结果 <= 0 则回退默认值
     """
+    if isinstance(raw, bool):
+        logger.warning("pref_detection interval=%r 是布尔值，使用默认值 %d", raw, _DEFAULT_INTERVAL)
+        return _DEFAULT_INTERVAL
     try:
         interval = int(raw)
     except (TypeError, ValueError):
