@@ -80,9 +80,10 @@ _CREDENTIAL_PATTERNS: list[re.Pattern] = [
     # X-Auth-Token header value（匹配到行尾）
     re.compile(r"X-Auth-Token:\s*[^\r\n]+", re.IGNORECASE),
     # 含 password/token/secret 的 YAML/JSON 键值对（如 "db_password: value"）
-    re.compile(r"\w*password\w*[:=]\s*\S+", re.IGNORECASE),
-    re.compile(r"\w*token\w*[:=]\s*\S+", re.IGNORECASE),
-    re.compile(r"\w*secret\w*[:=]\s*\S+", re.IGNORECASE),
+    # 值在遇到空白或 URL 分隔符（& ; #）时截断，避免跨参数串扰
+    re.compile(r"\w*password\w*[:=]\s*[^\s&;#]+", re.IGNORECASE),
+    re.compile(r"\w*token\w*[:=]\s*[^\s&;#]+", re.IGNORECASE),
+    re.compile(r"\w*secret\w*[:=]\s*[^\s&;#]+", re.IGNORECASE),
     # AWS 风格
     re.compile(r"AKIA[0-9A-Z]{16}"),
     # JWT（三段 base64url）
@@ -94,6 +95,11 @@ _CREDENTIAL_PATTERNS: list[re.Pattern] = [
     re.compile(r"tok_[A-Za-z0-9_-]{4,}"),
     # ya29. 风格 Google OAuth token
     re.compile(r"ya29\.[A-Za-z0-9_-]+"),
+    # URL/query 参数形式的凭证（api_key=, access_token=, client_secret=, session_id=）
+    re.compile(r"api[_-]?key\s*=\s*[^\s&;#]+", re.IGNORECASE),
+    re.compile(r"access[_-]?token\s*=\s*[^\s&;#]+", re.IGNORECASE),
+    re.compile(r"client[_-]?secret\s*=\s*[^\s&;#]+", re.IGNORECASE),
+    re.compile(r"session[_-]?id\s*=\s*[^\s&;#]+", re.IGNORECASE),
 ]
 
 

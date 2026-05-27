@@ -865,3 +865,98 @@ def test_redact_tool_result_string_still_works():
     assert "sk-abc123secrettoken" not in result, "Bearer token 应被红act"
     assert "my-api-key-value" not in result, "X-Api-Key 值应被红act"
     assert "HTTP 200" in result, "非敏感内容应保留"
+
+
+# --- CQR-6: URL/query param credential redaction ---
+
+
+def test_redact_value_url_query_api_key():
+    """URL 查询参数中的 api_key 应被红act。"""
+    from side.tasks.tool_summary import _redact_value
+
+    result = _redact_value("https://api.example.com/data?api_key=sk-secret12345&foo=bar")
+    assert "sk-secret12345" not in result, "URL 中的 api_key 值应被红act"
+    assert "api.example.com" in result, "非敏感 URL 部分应保留"
+    assert "foo=bar" in result, "非敏感查询参数应保留"
+
+
+def test_redact_value_url_query_access_token():
+    """URL 查询参数中的 access_token 应被红act。"""
+    from side.tasks.tool_summary import _redact_value
+
+    result = _redact_value("https://api.example.com/callback?access_token=ya29.secretvalue&state=xyz")
+    assert "ya29.secretvalue" not in result, "URL 中的 access_token 值应被红act"
+    assert "state=xyz" in result, "非敏感查询参数应保留"
+
+
+def test_redact_value_url_query_client_secret():
+    """URL 查询参数中的 client_secret 应被红act。"""
+    from side.tasks.tool_summary import _redact_value
+
+    result = _redact_value("https://oauth.example.com/token?client_id=abc&client_secret=super_secret_val")
+    assert "super_secret_val" not in result, "URL 中的 client_secret 值应被红act"
+    assert "client_id=abc" in result, "client_id 非敏感应保留"
+
+
+def test_redact_value_url_query_session_id():
+    """URL 查询参数中的 session_id 应被红act。"""
+    from side.tasks.tool_summary import _redact_value
+
+    result = _redact_value("https://app.example.com/page?session_id=sess_abcdef123456&tab=home")
+    assert "sess_abcdef123456" not in result, "URL 中的 session_id 值应被红act"
+    assert "tab=home" in result, "非敏感查询参数应保留"
+
+
+def test_redact_value_url_multiple_credentials():
+    """URL 同时含多个凭证参数时应全部被红act。"""
+    from side.tasks.tool_summary import _redact_value
+
+    result = _redact_value("https://api.example.com?api_key=xxx&access_token=yyy&normal=ok")
+    assert "xxx" not in result, "api_key 值应被红act"
+    assert "yyy" not in result, "access_token 值应被红act"
+    assert "normal=ok" in result, "非敏感参数应保留"
+
+
+def test_redact_tool_result_url_in_dict_value():
+    """tool_result dict 中 url 字段含查询参数凭证时应被红act。"""
+    from side.tasks.tool_summary import _redact_tool_result
+
+    result = _redact_tool_result({
+        "url": "https://api.example.com/data?api_key=sk-secret12345&access_token=tok_live_abc",
+        "status": 200,
+    })
+    assert "sk-secret12345" not in result, "url 中的 api_key 应被红act"
+    assert "tok_live_abc" not in result, "url 中的 access_token 应被红act"
+    assert "200" in result, "非敏感字段应保留"
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_redacts_url_credentials_in_input():
+    """ToolSummaryTask 将 tool_input 中 url 字段的查询参数凭证红act后再发给 LLM。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Fetched data",
+        config={
+            "_side_task_args": {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "curl 'https://api.example.com/data?api_key=sk-secret12345&access_token=yyy'",
+                },
+                "tool_result": "ok",
+            },
+        },
+    )
+    captured_messages = []
+
+    async def capture_chat(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages", args[0] if args else []))
+        return ctx.llm_client.chat.return_value
+
+    ctx.llm_client.chat = AsyncMock(side_effect=capture_chat)
+    await task.execute(ctx)
+
+    all_text = " ".join(m["content"] for m in captured_messages)
+    assert "sk-secret12345" not in all_text, "URL 中的 api_key 值应被红act"
+    assert "api.example.com" in all_text, "非敏感 URL 部分应保留"
