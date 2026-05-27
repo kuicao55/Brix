@@ -1,25 +1,26 @@
-# Handoff — 2026-05-27 21:30
+# Handoff — 2026-05-27 23:45
 
 ## State
 **Status:** MILESTONE_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-05-14-side-layer-design.md
-- **plan:** .super-harness/plans/2026-05-27-milestone-16.md
+- **plan:** .super-harness/plans/2026-05-27-milestone-17.md
 - **progress:** .super-harness/status/claude-progress.json
 
 ## Worktree
 (no worktree — merged and cleaned up)
 
 ## Completed Milestone
-- **milestone-15:** Side 层骨架 + Config 改造
-  - 4 tasks: SideTask base class, SideTaskManager, tasks package, config改造
-  - 638 tests pass, 1 pre-existing failure
-  - CQR: 7 rounds total (4 on Task 1, 3 on Task 2)
-  - Codex quota exceeded on final Task 2 review — auto-fallback to Claude subagent
+- **milestone-16:** 实现 7 个 Side Tasks
+  - 3 tasks: SessionTitleTask+ToolSummaryTask, PrefDetectionTask+HistorySearchTask, VoiceCleanupTask+ContextCompressTask+SessionSummaryTask+ALL_TASKS注册
+  - 157 side tests pass
+  - CQR rounds: Task 1 (6 rounds — secret redaction hardening), Task 2 (2 rounds — index mapping, tolerant JSON), Task 3 (2 rounds — output budget, idle threshold, shared _strip_control_chars)
+  - Codex quota exceeded on Task 3 CQR round 2 — auto-fallback to Claude subagent
+  - Security hardening: tolerant JSON extraction, output sanitization, secret redaction (key-based + header + URL query), control-char stripping via shared _util.py
 
 ## Current Position
-- milestone_id: milestone-16
+- milestone_id: milestone-17
 - task_id: null (no task started yet)
 - tasks_completed: []
 
@@ -27,10 +28,11 @@
 None
 
 ## Key Decisions
-- SideTaskContext uses deep immutability (copy.deepcopy + recursive _freeze with MappingProxyType/tuple)
-- Strict boolean validation for all enabled flags (is_enabled, side.enabled, interval)
-- tests/side/__init__.py intentionally not created (namespace collision with top-level side/ package)
-- tests/side/test_config.py renamed to test_side_config.py (collision with tests/test_config.py)
+- Extracted shared `_strip_control_chars` to `side/tasks/_util.py` for consistent sanitization across all tasks
+- PrefDetectionTask threshold set to `< 3` messages (per spec)
+- HistorySearchTask uses `candidate_sessions = sessions[-20:]` with correct index mapping
+- All tasks use tolerant JSON extraction (direct parse → fenced block → bracket scan)
+- All tasks have output validation (length caps, type guards, newline collapse)
 
 ## Next Action
 /super-harness:resume
