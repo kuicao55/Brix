@@ -81,9 +81,24 @@ class SideTaskManager:
             hooks=kwargs.get("hooks"),
         )
 
+    @staticmethod
+    def _check_strict_bool(value: object) -> bool:
+        """严格布尔检查：仅接受 bool 类型，非布尔值视为 False 并警告。
+
+        与 SideTask.is_enabled() 策略一致。
+        """
+        if isinstance(value, bool):
+            return value
+        logger.warning(
+            "side.enabled=%r 不是严格布尔值 (type=%s)，视为 disabled",
+            value,
+            type(value).__name__,
+        )
+        return False
+
     def _is_task_enabled(self, task: SideTask) -> bool:
         """检查 task 是否启用（总开关 + side_model 存在 + 单 task 开关）。"""
-        if not self._config.get("side", {}).get("enabled", False):
+        if not self._check_strict_bool(self._config.get("side", {}).get("enabled", False)):
             return False
         if not self._side_model:
             return False
@@ -131,5 +146,5 @@ class SideTaskManager:
 
     @property
     def enabled(self) -> bool:
-        """side 层是否启用。"""
-        return self._config.get("side", {}).get("enabled", False)
+        """side 层是否启用（严格布尔检查）。"""
+        return self._check_strict_bool(self._config.get("side", {}).get("enabled", False))

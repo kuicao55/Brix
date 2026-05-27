@@ -339,3 +339,130 @@ class TestPrefDetectionIntervalBool:
         assert result == 5
         assert any("bool" in r.message.lower() or "false" in r.message.lower()
                     for r in caplog.records)
+
+
+# ------------------------------------------------------------------
+# Fix 4: side.enabled 严格布尔检查 — 与 SideTask.is_enabled() 一致
+# ------------------------------------------------------------------
+
+
+class TestSideEnabledStrictBool:
+    """side.enabled 必须严格检查 bool 类型，非布尔值视为 disabled。"""
+
+    def test_enabled_string_false_is_disabled(self, manager):
+        """enabled: "false" 是非空字符串 — truthiness 为 True，必须拒绝。"""
+        config = {"side": {"enabled": "false", "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is False
+
+    def test_enabled_string_zero_is_disabled(self, manager):
+        """enabled: "0" 是非空字符串 — 必须拒绝。"""
+        config = {"side": {"enabled": "0", "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is False
+
+    def test_enabled_int_one_is_disabled(self, manager):
+        """enabled: 1 不是严格布尔 — 必须拒绝。"""
+        config = {"side": {"enabled": 1, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is False
+
+    def test_enabled_none_is_disabled(self, manager):
+        """enabled: None — 必须拒绝。"""
+        config = {"side": {"enabled": None, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is False
+
+    def test_enabled_bool_true_is_enabled(self, manager):
+        """enabled: True 是严格布尔 — 必须通过。"""
+        config = {"side": {"enabled": True, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is True
+
+    def test_enabled_bool_false_is_disabled(self, manager):
+        """enabled: False 是严格布尔 — 正常禁用，不警告。"""
+        config = {"side": {"enabled": False, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is False
+
+    def test_enabled_missing_key_is_disabled(self, manager):
+        """缺少 enabled 键 — 必须禁用。"""
+        config = {"side": {"model": "m"}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        assert manager.enabled is False
+
+
+class TestRunTaskStrictBoolGate:
+    """_is_task_enabled 的全局开关必须严格布尔检查。"""
+
+    @pytest.mark.asyncio
+    async def test_string_false_blocks_task(self, manager):
+        """enabled: "false" 必须阻塞 task 执行。"""
+        config = {"side": {"enabled": "false", "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        manager.register(MockTask())
+        result = await manager.run_task("mock")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_int_one_blocks_task(self, manager):
+        """enabled: 1 必须阻塞 task 执行。"""
+        config = {"side": {"enabled": 1, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        manager.register(MockTask())
+        result = await manager.run_task("mock")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_none_blocks_task(self, manager):
+        """enabled: None 必须阻塞 task 执行。"""
+        config = {"side": {"enabled": None, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        manager.register(MockTask())
+        result = await manager.run_task("mock")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_bool_true_allows_task(self, manager):
+        """enabled: True 允许 task 执行。"""
+        config = {"side": {"enabled": True, "model": "m", "tasks": {"mock": {"enabled": True}}}}
+        manager.configure(config=config, llm_client=None, memory=None)
+        manager.register(MockTask())
+        result = await manager.run_task("mock")
+        assert result == "ok"
+
+
+class TestSideEnabledNonBoolWarning:
+    """非布尔值应触发 warning 日志。"""
+
+    def test_string_false_warns(self, manager, caplog):
+        """enabled: "false" 应触发 warning。"""
+        config = {"side": {"enabled": "false", "model": "m"}}
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            manager.configure(config=config, llm_client=None, memory=None)
+            _ = manager.enabled
+        assert any("布尔" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
+
+    def test_int_one_warns(self, manager, caplog):
+        """enabled: 1 应触发 warning。"""
+        config = {"side": {"enabled": 1, "model": "m"}}
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            manager.configure(config=config, llm_client=None, memory=None)
+            _ = manager.enabled
+        assert any("布尔" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
+
+    def test_bool_true_no_warning(self, manager, caplog):
+        """enabled: True 不应触发 warning。"""
+        config = {"side": {"enabled": True, "model": "m"}}
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            manager.configure(config=config, llm_client=None, memory=None)
+            _ = manager.enabled
+        assert not any("布尔" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
+
+    def test_bool_false_no_warning(self, manager, caplog):
+        """enabled: False 不应触发 warning。"""
+        config = {"side": {"enabled": False, "model": "m"}}
+        with caplog.at_level(logging.WARNING, logger="side.manager"):
+            manager.configure(config=config, llm_client=None, memory=None)
+            _ = manager.enabled
+        assert not any("布尔" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
