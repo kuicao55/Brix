@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from types import MappingProxyType
 from unittest.mock import MagicMock
 
-from side.base import SideTask, SideTaskContext
+from side.base import SideTask, SideTaskContext, _freeze
 
 
 # ------------------------------------------------------------------
@@ -249,6 +251,78 @@ class TestSideTaskContextDeepImmutability:
         assert messages[0]["content"] == "mutated"
         # ctx 中的值应仍为 "hi"
         assert ctx.session_messages[0]["content"] == "hi"
+
+
+class TestFreezeTupleRecursion:
+    """Fix 1: _freeze() 必须递归处理 tuple 内的 dict。"""
+
+    def test_tuple_contained_dict_is_frozen(self):
+        """tuple 中的 dict 应被转为 MappingProxyType。"""
+        data = {"items": ({"name": "a"}, {"name": "b"})}
+        frozen = _freeze(data)
+        assert isinstance(frozen["items"], tuple)
+        for item in frozen["items"]:
+            assert isinstance(item, MappingProxyType)
+
+    def test_tuple_contained_dict_is_immutable(self):
+        """tuple 中的 dict 冻结后不可修改。"""
+        data = {"items": ({"name": "a"},)}
+        frozen = _freeze(data)
+        with pytest.raises(TypeError):
+            frozen["items"][0]["name"] = "mutated"  # type: ignore[index]
+
+    def test_context_with_tuple_in_config(self):
+        """SideTaskContext.config 中 tuple 值里的 dict 必须被冻结。"""
+        config = {"tags": ({"k": "v"},)}
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config=config,
+            memory=MagicMock(),
+            session_messages=[],
+            user_input="",
+            hooks=MagicMock(),
+        )
+        assert isinstance(ctx.config["tags"], tuple)
+        assert isinstance(ctx.config["tags"][0], MappingProxyType)
+        with pytest.raises(TypeError):
+            ctx.config["tags"][0]["k"] = "mutated"  # type: ignore[index]
+
+
+class TestIsEnabledBooleanWarning:
+    """Fix 2: enabled=False 不应产生 warning 日志。"""
+
+    def test_enabled_false_no_warning(self, caplog):
+        """enabled: False 是合法布尔值，不应触发 warning。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": False}}}}
+        with caplog.at_level(logging.WARNING, logger="side.base"):
+            result = task.is_enabled(config)
+        assert result is False
+        warning_messages = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_messages) == 0, (
+            f"expected no warnings, got: {[r.message for r in warning_messages]}"
+        )
+
+    def test_enabled_true_no_warning(self, caplog):
+        """enabled: True 也不应触发 warning。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": True}}}}
+        with caplog.at_level(logging.WARNING, logger="side.base"):
+            result = task.is_enabled(config)
+        assert result is True
+        warning_messages = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_messages) == 0
+
+    def test_non_bool_value_still_warns(self, caplog):
+        """enabled: 1 (int) 不是布尔值，仍应触发 warning。"""
+        task = DummyTask()
+        config = {"side": {"tasks": {"dummy": {"enabled": 1}}}}
+        with caplog.at_level(logging.WARNING, logger="side.base"):
+            result = task.is_enabled(config)
+        assert result is False
+        warning_messages = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_messages) == 1
 
 
 class TestSideTaskExecute:

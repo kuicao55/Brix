@@ -17,13 +17,15 @@ logger = logging.getLogger(__name__)
 
 
 def _freeze(obj: Any) -> Any:
-    """递归冻结：dict→MappingProxyType，list 中的 dict 也一并冻结。
+    """递归冻结：dict→MappingProxyType，list/tuple 中的 dict 也一并冻结。
 
     非容器类型原样返回。
     """
     if isinstance(obj, dict):
         return MappingProxyType({k: _freeze(v) for k, v in obj.items()})
     if isinstance(obj, list):
+        return tuple(_freeze(item) for item in obj)
+    if isinstance(obj, tuple):
         return tuple(_freeze(item) for item in obj)
     return obj
 
@@ -90,9 +92,9 @@ class SideTask(ABC):
             value = config["side"]["tasks"][self.name]["enabled"]
         except (KeyError, TypeError):
             return False
-        if value is True:
-            return True
-        # 非严格布尔：拒绝并警告
+        if isinstance(value, bool):
+            return value
+        # 非布尔类型：拒绝并警告（排查配置错误）
         logger.warning(
             "side task '%s' 的 enabled=%r 不是严格布尔值 (type=%s)，视为 disabled",
             self.name,
