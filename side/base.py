@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -13,6 +14,18 @@ from types import MappingProxyType
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _freeze(obj: Any) -> Any:
+    """递归冻结：dict→MappingProxyType，list 中的 dict 也一并冻结。
+
+    非容器类型原样返回。
+    """
+    if isinstance(obj, dict):
+        return MappingProxyType({k: _freeze(v) for k, v in obj.items()})
+    if isinstance(obj, list):
+        return tuple(_freeze(item) for item in obj)
+    return obj
 
 
 @dataclass(frozen=True)
@@ -43,17 +56,11 @@ class SideTaskContext:
     ) -> None:
         object.__setattr__(self, "llm_client", llm_client)
         object.__setattr__(self, "side_model", side_model)
-        object.__setattr__(
-            self,
-            "config",
-            MappingProxyType(config) if not isinstance(config, MappingProxyType) else config,
-        )
+        # 深拷贝 + 递归冻结：嵌套 dict 全部转为 MappingProxyType
+        object.__setattr__(self, "config", _freeze(copy.deepcopy(config)))
         object.__setattr__(self, "memory", memory)
-        object.__setattr__(
-            self,
-            "session_messages",
-            tuple(session_messages) if not isinstance(session_messages, tuple) else session_messages,
-        )
+        # 深拷贝 + 递归冻结：每条消息 dict 转为 MappingProxyType
+        object.__setattr__(self, "session_messages", _freeze(copy.deepcopy(session_messages)))
         object.__setattr__(self, "user_input", user_input)
         object.__setattr__(self, "hooks", hooks)
 

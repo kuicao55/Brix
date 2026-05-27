@@ -173,6 +173,84 @@ class TestSideTaskContext:
 # test_side_task_execute
 # ------------------------------------------------------------------
 
+class TestSideTaskContextDeepImmutability:
+    """深不可变性测试：嵌套 dict/list 也必须不可变。"""
+
+    def test_nested_config_mutation_raises(self):
+        """通过 ctx.config["side"]["tasks"]["dummy"]["enabled"] 修改必须抛 TypeError。"""
+        config = {"side": {"tasks": {"dummy": {"enabled": True}}}}
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config=config,
+            memory=MagicMock(),
+            session_messages=[],
+            user_input="",
+            hooks=MagicMock(),
+        )
+        # 顶层已经是 MappingProxyType — 确认
+        assert isinstance(ctx.config, MappingProxyType)
+        # 嵌套层也必须是 MappingProxyType
+        assert isinstance(ctx.config["side"], MappingProxyType)
+        assert isinstance(ctx.config["side"]["tasks"]["dummy"], MappingProxyType)
+        # 尝试修改嵌套层 — 必须抛 TypeError
+        with pytest.raises(TypeError):
+            ctx.config["side"]["tasks"]["dummy"]["enabled"] = False  # type: ignore[index]
+
+    def test_session_message_content_mutation_raises(self):
+        """通过 ctx.session_messages[i]["content"] 修改必须抛 TypeError。"""
+        messages = [{"role": "user", "content": "hi"}]
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config={},
+            memory=MagicMock(),
+            session_messages=messages,
+            user_input="",
+            hooks=MagicMock(),
+        )
+        # 消息必须是 MappingProxyType
+        assert isinstance(ctx.session_messages[0], MappingProxyType)
+        with pytest.raises(TypeError):
+            ctx.session_messages[0]["content"] = "mutated"  # type: ignore[index]
+
+    def test_original_config_unchanged_after_construction(self):
+        """构造 SideTaskContext 后，原始 config 不受影响。"""
+        config = {"side": {"tasks": {"dummy": {"enabled": True}}}}
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config=config,
+            memory=MagicMock(),
+            session_messages=[],
+            user_input="",
+            hooks=MagicMock(),
+        )
+        # 原始 dict 仍可正常修改（不是被冻结的同一对象）
+        config["side"]["tasks"]["dummy"]["enabled"] = False
+        assert config["side"]["tasks"]["dummy"]["enabled"] is False
+        # ctx 中的值应仍为 True（深拷贝隔离）
+        assert ctx.config["side"]["tasks"]["dummy"]["enabled"] is True
+
+    def test_original_messages_unchanged_after_construction(self):
+        """构造 SideTaskContext 后，原始 session_messages 不受影响。"""
+        messages = [{"role": "user", "content": "hi"}]
+        ctx = SideTaskContext(
+            llm_client=MagicMock(),
+            side_model="m",
+            config={},
+            memory=MagicMock(),
+            session_messages=messages,
+            user_input="",
+            hooks=MagicMock(),
+        )
+        # 修改原始列表
+        messages[0]["content"] = "mutated"
+        assert messages[0]["content"] == "mutated"
+        # ctx 中的值应仍为 "hi"
+        assert ctx.session_messages[0]["content"] == "hi"
+
+
 class TestSideTaskExecute:
     @pytest.mark.asyncio
     async def test_execute_returns_expected(self):
