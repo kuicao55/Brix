@@ -423,3 +423,22 @@ def test_model_command_invalid():
     sys.stdout = old_stdout
 
     assert "未知模型" in output
+
+
+# ---------------------------------------------------------------------------
+# router/ 删除验证
+# ---------------------------------------------------------------------------
+
+def test_router_deleted():
+    """router/ 目录已被删除。"""
+    import os
+    assert not os.path.exists("router"), "router/ directory should be deleted"
+    assert not os.path.exists("tests/test_router.py"), "tests/test_router.py should be deleted"
+
+
+def test_no_router_imports():
+    """cli/app.py 中不再 import router 模块。"""
+    with open("cli/app.py") as f:
+        content = f.read()
+    assert "from router" not in content
+    assert "import router" not in content
