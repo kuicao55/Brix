@@ -182,6 +182,9 @@ async def test_process_streaming_fires_tool_summary_on_tool_result():
     assert call_args[0][0] == "tool_summary", (
         f"fire_and_forget 第一个参数应为 'tool_summary'，实际为 {call_args[0][0]!r}"
     )
+    # 验证 tool event payload 已传入
+    assert call_args[1]["tool_name"] == "bash"
+    assert call_args[1]["tool_result"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -189,21 +192,59 @@ async def test_process_streaming_fires_tool_summary_on_tool_result():
 # ---------------------------------------------------------------------------
 
 def test_voice_cleanup_uses_side_model_fallback():
-    """当 _side_manager 存在时，voice cleanup 使用 get_side_model()；
-    当 _side_manager 为 None 时，回退到 'ali/qwen3.6-flash'。"""
-    # 模拟 _init_voice 内部的条件表达式：
-    #   side_model = self._side_manager.get_side_model() if self._side_manager else "ali/qwen3.6-flash"
+    """_cleanup_llm 在调用时延迟解析模型：
+    _side_manager 存在时使用 get_side_model()，否则回退到 'ali/qwen3.6-flash'。"""
+    config = {
+        "routing": {"default_model": "test/model"},
+        "memory": {"data_dir": "/tmp/brix_test", "max_context_tokens": 1000},
+        "side": {"enabled": True, "model": "side/custom-model"},
+        "voice": {"enabled": True},
+    }
 
-    # Case 1: _side_manager 存在
-    mock_mgr = MagicMock()
-    mock_mgr.get_side_model.return_value = "my/custom-model"
-    side_model = mock_mgr.get_side_model() if mock_mgr else "ali/qwen3.6-flash"
-    assert side_model == "my/custom-model"
+    captured_cleanup_fn = {}
 
-    # Case 2: _side_manager 为 None
-    mock_mgr_none = None
-    side_model = mock_mgr_none.get_side_model() if mock_mgr_none else "ali/qwen3.6-flash"
-    assert side_model == "ali/qwen3.6-flash"
+    def fake_init_voice(self):
+        # 模拟 _init_voice 中 _cleanup_llm 的延迟解析逻辑
+        async def _cleanup_llm(prompt: str) -> str:
+            model = self._side_manager.get_side_model() if self._side_manager else "ali/qwen3.6-flash"
+            resp = await self._llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+            )
+            return resp.content
+        captured_cleanup_fn["fn"] = _cleanup_llm
+
+    with (
+        patch("cli.app.ToolRunner"),
+        patch("cli.app.CommandRegistry"),
+        patch("cli.app.HookRegistry"),
+        patch("cli.app.StateMachineOrchestrator"),
+        patch("cli.app.LLMClient") as mock_llm_cls,
+        patch("cli.app.create_memory_provider"),
+        patch("cli.app.BrixCLI._register_tools"),
+        patch("cli.app.BrixCLI._register_commands"),
+        patch("cli.app.BrixCLI._register_skill_tool"),
+        patch("cli.app.BrixCLI._init_voice", fake_init_voice),
+    ):
+        from cli.app import BrixCLI
+        instance = BrixCLI(config=config)
+
+    assert instance._side_manager is not None
+    cleanup_fn = captured_cleanup_fn["fn"]
+
+    # 模拟 LLM 响应
+    mock_response = MagicMock()
+    mock_response.content = "cleaned"
+    mock_llm = instance._llm_client
+    mock_llm.chat = AsyncMock(return_value=mock_response)
+
+    # 调用 _cleanup_llm，验证模型在调用时从 _side_manager 延迟解析
+    asyncio.get_event_loop().run_until_complete(cleanup_fn("test prompt"))
+    mock_llm.chat.assert_called_once()
+    call_kwargs = mock_llm.chat.call_args[1]
+    assert call_kwargs["model"] == "side/custom-model", (
+        f"期望 'side/custom-model'，实际 '{call_kwargs['model']}'"
+    )
 
 
 def test_init_voice_passes_side_model_to_cleanup():
@@ -298,3 +339,87 @@ async def test_process_streaming_fires_pref_detection_when_should_run_true():
     assert call_args[0][0] == "pref_detection", (
         f"fire_and_forget 第一个参数应为 'pref_detection'，实际为 {call_args[0][0]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# /model 命令改造测试
+# ---------------------------------------------------------------------------
+
+def test_model_command_displays_models():
+    """/model 无参数时显示当前模型和可用模型列表。"""
+    from capability.command.builtin.info import ModelCommand
+    from capability.command.base import CommandContext
+
+    config = {
+        "routing": {"default_model": "minimax/MiniMax-M2.7"},
+        "models": [
+            {"id": "minimax/MiniMax-M2.7", "cost_tier": "high"},
+            {"id": "ali/qwen3.6-flash", "cost_tier": "low"},
+        ],
+    }
+    cmd = ModelCommand(config)
+    ctx = CommandContext()
+
+    import io
+    import sys
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    import asyncio
+    asyncio.run(cmd.execute("", ctx))
+    output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
+
+    assert "minimax/MiniMax-M2.7" in output
+    assert "ali/qwen3.6-flash" in output
+
+
+def test_model_command_switch():
+    """/model <id> 切换模型。"""
+    from capability.command.builtin.info import ModelCommand
+    from capability.command.base import CommandContext
+
+    config = {
+        "routing": {"default_model": "minimax/MiniMax-M2.7"},
+        "models": [
+            {"id": "minimax/MiniMax-M2.7", "cost_tier": "high"},
+            {"id": "ali/qwen3.6-flash", "cost_tier": "low"},
+        ],
+    }
+    cmd = ModelCommand(config)
+    ctx = CommandContext()
+
+    import io
+    import sys
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    import asyncio
+    asyncio.run(cmd.execute("ali/qwen3.6-flash", ctx))
+    output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
+
+    assert "已切换" in output
+    assert config["routing"]["default_model"] == "ali/qwen3.6-flash"
+
+
+def test_model_command_invalid():
+    """/model <invalid_id> 提示未知模型。"""
+    from capability.command.builtin.info import ModelCommand
+    from capability.command.base import CommandContext
+
+    config = {
+        "routing": {"default_model": "minimax/MiniMax-M2.7"},
+        "models": [{"id": "minimax/MiniMax-M2.7"}],
+    }
+    cmd = ModelCommand(config)
+    ctx = CommandContext()
+
+    import io
+    import sys
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    import asyncio
+    asyncio.run(cmd.execute("nonexistent/model", ctx))
+    output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
+
+    assert "未知模型" in output

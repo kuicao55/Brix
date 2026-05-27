@@ -49,7 +49,7 @@ class HelpCommand(Command):
 
 
 class ModelCommand(Command):
-    """查看当前默认模型。"""
+    """查看或切换主模型。"""
 
     def __init__(self, config: dict) -> None:
         self._config = config
@@ -58,13 +58,36 @@ class ModelCommand(Command):
     def meta(self) -> CommandMeta:
         return CommandMeta(
             name="model",
-            description="查看当前默认模型",
+            description="查看或切换主模型 (/model [model_id])",
             type=CommandType.SYSTEM,
         )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
-        default_model = self._config.get("routing", {}).get("default_model", "unknown")
-        print(f"Current model: {default_model}")
+        # 无参数：显示当前模型和可用模型列表
+        if not args.strip():
+            default_model = self._config.get("routing", {}).get("default_model", "unknown")
+            print(f"\n  当前主模型: {default_model}")
+            print(f"\n  可用模型:")
+            for model in self._config.get("models", []):
+                model_id = model.get("id", "")
+                cost = model.get("cost_tier", "?")
+                marker = " *" if model_id == default_model else ""
+                print(f"    {model_id} [{cost}]{marker}")
+            print("\n  使用 /model <model_id> 切换模型\n")
+            return CommandResult(type=CommandResultType.NONE)
+
+        # 有参数：切换模型
+        model_id = args.strip()
+        models = self._config.get("models", [])
+        valid_ids = {m.get("id") for m in models}
+        if model_id not in valid_ids:
+            print(f"\n  未知模型: {model_id}")
+            print(f"  使用 /model 查看可用模型列表\n")
+            return CommandResult(type=CommandResultType.NONE)
+
+        # 运行时切换（不持久化）
+        self._config.setdefault("routing", {})["default_model"] = model_id
+        print(f"\n  已切换到: {model_id}\n")
         return CommandResult(type=CommandResultType.NONE)
 
 
