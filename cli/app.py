@@ -45,9 +45,8 @@ from infra.llm_client import LLMClient
 from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
 from orchestrator.state_machine import StateMachineOrchestrator
-from router.complexity import evaluate_complexity
-from router.intent import classify_intent
-from router.model_router import select_model
+from side.manager import SideTaskManager
+from side.tasks import ALL_TASKS
 
 
 class BrixCLI:
@@ -68,12 +67,22 @@ class BrixCLI:
         self._orchestrator = self._build_orchestrator()
         self._console = Console(theme=BRIX_THEME)
         # 语音模块（可选，需在注册命令前初始化）
+        self._side_manager: SideTaskManager | None = None
         self._voice = None
         self._voice_display = None
         self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
         self._init_voice()
         self._register_commands()
         self._register_skill_tool()
+        # SideTaskManager 初始化
+        self._side_manager = SideTaskManager()
+        self._side_manager.configure(
+            config=self._config,
+            llm_client=self._llm_client,
+            memory=self._memory,
+        )
+        for task in ALL_TASKS:
+            self._side_manager.register(task)
 
     # ------------------------------------------------------------------
     # Public API
@@ -241,17 +250,9 @@ class BrixCLI:
         hooks.fire("memory", msgs=len(context_messages),
                  chars=sum(len(m.get("content", "")) for m in context_messages))
 
-        intent_model = self._config.get("routing", {}).get("intent_model", "")
-        default_model = self._config.get("routing", {}).get("default_model", "")
-        intent = await classify_intent(
-            user_input, context_messages, self._llm_client,
-            intent_model or default_model, hooks=hooks,
-        )
-        complexity = evaluate_complexity(user_input)
-        model = select_model(intent, complexity, self._config)
-
-        hooks.fire("complexity", result=complexity)
-        hooks.fire("router", model=model, reason=f"{intent}->{complexity}")
+        # 直接使用 config 中的主模型
+        model = self._config.get("routing", {}).get("default_model", "")
+        hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
 
         context = OrchestratorContext(
@@ -321,29 +322,34 @@ class BrixCLI:
                    chars=sum(len(m.get("content", "")) for m in context_messages))
         _tick("memory")
 
-        # Intent stage (LLM call — takes time)
-        intent_model = self._config.get("routing", {}).get("intent_model", "")
-        default_model = self._config.get("routing", {}).get("default_model", "")
-        _intent_model_name = (intent_model or default_model).split("/")[-1]
-        indicator.update("Intent", _intent_model_name)
-        # 只传最近 6 条非 system 消息，避免 intent 分类加载完整 soul.md
-        trimmed = [m for m in context_messages if m.get("role") != "system"][-6:]
-        intent = await classify_intent(
-            user_input, trimmed, self._llm_client,
-            intent_model or default_model, hooks=hooks,
-        )
-        _tick("intent({})".format(intent))
+        # Side 层：历史搜索（如果触发）
+        if self._side_manager and self._side_manager.enabled:
+            indicator.update("Side", "history_search")
+            search_results = await self._side_manager.run_task(
+                "history_search",
+                session_messages=context_messages,
+                user_input=user_input,
+                hooks=hooks,
+            )
+            if search_results:
+                search_summary = "\n".join(
+                    f"- {s.get('title', '无标题')}: {s.get('summary', '')[:100]}"
+                    for s in search_results
+                )
+                context_messages.append({
+                    "role": "user",
+                    "content": f"[系统] 以下是你之前的对话，可能与当前问题相关：\n{search_summary}",
+                })
+            _tick("side:history_search")
 
-        # Complexity + Route stages
-        indicator.update("Complexity")
-        complexity = evaluate_complexity(user_input)
-        indicator.update("Route")
-        model = select_model(intent, complexity, self._config)
-        _tick("route->{}".format(model.split("/")[-1]))
-
-        hooks.fire("complexity", result=complexity)
-        hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
+        # 直接使用 config 中的主模型
+        model = self._config.get("routing", {}).get("default_model", "")
+        hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
+
+        # 用户消息计数（用于 pref_detection 间隔）
+        if self._side_manager:
+            self._side_manager.on_user_message()
 
         context = OrchestratorContext(
             history=list(context_messages),
@@ -425,6 +431,16 @@ class BrixCLI:
                     )
                     self._console.print()  # 工具结果后的间隔
 
+                # fire-and-forget 工具摘要
+                if (event_type == "tool_result"
+                        and self._side_manager and self._side_manager.enabled):
+                    self._side_manager.fire_and_forget(
+                        "tool_summary",
+                        session_messages=context_messages,
+                        user_input=user_input,
+                        hooks=hooks,
+                    )
+
         except Exception as exc:
             has_error = True
             if thinking_renderer is not None:
@@ -484,6 +500,16 @@ class BrixCLI:
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not has_error else 1)
 
+        # 偏好检测（按间隔触发）
+        if (self._side_manager and self._side_manager.enabled
+                and self._side_manager.should_run_pref_detection()):
+            self._side_manager.fire_and_forget(
+                "pref_detection",
+                session_messages=context_messages,
+                user_input=user_input,
+                hooks=hooks,
+            )
+
         try:
             flush_log(log)
         except Exception:
@@ -519,14 +545,12 @@ class BrixCLI:
             tts_client = create_cosyvoice_client(self._config)
 
             # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
-            cleanup_model = self._config.get("routing", {}).get(
-                "intent_model", "ali/qwen3.6-flash"
-            )
+            side_model = self._side_manager.get_side_model() if self._side_manager else "ali/qwen3.6-flash"
 
             async def _cleanup_llm(prompt: str) -> str:
                 resp = await self._llm_client.chat(
                     messages=[{"role": "user", "content": prompt}],
-                    model=cleanup_model,
+                    model=side_model,
                 )
                 return resp.content
 
