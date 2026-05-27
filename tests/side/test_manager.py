@@ -466,3 +466,16 @@ class TestSideEnabledNonBoolWarning:
             manager.configure(config=config, llm_client=None, memory=None)
             _ = manager.enabled
         assert not any("布尔" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
+
+
+# ------------------------------------------------------------------
+# Tasks 包入口
+# ------------------------------------------------------------------
+
+
+def test_import_all_tasks():
+    """side.tasks.ALL_TASKS 应可导入，当前为空列表。"""
+    from side.tasks import ALL_TASKS
+
+    assert isinstance(ALL_TASKS, list)
+    assert len(ALL_TASKS) == 0
