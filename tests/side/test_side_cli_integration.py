@@ -241,3 +241,60 @@ def test_init_voice_passes_side_model_to_cleanup():
     # get_side_model 从 config.side.model 读取
     model = side_manager.get_side_model()
     assert model == "side/real-model", f"期望 'side/real-model'，实际 '{model}'"
+
+
+# ---------------------------------------------------------------------------
+# 行为测试：should_run_pref_detection 返回 True 时触发 fire_and_forget("pref_detection")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_process_streaming_fires_pref_detection_when_should_run_true():
+    """当 should_run_pref_detection() 返回 True 时，
+    _process_streaming 应调用 fire_and_forget('pref_detection')。"""
+    config = {
+        "routing": {"default_model": "test/model"},
+        "memory": {"data_dir": "/tmp/brix_test", "max_context_tokens": 1000},
+        "side": {"enabled": True, "model": "test/side-model"},
+    }
+
+    with (
+        patch("cli.app.ToolRunner"),
+        patch("cli.app.CommandRegistry") as mock_cmd_reg,
+        patch("cli.app.HookRegistry"),
+        patch("cli.app.StateMachineOrchestrator") as mock_orch_cls,
+        patch("cli.app.LLMClient"),
+        patch("cli.app.create_memory_provider"),
+        patch("cli.app.BrixCLI._init_voice"),
+        patch("cli.app.BrixCLI._register_tools"),
+        patch("cli.app.BrixCLI._register_commands"),
+        patch("cli.app.BrixCLI._register_skill_tool"),
+    ):
+        mock_cmd_reg.return_value.get_skill_listing_text.return_value = ""
+        mock_orch = mock_orch_cls.return_value
+
+        # orchestrator.run_stream 返回空 async generator
+        async def _empty_stream(*args, **kwargs):
+            return
+            yield  # 使它成为 async generator
+
+        mock_orch.run_stream = _empty_stream
+
+        from cli.app import BrixCLI
+        instance = BrixCLI(config=config)
+
+    mock_mgr = MagicMock(spec=SideTaskManager)
+    mock_mgr.enabled = True
+    mock_mgr.run_task = AsyncMock(return_value=None)
+    mock_mgr.on_user_message = MagicMock()
+    mock_mgr.fire_and_forget = MagicMock()
+    mock_mgr.should_run_pref_detection = MagicMock(return_value=True)
+    instance._side_manager = mock_mgr
+
+    await instance._process_streaming("hello")
+
+    # fire_and_forget 应被调用且第一个参数为 "pref_detection"
+    mock_mgr.fire_and_forget.assert_called()
+    call_args = mock_mgr.fire_and_forget.call_args
+    assert call_args[0][0] == "pref_detection", (
+        f"fire_and_forget 第一个参数应为 'pref_detection'，实际为 {call_args[0][0]!r}"
+    )
