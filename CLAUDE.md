@@ -28,3 +28,21 @@
 - 中文注释和文档
 - Python 3.11+ 类型语法
 - 异步优先，fail gracefully
+
+## 启动方式
+
+用户通过 zsh alias 启动 Brix，**不要**用 `python main.py` 或 `python3 -m cli.app`：
+
+```bash
+# ~/.zshrc 中配置：
+alias brix="cd ~/Applications/Brix && .venv/bin/python main.py"
+```
+
+启动命令：直接在 terminal 输入 `brix`
+
+## 项目结构
+
+- 入口：`main.py` → `cli/app.py` (BrixCLI)
+- 配置：`config/settings.yaml`（providers、models、routing）
+- 依赖安装：`pip install -e ".[voice]"`（语音模块额外依赖）
+- 虚拟环境：`.venv/`（Python 3.11）

@@ -9,7 +9,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/help",        "显示所有可用命令"),
     ("/quit",        "保存会话并退出（也可用 /exit）"),
     ("/clear",       "创建新会话"),
-    ("/model",       "查看当前默认模型"),
+    ("/model",       "查看或切换主模型 (/model [model_id])"),
     ("/history",     "查看当前会话的消息历史"),
     ("/resume [id]", "恢复历史会话（交互式选择或按 ID 前缀）"),
     ("/soul",        "查看 soul.md 记忆文件"),

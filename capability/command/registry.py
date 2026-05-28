@@ -46,6 +46,7 @@ class CommandRegistry:
                 line += f" ({meta.when_to_use})"
             lines.append(line)
         lines.append("")
-        lines.append("Use the Skill tool to execute them when the user's request matches a skill.")
+        lines.append("IMPORTANT: Before responding to the user, ALWAYS check if an available skill matches their request. "
+                     "If a skill's whenToUse condition is met, you MUST invoke the Skill tool — do NOT handle it yourself.")
         lines.append("When users reference a \"/<name>\" command, invoke the Skill tool with that name.")
         return "\n".join(lines)

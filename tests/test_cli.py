@@ -346,10 +346,7 @@ async def test_spinner_stops_on_tool_only_stream():
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
-         patch("cli.app.create_memory_provider", return_value=mock_mem), \
-         patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="tool_use"), \
-         patch("cli.app.evaluate_complexity", return_value="low"), \
-         patch("cli.app.select_model", return_value="test-model"):
+         patch("cli.app.create_memory_provider", return_value=mock_mem):
 
         cli = BrixCLI()
         cli._orchestrator = MagicMock()
@@ -384,10 +381,7 @@ async def test_spinner_stops_on_empty_stream():
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
-         patch("cli.app.create_memory_provider", return_value=mock_mem), \
-         patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="general"), \
-         patch("cli.app.evaluate_complexity", return_value="low"), \
-         patch("cli.app.select_model", return_value="test-model"):
+         patch("cli.app.create_memory_provider", return_value=mock_mem):
 
         cli = BrixCLI()
         cli._orchestrator = MagicMock()
@@ -450,10 +444,7 @@ async def test_stage_indicator_called_during_streaming():
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
-         patch("cli.app.create_memory_provider", return_value=mock_mem), \
-         patch("cli.app.classify_intent", new_callable=AsyncMock, return_value="chat"), \
-         patch("cli.app.evaluate_complexity", return_value="low"), \
-         patch("cli.app.select_model", return_value="test-model"):
+         patch("cli.app.create_memory_provider", return_value=mock_mem):
 
         cli = BrixCLI()
         cli._orchestrator = MagicMock()
@@ -461,11 +452,8 @@ async def test_stage_indicator_called_during_streaming():
 
         await cli._process_streaming("hello")
 
-    # update() should have been called for all major stages
+    # update() should have been called for Planning stage
     update_calls = [c[0][0] for c in mock_indicator.update.call_args_list]
-    assert "Intent" in update_calls
-    assert "Complexity" in update_calls
-    assert "Route" in update_calls
     assert "Planning" in update_calls
 
 

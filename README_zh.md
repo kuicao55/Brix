@@ -18,6 +18,10 @@
 - **可扩展配置** — 编辑一个 YAML 文件即可添加新供应商和模型
 - **流程日志** — 每轮对话自动记录完整数据流，便于调试和审计
 - **Hook 系统** — 事件驱动架构，核心模块通过 `hooks.fire()` 触发事件，FlowLog 作为默认监听者
+- **语音交互** — 语音输入（STT）+ 语音输出（TTS），可独立开关，Protocol 可插拔架构
+  - 语音输入：Silero VAD → STT（本地 faster-whisper / 在线 Qwen-ASR 可切换）→ LLM Cleanup 全链路
+  - 语音输出：CosyVoice v3 Flash TTS，流式合成 + 多级播放回退（PyAudio / afplay / 系统 TTS）
+  - 连续对话模式、回声消除、实时转录可视化
 
 ---
 
@@ -125,6 +129,7 @@ brix
 | `/user` | 查看用户画像（user.md） |
 | `/model` | 显示当前模型 |
 | `/log` | 交互式日志查看器（上下箭头选择） |
+| `/voice` | 开启/关闭语音交互模式（支持 `--input-only`、`--output-only`、`--continuous`） |
 
 输入 `/` 触发自动补全 — 模糊匹配过滤命令。Tab 接受，上下键导航，Escape 关闭。
 
@@ -328,6 +333,83 @@ pip install langgraph
 
 ---
 
+## 语音交互
+
+Brix 支持语音输入（STT）和语音输出（TTS），两者可独立开关。
+
+### 使用方法
+
+在 REPL 中输入 `/voice` 开启语音模式：
+
+```bash
+# 开启语音输入+输出
+/voice
+
+# 仅语音输入（STT，无 TTS 播报）
+/voice --input-only
+
+# 仅语音输出（TTS，无麦克风采集）
+/voice --output-only
+
+# 连续对话模式（TTS 播报后自动重新监听）
+/voice --continuous
+
+# 关闭语音模式
+/voice   # 再次输入即关闭
+```
+
+### 配置
+
+在 `config/settings.yaml` 中配置：
+
+```yaml
+voice:
+  enabled: true           # 总开关
+  input_enabled: true     # 语音输入（STT）
+  output_enabled: true    # 语音输出（TTS）
+
+  # STT — 支持本地和在线两种模式
+  stt_provider: "online"  # local = faster-whisper 本地模型 / online = Qwen-ASR 线上模型
+
+  # 本地 STT (faster-whisper) — 首次使用自动下载
+  stt_model: "small"      # tiny/base/small/medium/large-v3
+  stt_language: "zh"
+  stt_device: "cpu"       # cpu/cuda
+  stt_compute_type: "int8"
+
+  # 在线 STT (Qwen-ASR Realtime) — 通过 WebSocket 连接阿里云，无需安装 SDK
+  stt_online_model: "qwen3-asr-flash-realtime"
+  stt_online_language: "zh"
+  stt_online_api_key_env: "ALI_API_KEY"  # 复用阿里云 API Key
+
+  # TTS — 阿里云 CosyVoice v3 Flash
+  tts_model: "cosyvoice-v3-flash"
+  tts_voice: "loongeric_v3"
+  tts_api_key_env: "ALI_API_KEY"
+  tts_cooldown_ms: 800    # 回声消除冷却时间
+
+  # 连续对话
+  continuous_idle_timeout: 10  # 秒
+```
+
+### 安装语音依赖
+
+```bash
+pip install -e ".[voice]"
+```
+
+### 架构
+
+语音模块通过 `VoiceRuntime` Protocol 与 CLI 交互，完全可插拔：
+
+- **语音输入管线**：麦克风 → VAD → STT（本地/在线可切换）→ LLM Cleanup → 文本回调
+- **语音输出管线**：LLM 响应 → 文本清理 → CosyVoice 合成 → 音频播放
+- **STT 双模式**：本地 faster-whisper（离线、低延迟）/ 在线 Qwen-ASR Realtime（高精度、实时转录），通过 `stt_provider` 配置切换
+- **回声消除**：TTS 播放期间暂停 VAD 检测，冷却期后恢复监听
+- **多级回退**：PyAudio → afplay → macOS 系统 TTS
+
+---
+
 ## 架构
 
 ```
@@ -352,6 +434,14 @@ pip install langgraph
 |  capability/tools/file_read.py                       |
 |  capability/tools/file_write.py                      |
 |  capability/tools/file_edit.py                       |
++-----------------------------------------------------+
+|                   语音层                              |
+|  capability/voice/protocol.py (VoiceRuntime Protocol) |
+|  capability/voice/runtime.py (VoiceRuntimeImpl)       |
+|  capability/voice/pipeline/ (SimpleVoicePipeline)     |
+|  capability/voice/processors/ (VAD, STT, TTS, 唤醒词) |
+|  capability/voice/transport/ (麦克风, 扬声器)          |
+|  capability/voice/tts/ (CosyVoice TTS 客户端)         |
 +-----------------------------------------------------+
 |                   基础设施层                          |
 |  infra/llm_client.py (统一 LLM 客户端)               |
@@ -395,7 +485,7 @@ pip install langgraph
 ### 数据流
 
 ```
-用户输入
+用户输入 (键盘 / 语音)
     |
     v
 意图分类 (chat / task / tool_use)
@@ -414,7 +504,16 @@ pip install langgraph
     +---------------------------------------------------------+
     |
     v
-响应 + 记忆持久化
+响应 + 记忆持久化 + TTS 播报（可选）
+```
+
+### 语音数据流
+
+```
+麦克风 → VAD → STT → LLM Cleanup → 文本 → REPL（同键盘输入）
+                                              |
+                                              v
+LLM 响应 → 文本清理 → CosyVoice 合成 → 音频播放
 ```
 
 ---
@@ -452,11 +551,31 @@ brix/
 |   |   +-- logs.py                 # 日志检索与格式化
 |   |   +-- commands.py             # 命令注册表（/help 和自动补全）
 |   +-- tools/
-|       +-- calculator.py           # 数学表达式计算器
-|       +-- weather.py              # 天气查询（模拟）
-|       +-- file_read.py            # 本地文件读取
-|       +-- file_write.py           # 文件写入（memory/data/ 沙箱）
-|       +-- file_edit.py            # 文件编辑（memory/data/ 沙箱）
+|   |   +-- calculator.py           # 数学表达式计算器
+|   |   +-- weather.py              # 天气查询（模拟）
+|   |   +-- file_read.py            # 本地文件读取
+|   |   +-- file_write.py           # 文件写入（memory/data/ 沙箱）
+|   |   +-- file_edit.py            # 文件编辑（memory/data/ 沙箱）
+|   +-- voice/                      # 语音模块
+|   |   +-- protocol.py             # VoiceRuntime Protocol
+|   |   +-- runtime.py              # VoiceRuntimeImpl（生命周期管理）
+|   |   +-- config.py               # VoiceConfig 数据类
+|   |   +-- pipeline/               # 语音处理管线
+|   |   |   +-- builder.py          # SimpleVoicePipeline 工厂
+|   |   |   +-- frames.py           # 自定义 Frame 类型
+|   |   +-- processors/             # 信号处理组件
+|   |   |   +-- vad.py              # Silero VAD 语音活动检测
+|   |   |   +-- stt.py              # faster-whisper 本地语音识别
+|   |   |   +-- stt_online.py       # Qwen-ASR 在线语音识别（WebSocket）
+|   |   |   +-- tts.py              # TTS 按句切分 + 预缓冲
+|   |   |   +-- llm_cleanup.py      # LLM 文本清理
+|   |   |   +-- wake_word.py        # openWakeWord 唤醒词检测
+|   |   |   +-- resample.py         # scipy 音频重采样
+|   |   +-- transport/              # 音频 I/O
+|   |   |   +-- local_audio.py      # PyAudio 麦克风采集
+|   |   |   +-- audio_player.py     # PyAudio 扬声器播放
+|   |   +-- tts/                    # TTS 客户端
+|   |       +-- cosyvoice_client.py # 阿里云 CosyVoice WebSocket
 +-- memory/
 |   +-- __init__.py                 # MemoryProvider Protocol + 工厂函数
 |   +-- provider.py                 # BrixMemoryProvider 实现
@@ -483,23 +602,38 @@ brix/
 |   +-- tool_display.py             # 工具执行状态面板
 |   +-- theme.py                    # Rich 主题 (markdown, tool, spinner 样式)
 |   +-- banner.py                   # 启动 ASCII Banner
+|   +-- voice_display.py            # 语音实时转录 UI
 +-- tests/
-    +-- test_config.py              # 配置层测试
-    +-- test_infra.py               # 基础设施层测试
-    +-- test_orchestrator.py        # 编排层测试
-    +-- test_langgraph.py           # LangGraph 引擎测试
-    +-- test_router.py              # 路由层测试
-    +-- test_capability.py          # 工具 & runner 测试
-    +-- test_file_tools.py          # 文件工具测试
-    +-- test_memory.py              # 记忆层测试
-    +-- test_memory_v2.py           # Memory v2 协议 & provider 测试
-    +-- test_basics.py              # capability/basics 模块测试
-    +-- test_cli.py                 # CLI 测试
-    +-- test_completer.py           # 斜杠命令自动补全测试
-    +-- test_paginated_selector.py  # 分页 TUI 选择器测试
-    +-- test_flow_log.py            # 流程日志测试
-    +-- test_stream_renderer.py     # 流式渲染器测试
-    +-- test_tool_display.py        # 工具显示面板测试
+|   +-- test_config.py              # 配置层测试
+|   +-- test_infra.py               # 基础设施层测试
+|   +-- test_orchestrator.py        # 编排层测试
+|   +-- test_langgraph.py           # LangGraph 引擎测试
+|   +-- test_router.py              # 路由层测试
+|   +-- test_capability.py          # 工具 & runner 测试
+|   +-- test_file_tools.py          # 文件工具测试
+|   +-- test_memory.py              # 记忆层测试
+|   +-- test_memory_v2.py           # Memory v2 协议 & provider 测试
+|   +-- test_basics.py              # capability/basics 模块测试
+|   +-- test_cli.py                 # CLI 测试
+|   +-- test_completer.py           # 斜杠命令自动补全测试
+|   +-- test_paginated_selector.py  # 分页 TUI 选择器测试
+|   +-- test_flow_log.py            # 流程日志测试
+|   +-- test_stream_renderer.py     # 流式渲染器测试
+|   +-- test_tool_display.py        # 工具显示面板测试
+|   +-- test_voice_command.py       # /voice 命令测试
+|   +-- test_voice_integration.py   # 语音集成测试
+|   +-- voice/                      # 语音模块单元测试
+|       +-- test_config.py          # VoiceConfig 测试
+|       +-- test_config_integration.py
+|       +-- test_runtime.py         # VoiceRuntimeImpl 测试
+|       +-- test_protocol.py        # Protocol 一致性测试
+|       +-- test_pipeline.py        # Pipeline 管线测试
+|       +-- test_stt.py             # STT 处理器测试
+|       +-- test_tts.py             # TTS 处理器测试
+|       +-- test_vad.py             # VAD 处理器测试
+|       +-- test_wake_word.py       # 唤醒词测试
+|       +-- test_cosyvoice_client.py
+|       +-- test_continuous.py      # 连续对话模式测试
 ```
 
 ---
@@ -535,6 +669,11 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 | LLM (OpenAI) | openai SDK |
 | LLM (Anthropic) | anthropic SDK |
 | 编排 | langgraph（可选） |
+| 语音识别 (STT) | faster-whisper (本地) / Qwen-ASR Realtime (在线，WebSocket) |
+| 语音合成 (TTS) | CosyVoice v3 Flash（阿里云 DashScope WebSocket） |
+| 语音活动检测 | Silero VAD |
+| 唤醒词 | openWakeWord |
+| 音频 I/O | PyAudio |
 | 环境变量 | python-dotenv |
 | 测试 | pytest + pytest-asyncio |
 

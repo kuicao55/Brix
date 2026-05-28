@@ -12,9 +12,13 @@ A modular, multi-provider AI agent with a state machine orchestrator, tool calli
 - **Tool Calling** — Built-in tools: calculator, weather, file reader, file writer, file editor
 - **Memory System v2** — Session-isolated conversations, agent personality (soul.md), user profile (user.md), auto-onboarding
 - **Persistent Storage** — Crash-safe atomic writes with fcntl locking
-- **Smart Routing** — Intent classification + complexity evaluation for automatic model selection
+- **Side Layer** — Background task system with 7 async tasks: session title generation, tool result summarization, user preference detection, history search, voice cleanup, context compression, session summary
 - **Rich Terminal UI** — Thinking spinner during LLM gap, tool execution panels, content indentation with compact paragraph spacing, styled banner, custom theme, inline response markers
 - **Slash Autocomplete** — Type `/` to see command suggestions with fuzzy matching; Tab to accept, Up/Down to navigate
+- **Voice Interaction** — STT + TTS with independent control, pluggable Protocol architecture
+  - STT: Local faster-whisper / Online Qwen-ASR Realtime (switchable via config)
+  - TTS: CosyVoice v3 Flash, streaming synthesis + multi-level playback fallback (PyAudio / afplay / system TTS)
+  - Continuous conversation, echo cancellation, real-time transcription display
 - **Extensible Config** — Add new providers and models by editing a single YAML file
 - **Flow Log** — Automatic data flow recording for every conversation turn, for debugging and auditing
 - **Hook System** — Event-driven architecture with `HookRegistry`; core modules fire events via `hooks.fire()`, FlowLog acts as default listener, easily extensible with custom hooks
@@ -55,6 +59,12 @@ MINIMAX_API_KEY=your-minimax-key-here
 
 # Mimo official API
 MIMO_API_KEY=your-mimo-key-here
+
+# 阿里云 DashScope
+ALI_API_KEY=your-ali-key-here
+
+# DeepSeek official API
+DEEPSEEK_API_KEY=your-deepseek-key-here
 ```
 
 > Keys are auto-loaded via `python-dotenv` — no need to `export` manually.
@@ -123,8 +133,9 @@ To remove, delete the `alias brix=...` line from your shell config and reload.
 | `/history` | Show current session messages |
 | `/soul` | Show agent personality (soul.md) |
 | `/user` | Show user profile (user.md) |
-| `/model` | Show current model |
+| `/model` | View or switch main model (interactive arrow-key selector, or `/model <id>` direct switch) |
 | `/log` | Interactive log viewer (arrow keys to select) |
+| `/voice` | Toggle voice mode (supports `--input-only`, `--output-only`, `--continuous`) |
 
 Type `/` to trigger autocomplete — fuzzy matching filters commands as you type. Tab accepts, Up/Down navigates, Escape dismisses.
 
@@ -164,9 +175,6 @@ Each step records:
 | Step | Description |
 |------|-------------|
 | `memory` | Load history from storage, build context window |
-| `intent` | LLM classifies user intent, records prompt and response |
-| `complexity` | Rule-based request complexity evaluation |
-| `router` | Select model based on intent and complexity |
 | `orch_plan` | LLM generates response or decides tool calls, records full prompt |
 | `tool_exec` | Execute tools and record input/output |
 | `persist` | Save conversation to storage |
@@ -175,7 +183,7 @@ Each step records:
 
 ## Hook System
 
-Brix uses an event-driven architecture via `HookRegistry`. Core modules (router, orchestrator, CLI) fire events through `hooks.fire()` instead of calling `FlowLog` directly. FlowLog acts as the default listener, automatically receiving all events.
+Brix uses an event-driven architecture via `HookRegistry`. Core modules (orchestrator, CLI, side tasks) fire events through `hooks.fire()` instead of calling `FlowLog` directly. FlowLog acts as the default listener, automatically receiving all events.
 
 ### How It Works
 
@@ -203,9 +211,6 @@ hooks.register("intent", lambda e: audit_log(e))
 | Event | Trigger Location | Data Fields |
 |-------|-----------------|-------------|
 | `memory` | cli/app.py | `msgs`, `window`, `chars` |
-| `intent` | router/intent.py | `result`, `via`, `model`, `ms` |
-| `complexity` | cli/app.py | `result` |
-| `router` | cli/app.py | `model`, `reason` |
 | `orch_plan` | orchestrator/ | `iter`, `tools`, `ms`, `response` |
 | `tool_exec` | orchestrator/ | `name`, `args`, `result`, `ms` |
 | `persist` | cli/app.py | `saved` |
@@ -225,9 +230,9 @@ providers:
   # Existing providers...
 
   deepseek:                              # Provider name (any unique key)
-    base_url: "https://api.deepseek.com/anthropic"  # API endpoint
+    base_url: "https://api.deepseek.com"  # API endpoint
     api_key_env: "DEEPSEEK_API_KEY"     # Env var name for the API key
-    protocol: "anthropic"               # "anthropic" or "openai"
+    protocol: "openai"                  # "anthropic" or "openai"
 ```
 
 Then add the API key to `.env`:
@@ -264,6 +269,7 @@ Model IDs follow the pattern `provider/model-name`:
 |------------|----------|-------|
 | `minimax/MiniMax-M2.7` | minimax | MiniMax-M2.7 |
 | `mimo/mimo-v2.5-pro` | mimo | mimo-v2.5-pro |
+| `deepseek/deepseek-v4-pro` | deepseek | deepseek-v4-pro |
 | `zenmux-openai/deepseek/deepseek-v4-pro` | zenmux-openai | deepseek/deepseek-v4-pro |
 
 For aggregator platforms like ZenMux, the model name includes the vendor prefix (e.g., `deepseek/deepseek-v4-pro`).
@@ -332,16 +338,126 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 
 ---
 
-## Architecture
+## Voice Interaction
+
+Brix supports voice input (STT) and voice output (TTS), independently controllable.
+
+### Usage
+
+```bash
+# Toggle voice mode in REPL
+/voice
+
+# STT only (no TTS playback)
+/voice --input-only
+
+# TTS only (no microphone)
+/voice --output-only
+
+# Continuous conversation (auto-resume after TTS)
+/voice --continuous
+```
+
+### Configuration
+
+```yaml
+voice:
+  enabled: true
+  input_enabled: true
+  output_enabled: true
+
+  # STT — local or online
+  stt_provider: "online"  # local = faster-whisper / online = Qwen-ASR Realtime
+
+  # Local STT (faster-whisper)
+  stt_model: "small"
+  stt_language: "zh"
+
+  # Online STT (Qwen-ASR Realtime via WebSocket, no SDK required)
+  stt_online_model: "qwen3-asr-flash-realtime"
+  stt_online_api_key_env: "ALI_API_KEY"
+
+  # TTS — CosyVoice v3 Flash
+  tts_model: "cosyvoice-v3-flash"
+  tts_voice: "loongeric_v3"
+  tts_api_key_env: "ALI_API_KEY"
+  tts_cooldown_ms: 800
+```
+
+### Install Voice Dependencies
+
+```bash
+pip install -e ".[voice]"
+```
+
+### Architecture
+
+Voice module interacts with CLI via `VoiceRuntime` Protocol, fully pluggable:
+
+- **STT Pipeline**: Microphone → VAD → STT (local/online) → LLM Cleanup → text callback
+- **TTS Pipeline**: LLM response → text cleanup → CosyVoice synthesis → audio playback
+- **Echo Cancellation**: VAD paused during TTS playback, resumes after cooldown
+- **Fallback**: PyAudio → afplay → macOS system TTS
+
+---
+
+## Side Layer (Background Tasks)
+
+Brix runs 7 background tasks via `SideTaskManager`, powered by a dedicated lightweight model (`side.model` in config). These tasks run as fire-and-forget async coroutines — they don't block the main conversation flow.
+
+### Built-in Tasks
+
+| Task | Trigger | Description |
+|------|---------|-------------|
+| `session_title` | After first response | Auto-generate session title from conversation |
+| `tool_summary` | After tool execution | Summarize tool results for context compression |
+| `pref_detection` | Every N user messages | Detect and persist user preferences |
+| `history_search` | On user input | Search past conversations for relevant context |
+| `voice_cleanup` | Voice input | LLM-based cleanup of STT transcriptions |
+| `context_compress` | Message threshold reached | Compress conversation when it gets too long |
+| `session_summary` | Idle timeout | Generate session summary after inactivity |
+
+### Configuration
+
+```yaml
+side:
+  enabled: true
+  model: "ali/qwen3.6-flash"           # Dedicated lightweight model
+
+  tasks:
+    session_title:
+      enabled: true
+    tool_summary:
+      enabled: true
+    pref_detection:
+      enabled: true
+      interval: 5                       # Check every N user messages
+    history_search:
+      enabled: true
+      top_k: 3
+    voice_cleanup:
+      enabled: true
+    context_compress:
+      enabled: true
+      message_threshold: 50
+    session_summary:
+      enabled: true
+      idle_threshold_minutes: 5
+```
+
+---
 
 ```
 +-----------------------------------------------------+
 |                      CLI Layer                       |
 |                  cli/app.py (REPL)                   |
 +-----------------------------------------------------+
-|                   Router Layer                       |
-|  router/intent.py  router/complexity.py              |
-|  router/model_router.py                              |
+|                    Side Layer                         |
+|  side/manager.py (SideTaskManager)                   |
+|  side/tasks/ (7 background tasks)                    |
+|    session_title, tool_summary, pref_detection,      |
+|    history_search, voice_cleanup,                    |
+|    context_compress, session_summary                 |
 +-----------------------------------------------------+
 |                Orchestrator Layer                     |
 |  orchestrator/state_machine.py  (Pure Python)        |
@@ -356,6 +472,14 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 |  capability/tools/file_read.py                       |
 |  capability/tools/file_write.py                      |
 |  capability/tools/file_edit.py                       |
++-----------------------------------------------------+
+|                   Voice Layer                        |
+|  capability/voice/protocol.py (VoiceRuntime Protocol)|
+|  capability/voice/runtime.py (VoiceRuntimeImpl)      |
+|  capability/voice/pipeline/ (SimpleVoicePipeline)    |
+|  capability/voice/processors/ (VAD, STT, TTS, etc.)  |
+|  capability/voice/transport/ (Microphone, Speaker)   |
+|  capability/voice/tts/ (CosyVoice TTS Client)       |
 +-----------------------------------------------------+
 |                   Infra Layer                        |
 |  infra/llm_client.py (Unified LLM Client)            |
@@ -402,13 +526,9 @@ If LangGraph is not installed and you set `engine: "langgraph"`, Brix will autom
 User Input
     |
     v
-Intent Classification (chat / task / tool_use)
-    |
-    v
-Complexity Evaluation (low / medium / high)
-    |
-    v
-Model Selection (based on intent + complexity + config)
+Side Layer (fire-and-forget tasks)
+    +---> history_search (context retrieval)
+    +---> pref_detection (every N turns)
     |
     v
 Orchestrator Loop
@@ -416,6 +536,13 @@ Orchestrator Loop
     +---> LLM Call ---> Tool Calls? ---> Execute Tools ---> Review --+
     |                                                                |
     +----------------------------------------------------------------+
+    |
+    v
+Side Layer (post-response tasks)
+    +---> tool_summary (tool result summarization)
+    +---> session_title (auto-generate title)
+    +---> context_compress (when threshold reached)
+    +---> session_summary (on idle)
     |
     v
 Response + Memory Persist
@@ -438,10 +565,17 @@ brix/
 |   +-- providers/
 |       +-- openai_compat.py        # OpenAI-compatible adapter
 |       +-- anthropic_compat.py     # Anthropic-compatible adapter
-+-- router/
-|   +-- intent.py                   # Intent classification
-|   +-- complexity.py               # Complexity evaluation
-|   +-- model_router.py             # Model selection logic
++-- side/
+|   +-- manager.py                  # SideTaskManager (background task coordinator)
+|   +-- base.py                     # SideTask abstract base class
+|   +-- tasks/                      # 7 background tasks
+|       +-- session_title.py        # Auto-generate session title
+|       +-- tool_summary.py         # Summarize tool results
+|       +-- pref_detection.py       # Detect user preferences
+|       +-- history_search.py       # Search conversation history
+|       +-- voice_cleanup.py        # LLM cleanup for voice input
+|       +-- context_compress.py     # Compress long conversations
+|       +-- session_summary.py      # Summarize session on idle
 +-- orchestrator/
 |   +-- engine.py                   # OrchestratorEngine protocol
 |   +-- states.py                   # State enum
@@ -461,6 +595,14 @@ brix/
 |       +-- file_read.py            # Local file reader
 |       +-- file_write.py           # File writer (memory/data/ sandboxed)
 |       +-- file_edit.py            # File editor (memory/data/ sandboxed)
+|   +-- voice/                      # Voice module
+|       +-- protocol.py             # VoiceRuntime Protocol
+|       +-- runtime.py              # VoiceRuntimeImpl (lifecycle)
+|       +-- config.py               # VoiceConfig dataclass
+|       +-- pipeline/               # Voice processing pipeline
+|       +-- processors/             # VAD, STT (local + online), TTS, cleanup
+|       +-- transport/              # Microphone, speaker
+|       +-- tts/                    # CosyVoice TTS client
 +-- memory/
 |   +-- __init__.py                 # MemoryProvider Protocol + factory
 |   +-- provider.py                 # BrixMemoryProvider implementation
@@ -492,7 +634,6 @@ brix/
     +-- test_infra.py               # Infra layer tests
     +-- test_orchestrator.py        # Orchestrator tests
     +-- test_langgraph.py           # LangGraph engine tests
-    +-- test_router.py              # Router tests
     +-- test_capability.py          # Tool & runner tests
     +-- test_file_tools.py          # File tool tests
     +-- test_memory.py              # Memory tests
@@ -504,6 +645,10 @@ brix/
     +-- test_flow_log.py            # Flow log tests
     +-- test_stream_renderer.py     # Stream renderer tests
     +-- test_tool_display.py        # Tool display panel tests
+    +-- side/                       # Side layer tests
+        +-- test_manager.py         # SideTaskManager tests
+        +-- test_tasks.py           # Individual task tests
+        +-- test_side_cli_integration.py  # CLI integration tests
 ```
 
 ---
@@ -539,6 +684,10 @@ python -m pytest tests/ --cov=. --cov-report=term-missing
 | LLM (OpenAI) | openai SDK |
 | LLM (Anthropic) | anthropic SDK |
 | Orchestrator | langgraph (optional) |
+| Speech-to-Text | faster-whisper (local) / Qwen-ASR Realtime (online, WebSocket) |
+| Text-to-Speech | CosyVoice v3 Flash (DashScope WebSocket) |
+| Voice Activity Detection | Silero VAD |
+| Audio I/O | PyAudio |
 | Env Loading | python-dotenv |
 | Testing | pytest + pytest-asyncio |
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -44,9 +45,8 @@ from infra.llm_client import LLMClient
 from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
 from orchestrator.state_machine import StateMachineOrchestrator
-from router.complexity import evaluate_complexity
-from router.intent import classify_intent
-from router.model_router import select_model
+from side.manager import SideTaskManager
+from side.tasks import ALL_TASKS
 
 
 class BrixCLI:
@@ -64,10 +64,33 @@ class BrixCLI:
         self._tool_runner = ToolRunner()
         self._register_tools()
         self._command_registry = CommandRegistry()
-        self._register_commands()
-        self._register_skill_tool()
         self._orchestrator = self._build_orchestrator()
         self._console = Console(theme=BRIX_THEME)
+        # SideTaskManager 初始化（需在 _init_voice 前，voice cleanup 依赖 get_side_model）
+        self._side_manager = SideTaskManager()
+        self._side_manager.configure(
+            config=self._config,
+            llm_client=self._llm_client,
+            memory=self._memory,
+        )
+        for task in ALL_TASKS:
+            self._side_manager.register(task)
+        # 语音模块（可选，需在注册命令前初始化）
+        self._voice = None
+        self._voice_display = None
+        self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._init_voice()
+        self._register_commands()
+        self._register_skill_tool()
+
+    # ------------------------------------------------------------------
+    # 内部辅助
+    # ------------------------------------------------------------------
+
+    def _resolve_model(self) -> str:
+        """解析主模型：default_model → fallback_model → 空字符串。"""
+        routing = self._config.get("routing", {})
+        return routing.get("default_model", "") or routing.get("fallback_model", "")
 
     # ------------------------------------------------------------------
     # Public API
@@ -105,14 +128,43 @@ class BrixCLI:
                 if not first_turn:
                     self._console.print()
                 first_turn = False
+
+                # 并行等待键盘输入和语音输入
+                keyboard_task = asyncio.create_task(
+                    session.prompt_async(HTML('<ansicyan><b>❯ </b></ansicyan>'))
+                )
+                voice_task = asyncio.create_task(self._voice_input_queue.get())
+
                 try:
-                    user_input = await session.prompt_async(HTML('<ansicyan><b>❯ </b></ansicyan>'))
-                except (EOFError, KeyboardInterrupt):
-                    self._memory.save_session()
-                    self._console.print("\n[dim]Goodbye.[/]")
+                    done, pending = await asyncio.wait(
+                        [keyboard_task, voice_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except (KeyboardInterrupt, asyncio.CancelledError):
+                    keyboard_task.cancel()
+                    voice_task.cancel()
                     break
 
-                text = user_input.strip()
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                if voice_task in done:
+                    text = voice_task.result()
+                elif keyboard_task in done:
+                    try:
+                        text = keyboard_task.result()
+                    except (EOFError, KeyboardInterrupt):
+                        self._memory.save_session()
+                        self._console.print("\n[dim]Goodbye.[/]")
+                        break
+                else:
+                    continue
+
+                text = text.strip()
                 if not text:
                     continue
 
@@ -129,6 +181,8 @@ class BrixCLI:
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
         finally:
+            if self._voice and self._voice.is_running:
+                await self._voice.stop()
             await self._llm_client.close()
 
     # ------------------------------------------------------------------
@@ -204,17 +258,9 @@ class BrixCLI:
         hooks.fire("memory", msgs=len(context_messages),
                  chars=sum(len(m.get("content", "")) for m in context_messages))
 
-        intent_model = self._config.get("routing", {}).get("intent_model", "")
-        default_model = self._config.get("routing", {}).get("default_model", "")
-        intent = await classify_intent(
-            user_input, context_messages, self._llm_client,
-            intent_model or default_model, hooks=hooks,
-        )
-        complexity = evaluate_complexity(user_input)
-        model = select_model(intent, complexity, self._config)
-
-        hooks.fire("complexity", result=complexity)
-        hooks.fire("router", model=model, reason=f"{intent}->{complexity}")
+        # 直接使用 config 中的主模型（default_model → fallback_model）
+        model = self._resolve_model()
+        hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
 
         context = OrchestratorContext(
@@ -284,29 +330,34 @@ class BrixCLI:
                    chars=sum(len(m.get("content", "")) for m in context_messages))
         _tick("memory")
 
-        # Intent stage (LLM call — takes time)
-        intent_model = self._config.get("routing", {}).get("intent_model", "")
-        default_model = self._config.get("routing", {}).get("default_model", "")
-        _intent_model_name = (intent_model or default_model).split("/")[-1]
-        indicator.update("Intent", _intent_model_name)
-        # 只传最近 6 条非 system 消息，避免 intent 分类加载完整 soul.md
-        trimmed = [m for m in context_messages if m.get("role") != "system"][-6:]
-        intent = await classify_intent(
-            user_input, trimmed, self._llm_client,
-            intent_model or default_model, hooks=hooks,
-        )
-        _tick("intent({})".format(intent))
+        # Side 层：历史搜索（如果触发）
+        if self._side_manager and self._side_manager.enabled:
+            indicator.update("Side", "history_search")
+            search_results = await self._side_manager.run_task(
+                "history_search",
+                session_messages=context_messages,
+                user_input=user_input,
+                hooks=hooks,
+            )
+            if search_results:
+                search_summary = "\n".join(
+                    f"- {s.get('title', '无标题')}: {s.get('summary', '')[:100]}"
+                    for s in search_results
+                )
+                context_messages.append({
+                    "role": "user",
+                    "content": f"[系统] 以下是你之前的对话，可能与当前问题相关：\n{search_summary}",
+                })
+            _tick("side:history_search")
 
-        # Complexity + Route stages
-        indicator.update("Complexity")
-        complexity = evaluate_complexity(user_input)
-        indicator.update("Route")
-        model = select_model(intent, complexity, self._config)
-        _tick("route->{}".format(model.split("/")[-1]))
-
-        hooks.fire("complexity", result=complexity)
-        hooks.fire("router", model=model, reason="{}->{}".format(intent, complexity))
+        # 直接使用 config 中的主模型（default_model → fallback_model）
+        model = self._resolve_model()
+        hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
+
+        # 用户消息计数（用于 pref_detection 间隔）
+        if self._side_manager:
+            self._side_manager.on_user_message()
 
         context = OrchestratorContext(
             history=list(context_messages),
@@ -327,6 +378,7 @@ class BrixCLI:
         content_parts = []
         has_error = False
         tool_display = ToolDisplay(self._console)
+        _tool_input_cache: dict[str, dict] = {}  # tool_call_id → input，供 tool_result 关联
 
         try:
             async for event in self._orchestrator.run_stream(user_input, context):
@@ -372,6 +424,9 @@ class BrixCLI:
                         renderer = None
                     self._console.print()  # 工具调用前的间隔
                     tool_name = event.get("name", "unknown")
+                    _tc_id = event.get("id", "")
+                    if _tc_id:
+                        _tool_input_cache[_tc_id] = event.get("input", {})
                     tool_display.show_tool_start(
                         tool_name, event.get("input", {})
                     )
@@ -387,6 +442,23 @@ class BrixCLI:
                         is_error=is_err,
                     )
                     self._console.print()  # 工具结果后的间隔
+
+                # fire-and-forget 工具摘要
+                if (event_type == "tool_result"
+                        and self._side_manager and self._side_manager.enabled):
+                    # NOTE: fire-and-forget 任务的返回值当前被丢弃。
+                    # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
+                    _tc_id = event.get("id", "")
+                    _tc_input = _tool_input_cache.pop(_tc_id, {})
+                    self._side_manager.fire_and_forget(
+                        "tool_summary",
+                        session_messages=context_messages,
+                        user_input=user_input,
+                        hooks=hooks,
+                        tool_name=tool_name,
+                        tool_input=_tc_input,
+                        tool_result=event.get("result", ""),
+                    )
 
         except Exception as exc:
             has_error = True
@@ -411,6 +483,13 @@ class BrixCLI:
         _tick("stream_end")
 
         response = "".join(content_parts)
+
+        # TTS 桥接：统一在完整回复后一次性触发，避免流式碎片丢失触发
+        if (self._voice and self._voice.is_running
+                and self._voice.output_enabled and response.strip()):
+            self._console.print(f"[dim]TTS trigger: chars={len(response)}[/]")
+            self._voice.feed_response_text(response)
+            self._voice.flush_tts()
 
         # Write timing data for analysis
         try:
@@ -440,6 +519,18 @@ class BrixCLI:
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not has_error else 1)
 
+        # 偏好检测（按间隔触发）
+        # NOTE: fire-and-forget 任务的返回值当前被丢弃。
+        # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
+        if (self._side_manager and self._side_manager.enabled
+                and self._side_manager.should_run_pref_detection()):
+            self._side_manager.fire_and_forget(
+                "pref_detection",
+                session_messages=context_messages,
+                user_input=user_input,
+                hooks=hooks,
+            )
+
         try:
             flush_log(log)
         except Exception:
@@ -459,6 +550,123 @@ class BrixCLI:
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))
 
+    def _init_voice(self) -> None:
+        """初始化语音模块（如果配置启用）。"""
+        voice_cfg = self._config.get("voice", {})
+        if not voice_cfg.get("enabled", False):
+            return
+        try:
+            from capability.voice.config import VoiceConfig
+            from capability.voice.runtime import VoiceRuntimeImpl
+            from capability.voice.tts.cosyvoice_client import create_cosyvoice_client
+
+            cfg = VoiceConfig.from_dict(self._config)
+
+            # 创建 TTS 客户端（可选，API key 缺失时跳过）
+            tts_client = create_cosyvoice_client(self._config)
+
+            # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
+            # 模型在调用时延迟解析，避免 _side_manager 未初始化时拿到默认值
+            # 回退顺序：voice.cleanup_model → side model → routing.default_model → 硬编码默认值
+            _CLEANUP_FALLBACK = "ali/qwen3.6-flash"
+            async def _cleanup_llm(prompt: str) -> str:
+                model = (
+                    voice_cfg.get("cleanup_model", "")
+                    or (self._side_manager.get_side_model() if self._side_manager else "")
+                    or self._config.get("routing", {}).get("default_model", "")
+                    or _CLEANUP_FALLBACK
+                )
+                resp = await self._llm_client.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model,
+                )
+                return resp.content
+
+            self._voice = VoiceRuntimeImpl(
+                config=cfg,
+                hooks=HookRegistry(),
+                llm_fn=_cleanup_llm,
+                tts_client=tts_client,
+            )
+            self._voice.on_voice_input(self._handle_voice_input)
+
+            # 注册实时显示回调
+            from cli.voice_display import VoiceDisplay
+            self._voice_display = VoiceDisplay(self._console)
+            self._voice.on_state_change(self._handle_voice_state)
+            self._voice.on_interim_text(self._handle_interim_text)
+            # timing hook
+            self._voice._hooks.register("voice_timing", self._handle_voice_timing)
+            self._voice._hooks.register("voice_tts_queue", self._handle_voice_tts_queue)
+            self._voice._hooks.register("voice_tts_skip", self._handle_voice_tts_skip)
+            self._voice._hooks.register("voice_tts", self._handle_voice_tts)
+            self._voice._hooks.register("voice_tts_error", self._handle_voice_tts_error)
+        except Exception as exc:
+            self._console.print(f"[dim]语音模块加载失败: {exc}[/]")
+
+    def _handle_voice_input(self, text: str) -> None:
+        """语音输入回调 — 将文本注入 REPL 循环。
+
+        注意：此方法必须在 asyncio event loop 线程中调用。
+        如果从音频 I/O 工作线程调用，应使用 loop.call_soon_threadsafe()。
+        """
+        # 用 VoiceDisplay 显示最终转录结果
+        if self._voice_display:
+            self._voice_display.finish(text)
+        self._voice_input_queue.put_nowait(text)
+
+    def _handle_voice_state(self, state: str) -> None:
+        """语音状态变化回调 — 更新 VoiceDisplay。"""
+        if not self._voice_display:
+            return
+        if state == "listening":
+            self._voice_display.start_listening()
+        elif state in ("idle", "error"):
+            self._voice_display.stop()
+
+    def _handle_interim_text(self, text: str) -> None:
+        """Interim 转录回调 — 实时更新 VoiceDisplay。"""
+        if self._voice_display:
+            self._voice_display.update_interim(text)
+
+    def _handle_voice_timing(self, event) -> None:
+        """Voice timing hook — 更新 VoiceDisplay 的耗时显示。"""
+        if self._voice_display:
+            step = event.data.get("step", "")
+            ms = event.data.get("ms", 0)
+            self._voice_display.update_timing(step, ms)
+
+    def _handle_voice_tts(self, event) -> None:
+        """TTS 成功回调 — 输出简短诊断信息。"""
+        backend = event.data.get("backend", "unknown")
+        chunks = event.data.get("chunks", 0)
+        bytes_ = event.data.get("bytes", 0)
+        self._console.print(
+            f"[dim]TTS ok: backend={backend}, chunks={chunks}, bytes={bytes_}[/]"
+        )
+
+    def _handle_voice_tts_error(self, event) -> None:
+        """TTS 错误回调 — 输出可见错误。"""
+        error = event.data.get("error", "unknown")
+        backend = event.data.get("backend", "unknown")
+        self._console.print(
+            f"[yellow]TTS error: {error} (backend={backend})[/]"
+        )
+
+    def _handle_voice_tts_queue(self, event) -> None:
+        source = event.data.get("source", "unknown")
+        text = event.data.get("text", "")
+        self._console.print(
+            f"[dim]TTS queue: source={source}, text='{text}'[/]"
+        )
+
+    def _handle_voice_tts_skip(self, event) -> None:
+        source = event.data.get("source", "unknown")
+        text = event.data.get("text", "")
+        self._console.print(
+            f"[dim]TTS skip: source={source}, text='{text}'[/]"
+        )
+
     def _register_commands(self) -> None:
         """注册所有内置命令和 Skill 到 CommandRegistry。"""
         from capability.command.builtin.session import (
@@ -468,6 +676,7 @@ class BrixCLI:
             HelpCommand, ModelCommand, SoulCommand, UserCommand, LogCommand,
         )
         from capability.command.skill import SkillCommand
+        from capability.command.builtin.voice import VoiceCommand
 
         # 系统命令
         self._command_registry.register(QuitCommand())
@@ -480,6 +689,8 @@ class BrixCLI:
         self._command_registry.register(LogCommand())
         # HelpCommand 需要引用 registry
         self._command_registry.register(HelpCommand(self._command_registry))
+        # /voice 命令
+        self._command_registry.register(VoiceCommand(voice_runtime=self._voice))
 
         # 内置 Skill
         builtin_skills_dir = Path(__file__).parent.parent / "capability" / "command" / "builtin" / "skills"

@@ -49,7 +49,7 @@ class HelpCommand(Command):
 
 
 class ModelCommand(Command):
-    """查看当前默认模型。"""
+    """查看或切换主模型。"""
 
     def __init__(self, config: dict) -> None:
         self._config = config
@@ -58,13 +58,58 @@ class ModelCommand(Command):
     def meta(self) -> CommandMeta:
         return CommandMeta(
             name="model",
-            description="查看当前默认模型",
+            description="查看或切换主模型 (/model [model_id])",
             type=CommandType.SYSTEM,
         )
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
-        default_model = self._config.get("routing", {}).get("default_model", "unknown")
-        print(f"Current model: {default_model}")
+        # 安全提取 models 列表（防御畸形配置）
+        raw_models = self._config.get("models", [])
+        models = [m for m in raw_models if isinstance(m, dict)]
+
+        # 有参数：直接切换模型
+        if args.strip():
+            return self._switch_model(args.strip(), models)
+
+        # 无参数：交互式选择器
+        return await self._interactive_select(models)
+
+    def _switch_model(self, model_id: str, models: list[dict]) -> CommandResult:
+        """直接切换模型。"""
+        valid_ids = {m.get("id") for m in models}
+        if model_id not in valid_ids:
+            print(f"\n  未知模型: {model_id}")
+            print(f"  使用 /model 查看可用模型列表\n")
+            return CommandResult(type=CommandResultType.NONE)
+
+        self._config.setdefault("routing", {})["default_model"] = model_id
+        print(f"\n  已切换到: {model_id}（本次会话有效）\n")
+        return CommandResult(type=CommandResultType.NONE)
+
+    async def _interactive_select(self, models: list[dict]) -> CommandResult:
+        """交互式模型选择器（方向键选择，回车确认）。"""
+        from cli.paginated_selector import PaginatedSelector
+
+        default_model = self._config.get("routing", {}).get("default_model", "")
+
+        def _format(model: dict, idx: int) -> str:
+            model_id = model.get("id", "")
+            cost = model.get("cost_tier", "?")
+            marker = " ← 当前" if model_id == default_model else ""
+            return f"{model_id}  [{cost}]{marker}"
+
+        selector = PaginatedSelector(
+            items=models,
+            format_item=_format,
+            page_size=10,
+            title=f"切换主模型（当前: {default_model}）",
+        )
+        selected = await selector.prompt_async()
+        if selected is not None:
+            model_id = selected.get("id", "")
+            self._config.setdefault("routing", {})["default_model"] = model_id
+            print(f"\n  已切换到: {model_id}（本次会话有效）\n")
+
         return CommandResult(type=CommandResultType.NONE)
 
 
