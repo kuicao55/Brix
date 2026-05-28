@@ -136,7 +136,26 @@ class DreamManager:
    - 琐碎/过时 → 丢弃
 4. **清理**：删除已处理的 short-term 文件，更新 dream-state.json
 
-### 5. 记忆注入集成
+### 5. MemorySummaryTask（新 side task）
+
+负责将短期记忆总结后注入对话上下文。
+
+```python
+class MemorySummaryTask(SideTask):
+    name = "memory_summary"
+    
+    async def execute(self, ctx: SideTaskContext) -> str | None:
+        # 读取最近 N 个会话的短期记忆
+        # 用 Side LLM 总结为 2-3 句话
+        # 返回总结文本
+```
+
+- 触发时机：每轮对话前（与 history_search 类似）
+- 输入：最近 5 个会话的短期记忆 items
+- 输出：2-3 句话的近期记忆摘要
+- 注入方式：作为 `[近期记忆]` 系统消息追加到 context_messages
+
+### 6. 记忆注入集成
 
 每轮对话构建上下文时注入记忆：
 
@@ -159,7 +178,7 @@ if self._side_manager and self._side_manager.enabled:
         })
 ```
 
-### 6. Side Task 修复
+### 7. Side Task 修复
 
 | 任务 | 修复内容 |
 |------|---------|
@@ -243,6 +262,7 @@ Dream 检查（满足门槛 → fire_and_forget 蒸馏）
 - LongTermMemory 类实现
 
 ### Milestone B: 搜索工具 + 记忆注入
+- MemorySummaryTask 实现
 - KeywordMemorySearcher 实现
 - MemorySearchTool 注册到 ToolRunner
 - 短期记忆注入集成（memory_summary side task）
