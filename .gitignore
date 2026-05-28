@@ -7,3 +7,6 @@ memory/data/
 *.egg-info/
 dist/
 build/
+.DS_Store
+node_modules/
+.claude/
