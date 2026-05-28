@@ -346,7 +346,7 @@ async def test_process_streaming_fires_pref_detection_when_should_run_true():
 # ---------------------------------------------------------------------------
 
 def test_model_command_displays_models():
-    """/model 无参数时显示当前模型和可用模型列表。"""
+    """/model 无参数时启动交互式选择器，选择后切换模型。"""
     from capability.command.builtin.info import ModelCommand
     from capability.command.base import CommandContext
 
@@ -360,17 +360,23 @@ def test_model_command_displays_models():
     cmd = ModelCommand(config)
     ctx = CommandContext()
 
-    import io
-    import sys
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    import asyncio
-    asyncio.run(cmd.execute("", ctx))
-    output = sys.stdout.getvalue()
-    sys.stdout = old_stdout
+    # Mock PaginatedSelector 返回第二个模型
+    with patch("cli.paginated_selector.PaginatedSelector") as MockSelector:
+        mock_instance = MockSelector.return_value
+        mock_instance.prompt_async = AsyncMock(return_value={"id": "ali/qwen3.6-flash", "cost_tier": "low"})
 
-    assert "minimax/MiniMax-M2.7" in output
+        import asyncio
+        import io
+        import sys
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        asyncio.run(cmd.execute("", ctx))
+        output = sys.stdout.getvalue()
+        sys.stdout = old_stdout
+
+    assert "已切换到" in output
     assert "ali/qwen3.6-flash" in output
+    assert config["routing"]["default_model"] == "ali/qwen3.6-flash"
 
 
 def test_model_command_switch():

@@ -34,6 +34,12 @@ providers:
     api_key_env: "MIMO_API_KEY"
     protocol: "anthropic"
 
+  # --- DeepSeek 官方 ---
+  deepseek:
+    base_url: "https://api.deepseek.com"
+    api_key_env: "DEEPSEEK_API_KEY"
+    protocol: "openai"
+
 models:
   # ============================================================
   # MiniMax — 主力模型，量大管饱
@@ -78,6 +84,23 @@ models:
     purpose: ["fast_chat", "simple_qa"]
     capabilities: ["low_latency", "low_cost"]
     max_context: 64000
+    cost_tier: "low"
+
+  # ============================================================
+  # DeepSeek 官方
+  # ============================================================
+  - id: "deepseek/deepseek-v4-flash"
+    provider: "deepseek"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["tool_calling", "low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
+  - id: "deepseek/deepseek-v4-pro"
+    provider: "deepseek"
+    purpose: ["coding", "reasoning", "planning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
     cost_tier: "low"
 
   # ============================================================
