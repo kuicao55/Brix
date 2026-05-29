@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,8 +105,7 @@ class DreamManager:
         try:
             classification = await self._classify_items(llm_client, model, items)
         except Exception:
-            logger.warning("Dream 蒸馏 LLM 调用失败", exc_info=True)
-            self._update_state_after_dream()
+            logger.warning("Dream 蒸馏 LLM 调用失败，保留会话计数以便重试", exc_info=True)
             return
 
         # 3. 写入
@@ -161,6 +161,19 @@ class DreamManager:
         return self._validate_classification(result)
 
     @staticmethod
+    def _slugify_topic(name: str) -> str:
+        """将主题名转为安全的 ASCII slug。
+
+        仅保留字母、数字、下划线、短横线；空格转下划线；全部小写。
+        """
+        slug = name.lower().replace(" ", "_")
+        # 移除所有非 ASCII 字母数字和 _ - 的字符
+        slug = re.sub(r"[^a-z0-9_\-]", "", slug)
+        # 合并连续下划线
+        slug = re.sub(r"_+", "_", slug).strip("_")
+        return slug or "untitled"
+
+    @staticmethod
     def _validate_classification(result: dict) -> dict:
         """校验分类结果结构，过滤无效条目。"""
         # core: 保留字符串条目
@@ -170,13 +183,14 @@ class DreamManager:
         else:
             core = []
 
-        # topics: dict[str, list[str]]
+        # topics: dict[str, list[str]]，key 转为安全 slug
         raw_topics = result.get("topics", {})
         topics: dict[str, list[str]] = {}
         if isinstance(raw_topics, dict):
             for key, val in raw_topics.items():
                 if isinstance(key, str) and isinstance(val, list):
-                    topics[key] = [s for s in val if isinstance(s, str)]
+                    safe_key = DreamManager._slugify_topic(key)
+                    topics[safe_key] = [s for s in val if isinstance(s, str)]
 
         return {"core": core, "topics": topics}
 
@@ -195,20 +209,23 @@ class DreamManager:
             self._user_manager.save(updated)
 
     def _write_to_long_term(self, topic: str, contents: list[str]) -> None:
-        """将主题知识写入长期记忆。"""
+        """将主题知识写入长期记忆。topic 应已被 _slugify_topic 处理。"""
         if not self._long_term:
             return
-        safe_name = topic.replace(" ", "_").lower() + ".md"
-        existing = self._long_term.read_topic(safe_name)
-        new_content = "\n".join(f"- {c}" for c in contents)
-        if new_content not in existing:
-            combined = existing.rstrip() + "\n" + new_content + "\n" if existing else new_content + "\n"
-            self._long_term.write_topic(safe_name, combined, {
-                "name": topic,
-                "description": f"关于{topic}的记忆",
-                "type": "user",
-            })
-            self._long_term.update_index()
+        safe_name = topic + ".md"
+        try:
+            existing = self._long_term.read_topic(safe_name)
+            new_content = "\n".join(f"- {c}" for c in contents)
+            if new_content not in existing:
+                combined = existing.rstrip() + "\n" + new_content + "\n" if existing else new_content + "\n"
+                self._long_term.write_topic(safe_name, combined, {
+                    "name": topic,
+                    "description": f"关于{topic}的记忆",
+                    "type": "user",
+                })
+                self._long_term.update_index()
+        except Exception:
+            logger.warning("写入长期记忆主题 %r 失败", topic, exc_info=True)
 
     def _update_state_after_dream(self) -> None:
         self._state["last_dream_at"] = datetime.now(timezone.utc).isoformat()

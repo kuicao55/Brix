@@ -66,9 +66,13 @@ def test_run_updates_state():
         # 添加一些短期记忆
         stm.add_item("sess-1", "用户喜欢辣的食物", "pref_detection")
 
-        # mock LLM
+        # mock LLM 返回合法分类 JSON
         mock_llm = AsyncMock()
-        mock_llm.chat.return_value = MagicMock(content="[]")
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": ["用户喜欢辣的食物"],
+            "topics": {},
+            "discard": [],
+        }))
 
         # 需要手动设置状态使 should_dream 返回 True
         dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
@@ -179,3 +183,78 @@ def test_future_timestamp_does_not_suppress_dream():
         dm = DreamManager(Path(d))  # 重新加载
         # 未来时间应视为无效，满足 session 门槛后触发
         assert dm.should_dream() is True
+
+
+def test_non_ascii_topic_names_sanitized():
+    """非 ASCII 主题名（如 C++编程、用户偏好（重要））应被安全处理，不崩溃。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("sess-1", "用户喜欢 C++ 编程", "pref_detection")
+
+        # mock LLM 返回含非 ASCII 主题名的分类结果
+        mock_llm = AsyncMock()
+        classification = json.dumps({
+            "core": [],
+            "topics": {
+                "C++编程": ["用户喜欢 C++ 编程"],
+                "用户偏好（重要）": ["用户偏好红茶"],
+            },
+            "discard": [],
+        })
+        mock_llm.chat.return_value = MagicMock(content=classification)
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        # 不应抛异常
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 验证主题被写入长期记忆（文件名应为 ASCII-safe slug）
+        assert dm._state["total_dreams"] == 1, "成功完成应递增 total_dreams"
+        # 长期记忆目录中应有对应的 .md 文件
+        topic_files = list((Path(d) / "long-term").glob("*.md"))
+        assert len(topic_files) >= 1, "应至少写入一个主题文件"
+
+
+def test_classification_failure_preserves_state():
+    """分类失败时，不应重置会话计数或递增 total_dreams。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("sess-1", "用户喜欢咖啡", "pref_detection")
+
+        # mock LLM 抛出异常（模拟网络错误等）
+        mock_llm = AsyncMock()
+        mock_llm.chat.side_effect = RuntimeError("LLM 连接超时")
+
+        # 设置初始状态
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._state["total_dreams"] = 2
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 关键断言：分类失败不应修改状态
+        assert dm._state["sessions_since_dream"] == 5, \
+            "分类失败时 sessions_since_dream 应保持不变"
+        assert dm._state["total_dreams"] == 2, \
+            "分类失败时 total_dreams 不应递增"
