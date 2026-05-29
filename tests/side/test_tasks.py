@@ -1552,6 +1552,49 @@ async def test_session_summary_threshold_not_met():
     result = await task.execute(ctx)
     assert result is None
 
+# --- Task 6: context_compress token trigger + session_summary idle trigger ---
+
+
+@pytest.mark.asyncio
+async def test_context_compress_triggers_on_token_count():
+    """context_compress 应在 token 数超过阈值时触发（消息数低于 message_threshold）。"""
+    from side.tasks.context_compress import ContextCompressTask
+    task = ContextCompressTask()
+    # 10 条消息，远低于默认 message_threshold=50
+    # 每条 4800 chars = 1200 tokens，共 12000 tokens
+    big_content = "这是一段很长的测试内容，用于模拟token消耗。" * 200
+    messages = [{"role": "user", "content": big_content}] * 10
+    ctx = _make_ctx(
+        llm_response="压缩后的摘要",
+        session_messages=messages,
+        config={
+            "side": {"tasks": {"context_compress": {"message_threshold": 50}}},
+            "_side_task_args": {"max_context": 10000},  # 10000*0.8=8000 < 12000 tokens
+        },
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) > 0
+
+
+@pytest.mark.asyncio
+async def test_session_summary_triggers_on_idle():
+    """session_summary 应在空闲超过阈值时触发。"""
+    import time
+    from side.tasks.session_summary import SessionSummaryTask
+    task = SessionSummaryTask()
+    ctx = _make_ctx(
+        llm_response="你之前在重构认证模块",
+        session_messages=[
+            {"role": "user", "content": "帮我重构认证模块"},
+            {"role": "assistant", "content": "好的"},
+        ],
+        config={"_side_task_args": {"last_active_at": time.time() - 600}},
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+
+
 # --- ALL_TASKS 注册 ---
 
 def test_all_tasks_registered():

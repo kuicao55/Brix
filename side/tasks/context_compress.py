@@ -31,11 +31,28 @@ class ContextCompressTask(SideTask):
         return "context_compress"
 
     async def execute(self, ctx: SideTaskContext) -> str | None:
-        threshold = ctx.config.get("side", {}).get("tasks", {}).get(
-            "context_compress", {}
-        ).get("message_threshold", 50)
-        if len(ctx.session_messages) < threshold:
-            return None
+        # 优先检查 token 触发：如果设置了 max_context，按 token 数判断
+        task_args = ctx.config.get("_side_task_args", {})
+        max_context = task_args.get("max_context")
+        if max_context is not None:
+            total_tokens = sum(
+                len(str(m.get("content", ""))) // 4
+                for m in ctx.session_messages
+            )
+            if total_tokens >= max_context * 0.8:
+                logger.debug(
+                    "ContextCompressTask: token 触发 (%d >= %d*0.8=%d)",
+                    total_tokens, max_context, int(max_context * 0.8),
+                )
+            else:
+                return None
+        else:
+            # 回退：按消息数触发
+            threshold = ctx.config.get("side", {}).get("tasks", {}).get(
+                "context_compress", {}
+            ).get("message_threshold", 50)
+            if len(ctx.session_messages) < threshold:
+                return None
         half = len(ctx.session_messages) // 2
         old_messages = ctx.session_messages[:half]
         conversation = "\n".join(
