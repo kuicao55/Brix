@@ -43,3 +43,16 @@ def test_cleanup_sessions():
         stm.add_item("sess-1", "item1", "pref_detection")
         stm.cleanup_sessions(["sess-1"])
         assert len(stm.get_recent()) == 0
+
+
+def test_path_traversal_rejected():
+    """session_id 含路径遍历字符时应拒绝。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        with pytest.raises(ValueError, match="非法 session_id"):
+            stm.add_item("../../etc/passwd", "hack", "test")
+        with pytest.raises(ValueError, match="非法 session_id"):
+            stm.get_by_session("../escape")
+        with pytest.raises(ValueError, match="非法 session_id"):
+            stm.cleanup_sessions(["../../tmp/evil"])
