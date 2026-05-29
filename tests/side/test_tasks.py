@@ -1542,3 +1542,84 @@ def test_voice_cleanup_not_in_all_tasks():
     from side.tasks import ALL_TASKS
     names = [t.name for t in ALL_TASKS]
     assert "voice_cleanup" not in names
+
+
+# --- tool_summary hooks fire ---
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_fires_hook_on_success():
+    """tool_summary 成功时应通过 hooks.fire 发送摘要文本。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    mock_hooks = MagicMock()
+    ctx = _make_ctx(
+        llm_response="Read config file",
+        session_messages=[{"role": "user", "content": "help"}],
+        hooks=mock_hooks,
+        config={
+            "_side_task_args": {
+                "tool_name": "file_read",
+                "tool_input": {"path": "config.yaml"},
+                "tool_result": "content here",
+            },
+        },
+    )
+    result = await task.execute(ctx)
+    assert isinstance(result, str)
+    assert len(result) > 0
+    mock_hooks.fire.assert_called_once_with("tool_summary", text=result)
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_skips_hook_when_no_hooks():
+    """tool_summary 无 hooks 时不应崩溃。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    ctx = _make_ctx(
+        llm_response="Read config file",
+        session_messages=[{"role": "user", "content": "help"}],
+        hooks=None,
+        config={
+            "_side_task_args": {
+                "tool_name": "file_read",
+                "tool_input": {"path": "config.yaml"},
+                "tool_result": "content here",
+            },
+        },
+    )
+    result = await task.execute(ctx)
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_skips_hook_when_result_none():
+    """tool_summary 结果为 None 时不应 fire hook。"""
+    from side.tasks.tool_summary import ToolSummaryTask
+
+    task = ToolSummaryTask()
+    mock_hooks = MagicMock()
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = None
+    mock_client.chat = AsyncMock(return_value=mock_response)
+    ctx = SideTaskContext(
+        llm_client=mock_client,
+        side_model="test-model",
+        config={
+            "_side_task_args": {
+                "tool_name": "Grep",
+                "tool_input": {"pattern": "auth"},
+                "tool_result": "found",
+            },
+        },
+        memory=None,
+        session_messages=[],
+        user_input="",
+        hooks=mock_hooks,
+    )
+    result = await task.execute(ctx)
+    assert result is None
+    mock_hooks.fire.assert_not_called()
