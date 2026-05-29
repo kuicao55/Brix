@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,10 +49,23 @@ class DreamManager:
         }
 
     def _save_state(self) -> None:
-        self._state_path.write_text(
-            json.dumps(self._state, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        """原子写入：先写临时文件，再 os.replace()，防止中断导致 JSON 损坏。"""
+        content = json.dumps(self._state, ensure_ascii=False, indent=2)
+        fd, tmp = tempfile.mkstemp(
+            dir=self._dream_dir, suffix=".tmp"
         )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._state_path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def should_dream(self) -> bool:
         """检查是否满足双门槛：时间间隔 + 会话数量。"""
@@ -62,6 +77,9 @@ class DreamManager:
             last = datetime.min.replace(tzinfo=timezone.utc)
 
         hours_since = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+        # 时钟偏移：last_dream_at 在未来时视为无效，触发 dream
+        if hours_since < 0:
+            hours_since = float("inf")
         sessions = self._state.get("sessions_since_dream", 0)
 
         return hours_since >= MIN_HOURS and sessions >= MIN_SESSIONS
@@ -106,7 +124,10 @@ class DreamManager:
         self._update_state_after_dream()
 
     async def _classify_items(self, llm_client: Any, model: str, items: list[dict]) -> dict:
-        """用 LLM 对短期记忆分类。"""
+        """用 LLM 对短期记忆分类。
+
+        解析失败时抛出异常，由调用方决定是否清理短期记忆。
+        """
         items_text = "\n".join(
             f"- [{i.get('source', '?')}] {i.get('content', '')}"
             for i in items[:50]  # 限制输入量
@@ -129,17 +150,35 @@ class DreamManager:
             ],
             model=model,
         )
-        try:
-            # 容错提取 JSON
-            text = response.content.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
-            result = json.loads(text)
-            if not isinstance(result, dict):
-                return {"core": [], "topics": {}, "discard": [i.get("content", "") for i in items]}
-            return result
-        except (json.JSONDecodeError, ValueError, AttributeError):
-            return {"core": [], "topics": {}, "discard": [i.get("content", "") for i in items]}
+        # 提取 JSON 文本
+        text = response.content.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+        # 解析失败直接抛异常，不返回 fallback
+        result = json.loads(text)  # 可能抛 JSONDecodeError
+        if not isinstance(result, dict):
+            raise ValueError(f"LLM 返回非 dict 类型: {type(result)}")
+        return self._validate_classification(result)
+
+    @staticmethod
+    def _validate_classification(result: dict) -> dict:
+        """校验分类结果结构，过滤无效条目。"""
+        # core: 保留字符串条目
+        raw_core = result.get("core", [])
+        if isinstance(raw_core, list):
+            core = [s for s in raw_core if isinstance(s, str)]
+        else:
+            core = []
+
+        # topics: dict[str, list[str]]
+        raw_topics = result.get("topics", {})
+        topics: dict[str, list[str]] = {}
+        if isinstance(raw_topics, dict):
+            for key, val in raw_topics.items():
+                if isinstance(key, str) and isinstance(val, list):
+                    topics[key] = [s for s in val if isinstance(s, str)]
+
+        return {"core": core, "topics": topics}
 
     def _append_to_user_md(self, content: str) -> None:
         """将核心记忆追加到 user.md（严格控制行数）。"""
