@@ -258,3 +258,83 @@ def test_classification_failure_preserves_state():
             "分类失败时 sessions_since_dream 应保持不变"
         assert dm._state["total_dreams"] == 2, \
             "分类失败时 total_dreams 不应递增"
+
+
+def test_write_failure_skips_cleanup_and_state_advance():
+    """Issue 1: 长期记忆写入失败时，不应清理短期记忆，也不应推进 dream 状态。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("sess-1", "用户喜欢咖啡", "pref_detection")
+
+        # mock LLM 返回分类结果，含 topics
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": [],
+            "topics": {"coffee": ["用户喜欢咖啡"]},
+            "discard": [],
+        }))
+
+        # mock long_term.write_topic 抛异常，模拟磁盘满
+        ltm.write_topic = MagicMock(side_effect=OSError("磁盘已满"))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._state["total_dreams"] = 2
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 写入失败时，不应清理短期记忆
+        assert len(stm.get_by_session("sess-1")) > 0, \
+            "写入失败时短期记忆不应被清理"
+        # 写入失败时，不应推进 dream 状态
+        assert dm._state["sessions_since_dream"] == 5, \
+            "写入失败时 sessions_since_dream 应保持不变"
+        assert dm._state["total_dreams"] == 2, \
+            "写入失败时 total_dreams 不应递增"
+
+
+def test_get_recent_includes_session_id():
+    """Issue 2: get_recent 返回的 items 应包含 session_id 字段。"""
+    from memory.short_term import ShortTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        stm.add_item("sess-abc", "测试内容", "pref_detection")
+
+        items = stm.get_recent(limit=10)
+        assert len(items) == 1
+        assert items[0].get("session_id") == "sess-abc", \
+            f"item 应包含 session_id，实际 keys: {list(items[0].keys())}"
+
+
+def test_slug_collision_merges_contents():
+    """Issue 3: 多个非 ASCII 主题映射到同一 slug 时，内容应合并而非覆盖。"""
+    from memory.dream import DreamManager
+
+    # 两个完全不同的非 ASCII 主题名，slugify 后都变成 "untitled"
+    classification = {
+        "core": [],
+        "topics": {
+            "日本語": ["记忆A"],
+            "中文主题": ["记忆B"],
+        },
+        "discard": [],
+    }
+    validated = DreamManager._validate_classification(classification)
+
+    # 两者 slugify 后都是 "untitled"（全非 ASCII），内容应合并
+    assert "untitled" in validated["topics"], \
+        f"两个非 ASCII 主题应映射到 'untitled'，实际 keys: {list(validated['topics'].keys())}"
+    contents = validated["topics"]["untitled"]
+    assert "记忆A" in contents, f"'记忆A' 应在合并结果中，实际: {contents}"
+    assert "记忆B" in contents, f"'记忆B' 应在合并结果中，实际: {contents}"

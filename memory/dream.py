@@ -108,16 +108,22 @@ class DreamManager:
             logger.warning("Dream 蒸馏 LLM 调用失败，保留会话计数以便重试", exc_info=True)
             return
 
-        # 3. 写入
+        # 3. 写入（跟踪成功/失败）
+        all_writes_ok = True
         for item in classification.get("core", []):
             if self._user_manager:
                 self._append_to_user_md(item)
 
         for topic, contents in classification.get("topics", {}).items():
             if self._long_term:
-                self._write_to_long_term(topic, contents)
+                if not self._write_to_long_term(topic, contents):
+                    all_writes_ok = False
 
-        # 4. 清理
+        # 4. 仅在全部写入成功后清理和推进状态
+        if not all_writes_ok:
+            logger.warning("部分写入失败，跳过清理短期记忆和状态推进")
+            return
+
         self._short_term.cleanup_sessions(
             list({i.get("session_id", "") for i in items if i.get("session_id")})
         )
@@ -190,7 +196,11 @@ class DreamManager:
             for key, val in raw_topics.items():
                 if isinstance(key, str) and isinstance(val, list):
                     safe_key = DreamManager._slugify_topic(key)
-                    topics[safe_key] = [s for s in val if isinstance(s, str)]
+                    filtered = [s for s in val if isinstance(s, str)]
+                    if safe_key in topics:
+                        topics[safe_key].extend(filtered)
+                    else:
+                        topics[safe_key] = filtered
 
         return {"core": core, "topics": topics}
 
@@ -208,10 +218,14 @@ class DreamManager:
             updated = current.rstrip() + "\n" + new_line + "\n"
             self._user_manager.save(updated)
 
-    def _write_to_long_term(self, topic: str, contents: list[str]) -> None:
-        """将主题知识写入长期记忆。topic 应已被 _slugify_topic 处理。"""
+    def _write_to_long_term(self, topic: str, contents: list[str]) -> bool:
+        """将主题知识写入长期记忆。topic 应已被 _slugify_topic 处理。
+
+        Returns:
+            True 表示写入成功，False 表示写入失败。
+        """
         if not self._long_term:
-            return
+            return True
         safe_name = topic + ".md"
         try:
             existing = self._long_term.read_topic(safe_name)
@@ -224,8 +238,10 @@ class DreamManager:
                     "type": "user",
                 })
                 self._long_term.update_index()
+            return True
         except Exception:
             logger.warning("写入长期记忆主题 %r 失败", topic, exc_info=True)
+            return False
 
     def _update_state_after_dream(self) -> None:
         self._state["last_dream_at"] = datetime.now(timezone.utc).isoformat()

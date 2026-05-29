@@ -93,7 +93,10 @@ class ShortTermMemory:
         for p in sorted(self._dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                all_items.extend(data.get("items", []))
+                sid = data.get("session_id", "")
+                for item in data.get("items", []):
+                    item["session_id"] = sid
+                    all_items.append(item)
             except (json.JSONDecodeError, OSError):
                 continue
         all_items.sort(key=lambda x: x.get("created", ""), reverse=True)
