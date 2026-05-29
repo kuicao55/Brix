@@ -1604,7 +1604,7 @@ def test_all_tasks_registered():
     expected = {
         "session_title", "tool_summary", "pref_detection",
         "history_search", "context_compress",
-        "session_summary", "memory_summary",
+        "session_summary", "memory_summary", "dream",
     }
     assert task_names == expected
 

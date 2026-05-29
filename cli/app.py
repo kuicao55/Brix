@@ -334,6 +334,15 @@ class BrixCLI:
                    chars=sum(len(m.get("content", "")) for m in context_messages))
         _tick("memory")
 
+        # Dream 蒸馏（fire-and-forget，不影响主流程）
+        if self._side_manager and self._side_manager.enabled:
+            self._side_manager.fire_and_forget(
+                "dream",
+                session_messages=context_messages,
+                user_input=user_input,
+                hooks=hooks,
+            )
+
         # Side 层：历史搜索（如果触发）
         if self._side_manager and self._side_manager.enabled:
             indicator.update("Side", "history_search")

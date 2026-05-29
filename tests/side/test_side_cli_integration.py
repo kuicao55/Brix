@@ -529,9 +529,9 @@ class TestMemorySummaryTaskInAllTasks:
         )
 
     def test_all_seven_tasks_registered(self):
-        """ALL_TASKS 应恰好包含 7 个 task。"""
+        """ALL_TASKS 应恰好包含 8 个 task。"""
         from side.tasks import ALL_TASKS
-        assert len(ALL_TASKS) == 7, f"期望 7 个 task，实际 {len(ALL_TASKS)}"
+        assert len(ALL_TASKS) == 8, f"期望 8 个 task，实际 {len(ALL_TASKS)}"
 
 
 class TestBrixMemoryProviderComponents:

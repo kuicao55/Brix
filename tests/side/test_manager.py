@@ -478,4 +478,4 @@ def test_import_all_tasks():
     from side.tasks import ALL_TASKS
 
     assert isinstance(ALL_TASKS, list)
-    assert len(ALL_TASKS) == 7
+    assert len(ALL_TASKS) == 8
