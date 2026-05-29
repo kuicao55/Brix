@@ -119,9 +119,16 @@ class PrefDetectionTask(SideTask):
                 return
             if not (hasattr(ctx.memory, "short_term") and ctx.memory.short_term is not None):
                 return
+            # 从 config 获取 session_id，若无则用 "current"
+            session_id = ctx.config.get("session_id", "current")
             for pref in preferences:
                 text = pref.get("preference", "")
                 if text:
-                    ctx.memory.short_term.add_item(text)
+                    ctx.memory.short_term.add_item(
+                        session_id=session_id,
+                        content=text,
+                        source="pref_detection",
+                        context=pref.get("context", ""),
+                    )
         except Exception:
             logger.warning("PrefDetectionTask 写入短期记忆失败", exc_info=True)

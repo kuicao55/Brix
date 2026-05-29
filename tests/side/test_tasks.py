@@ -1009,7 +1009,7 @@ async def test_pref_detection_short_conversation():
 
 @pytest.mark.asyncio
 async def test_pref_detection_writes_to_short_term_memory():
-    """pref_detection 应将检测到的偏好写入短期记忆。"""
+    """pref_detection 应将检测到的偏好写入短期记忆（正确的 API 参数）。"""
     from side.tasks.pref_detection import PrefDetectionTask
     task = PrefDetectionTask()
     mock_stm = MagicMock()
@@ -1022,14 +1022,19 @@ async def test_pref_detection_writes_to_short_term_memory():
             {"role": "assistant", "content": "好的，很下饭！"},
             {"role": "user", "content": "我喜欢辣的"},
         ],
+        config={"session_id": "test-sess-1"},
     )
-    # Override memory to have short_term attribute
     import types
     fields = {k: getattr(ctx, k) for k in ctx.__dataclass_fields__}
     fields["memory"] = mock_memory
     ctx = types.SimpleNamespace(**fields)
     await task.execute(ctx)
-    mock_stm.add_item.assert_called_once()
+    mock_stm.add_item.assert_called_once_with(
+        session_id="test-sess-1",
+        content="用户喜欢辣的食物",
+        source="pref_detection",
+        context="用户说要吃爆炒腊肉",
+    )
 
 # --- HistorySearchTask ---
 
