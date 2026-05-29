@@ -1,6 +1,7 @@
 """BrixMemoryProvider — MemoryProvider Protocol 的具体实现。"""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,8 @@ from memory.strategy import MemoryStrategy
 from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
 from memory.searcher import KeywordMemorySearcher
+
+logger = logging.getLogger(__name__)
 
 
 class BrixMemoryProvider:
@@ -35,13 +38,28 @@ class BrixMemoryProvider:
             user_manager=self._user,
             max_tokens=max_context_tokens,
         )
-        # 记忆系统组件
-        self._short_term = ShortTermMemory(data_dir)
-        self._long_term = LongTermMemory(data_dir)
-        self._searcher = KeywordMemorySearcher(
-            long_term=self._long_term,
-            short_term=self._short_term,
-        )
+        # 记忆系统组件 — 防御性初始化，文件系统异常时优雅降级
+        self._short_term: ShortTermMemory | None = None
+        self._long_term: LongTermMemory | None = None
+        self._searcher: KeywordMemorySearcher | None = None
+
+        try:
+            self._short_term = ShortTermMemory(data_dir)
+        except OSError:
+            logger.warning("ShortTermMemory 初始化失败，短期记忆功能不可用", exc_info=True)
+
+        try:
+            self._long_term = LongTermMemory(data_dir)
+        except OSError:
+            logger.warning("LongTermMemory 初始化失败，长期记忆功能不可用", exc_info=True)
+
+        try:
+            self._searcher = KeywordMemorySearcher(
+                long_term=self._long_term,
+                short_term=self._short_term,
+            )
+        except OSError:
+            logger.warning("KeywordMemorySearcher 初始化失败，记忆搜索功能不可用", exc_info=True)
 
     def _ensure_session(self) -> None:
         """确保当前有活跃 session；没有则懒创建。"""
@@ -67,18 +85,18 @@ class BrixMemoryProvider:
         return self._user.exists()
 
     @property
-    def short_term(self) -> ShortTermMemory:
-        """短期记忆管理器。"""
+    def short_term(self) -> ShortTermMemory | None:
+        """短期记忆管理器，初始化失败时为 None。"""
         return self._short_term
 
     @property
-    def long_term(self) -> LongTermMemory:
-        """长期记忆管理器。"""
+    def long_term(self) -> LongTermMemory | None:
+        """长期记忆管理器，初始化失败时为 None。"""
         return self._long_term
 
     @property
-    def searcher(self) -> KeywordMemorySearcher:
-        """记忆搜索器。"""
+    def searcher(self) -> KeywordMemorySearcher | None:
+        """记忆搜索器，初始化失败时为 None。"""
         return self._searcher
 
     def _cleanup_empty_session(self) -> None:

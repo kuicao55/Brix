@@ -102,3 +102,121 @@ async def test_memory_summary_name():
 
     task = MemorySummaryTask()
     assert task.name == "memory_summary"
+
+
+# --- CQR: Provider initialization resilience on filesystem errors ---
+
+
+class TestProviderResilientInit:
+    """BrixMemoryProvider 初始化应在存储组件抛异常时优雅降级。"""
+
+    def test_provider_survives_short_term_init_failure(self, tmp_path):
+        """ShortTermMemory 初始化失败时，provider 仍可创建，short_term 为 None。"""
+        from unittest.mock import patch
+
+        from memory.provider import BrixMemoryProvider
+
+        with patch(
+            "memory.provider.ShortTermMemory",
+            side_effect=OSError("Permission denied"),
+        ):
+            provider = BrixMemoryProvider(data_dir=tmp_path)
+
+        # provider 创建成功
+        assert provider is not None
+        # short_term 降级为 None
+        assert provider.short_term is None
+        # 其他组件不受影响
+        assert provider.long_term is not None
+        assert provider.searcher is not None
+
+    def test_provider_survives_long_term_init_failure(self, tmp_path):
+        """LongTermMemory 初始化失败时，provider 仍可创建，long_term 为 None。"""
+        from unittest.mock import patch
+
+        from memory.provider import BrixMemoryProvider
+
+        with patch(
+            "memory.provider.LongTermMemory",
+            side_effect=OSError("Disk full"),
+        ):
+            provider = BrixMemoryProvider(data_dir=tmp_path)
+
+        assert provider is not None
+        assert provider.long_term is None
+        # short_term 正常
+        assert provider.short_term is not None
+        # searcher 也正常创建（内部持有 None 的 long_term）
+        assert provider.searcher is not None
+
+    def test_provider_survives_searcher_init_failure(self, tmp_path):
+        """KeywordMemorySearcher 初始化失败时，provider 仍可创建，searcher 为 None。"""
+        from unittest.mock import patch
+
+        from memory.provider import BrixMemoryProvider
+
+        with patch(
+            "memory.provider.KeywordMemorySearcher",
+            side_effect=OSError("I/O error"),
+        ):
+            provider = BrixMemoryProvider(data_dir=tmp_path)
+
+        assert provider is not None
+        assert provider.searcher is None
+        # short_term 和 long_term 正常
+        assert provider.short_term is not None
+        assert provider.long_term is not None
+
+    def test_provider_survives_all_memory_components_failure(self, tmp_path):
+        """所有记忆组件均初始化失败时，provider 仍可创建。"""
+        from unittest.mock import patch
+
+        from memory.provider import BrixMemoryProvider
+
+        with patch(
+            "memory.provider.ShortTermMemory",
+            side_effect=OSError("err1"),
+        ), patch(
+            "memory.provider.LongTermMemory",
+            side_effect=OSError("err2"),
+        ), patch(
+            "memory.provider.KeywordMemorySearcher",
+            side_effect=OSError("err3"),
+        ):
+            provider = BrixMemoryProvider(data_dir=tmp_path)
+
+        assert provider is not None
+        assert provider.short_term is None
+        assert provider.long_term is None
+        assert provider.searcher is None
+
+    def test_provider_core_functions_work_with_degraded_memory(self, tmp_path):
+        """记忆组件降级后，provider 核心功能（session、soul 等）不受影响。"""
+        from unittest.mock import patch
+
+        from memory.provider import BrixMemoryProvider
+
+        with patch(
+            "memory.provider.ShortTermMemory",
+            side_effect=OSError("Permission denied"),
+        ), patch(
+            "memory.provider.LongTermMemory",
+            side_effect=OSError("Permission denied"),
+        ), patch(
+            "memory.provider.KeywordMemorySearcher",
+            side_effect=OSError("Permission denied"),
+        ):
+            provider = BrixMemoryProvider(data_dir=tmp_path)
+
+        # session 操作正常
+        sid = provider.create_session()
+        assert sid is not None
+        provider.add_message("user", "hello")
+        provider.save_session()
+        messages = provider.load_session(sid)
+        assert len(messages) == 1
+        assert messages[0]["content"] == "hello"
+
+        # get_context_messages 正常（不依赖记忆组件）
+        ctx = provider.get_context_messages("system prompt")
+        assert len(ctx) >= 1
