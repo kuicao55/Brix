@@ -40,11 +40,11 @@ def test_path_traversal_rejected():
     from memory.long_term import LongTermMemory
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
-        with pytest.raises(ValueError, match="路径遍历"):
+        with pytest.raises(ValueError):
             ltm.write_topic("../../etc/passwd", "hack", {"name": "evil"})
-        with pytest.raises(ValueError, match="路径遍历"):
+        with pytest.raises(ValueError):
             ltm.read_topic("../escape.md")
-        with pytest.raises(ValueError, match="路径遍历"):
+        with pytest.raises(ValueError):
             ltm.remove_topic("../../tmp/evil.md")
 
 
@@ -64,3 +64,14 @@ def test_list_topics_empty_when_no_index():
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
         assert ltm.list_topics() == []
+
+
+def test_reserved_filename_rejected():
+    """MEMORY.md 作为 topic_file 应拒绝。"""
+    from memory.long_term import LongTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        with pytest.raises(ValueError, match="保留文件"):
+            ltm.write_topic("MEMORY.md", "hack", {"name": "evil"})
+        with pytest.raises(ValueError, match="保留文件"):
+            ltm.remove_topic("MEMORY.md")

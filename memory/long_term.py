@@ -22,10 +22,15 @@ class LongTermMemory:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "MEMORY.md"
 
+    # 保留文件名，不允许作为 topic 写入
+    _RESERVED_FILES = {"MEMORY.md"}
+
     def _topic_path(self, topic_file: str) -> Path:
-        """返回 topic 文件路径，校验 topic_file 防止路径遍历。"""
+        """返回 topic 文件路径，校验 topic_file 防止路径遍历和保留文件覆盖。"""
         if not _SAFE_TOPIC_RE.match(topic_file):
-            raise ValueError(f"路径遍历: {topic_file!r}")
+            raise ValueError(f"非法 topic_file: {topic_file!r}")
+        if topic_file in self._RESERVED_FILES:
+            raise ValueError(f"保留文件不允许操作: {topic_file!r}")
         path = (self._dir / topic_file).resolve()
         if not path.is_relative_to(self._dir):
             raise ValueError(f"路径遍历: {topic_file!r}")
@@ -83,7 +88,21 @@ class LongTermMemory:
                 entries.append(f"- [{name}]({p.name}) — {desc}")
             except OSError:
                 continue
-        self._index_path.write_text("\n".join(entries) + "\n", encoding="utf-8")
+        # 原子写入索引
+        content = "\n".join(entries) + "\n"
+        fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._index_path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def remove_topic(self, topic_file: str) -> None:
         """删除主题文件并更新索引。"""
