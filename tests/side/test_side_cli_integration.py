@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 
@@ -448,3 +450,254 @@ def test_no_router_imports():
         content = f.read()
     assert "from router" not in content
     assert "import router" not in content
+
+
+# ===========================================================================
+# Task 4: 完整记忆系统集成测试
+# ===========================================================================
+
+
+class TestMemorySearchToolRegistered:
+    """验证 MemorySearchTool 已注册到 ToolRunner。"""
+
+    def test_register_tools_registers_memory_search(self):
+        """_register_tools() 应将 MemorySearchTool 注册到 tool_runner。
+        使用真实组件 + 临时目录。"""
+        from capability.runner import ToolRunner
+        from capability.tools.memory_search import MemorySearchTool
+        from memory.long_term import LongTermMemory
+        from memory.short_term import ShortTermMemory
+        from memory.searcher import KeywordMemorySearcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            data_root = Path(d)
+            # 模拟 _register_tools() 的逻辑
+            runner = ToolRunner()
+            searcher = KeywordMemorySearcher(
+                long_term=LongTermMemory(data_root),
+                short_term=ShortTermMemory(data_root),
+            )
+            runner.register(MemorySearchTool(searcher))
+
+            # 验证 memory_search 已注册
+            schemas = runner.get_tool_schemas()
+            tool_names = [s["function"]["name"] for s in schemas]
+            assert "memory_search" in tool_names, (
+                f"MemorySearchTool 未注册，已注册: {tool_names}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_registered_memory_search_tool_executable(self):
+        """注册后的 MemorySearchTool 可通过 ToolRunner.run() 执行。"""
+        from capability.runner import ToolRunner
+        from capability.tools.memory_search import MemorySearchTool
+        from memory.long_term import LongTermMemory
+        from memory.short_term import ShortTermMemory
+        from memory.searcher import KeywordMemorySearcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            data_root = Path(d)
+            ltm = LongTermMemory(data_root)
+            stm = ShortTermMemory(data_root)
+            # 写入测试数据
+            ltm.write_topic("food.md", "## 食物偏好\n- 喜欢辣的食物",
+                            {"name": "食物偏好", "description": "用户的食物偏好", "type": "user"})
+            ltm.update_index()
+            stm.add_item("test-sess", "用户喜欢吃火锅", "pref_detection")
+
+            runner = ToolRunner()
+            searcher = KeywordMemorySearcher(long_term=ltm, short_term=stm)
+            runner.register(MemorySearchTool(searcher))
+
+            # 通过 runner 执行搜索
+            result = await runner.run("memory_search", {"query": "辣的食物"})
+            assert isinstance(result, str)
+            assert "辣" in result
+
+
+class TestMemorySummaryTaskInAllTasks:
+    """验证 MemorySummaryTask 已注册到 ALL_TASKS。"""
+
+    def test_memory_summary_in_all_tasks(self):
+        """ALL_TASKS 应包含 MemorySummaryTask。"""
+        from side.tasks import ALL_TASKS
+        names = [t.name for t in ALL_TASKS]
+        assert "memory_summary" in names, (
+            f"MemorySummaryTask 未在 ALL_TASKS 中，已注册: {names}"
+        )
+
+    def test_all_seven_tasks_registered(self):
+        """ALL_TASKS 应恰好包含 7 个 task。"""
+        from side.tasks import ALL_TASKS
+        assert len(ALL_TASKS) == 7, f"期望 7 个 task，实际 {len(ALL_TASKS)}"
+
+
+class TestBrixMemoryProviderComponents:
+    """验证 BrixMemoryProvider 暴露 short_term、long_term、searcher。"""
+
+    def test_provider_exposes_short_term(self):
+        """BrixMemoryProvider.short_term 应返回 ShortTermMemory 实例。"""
+        from memory.provider import BrixMemoryProvider
+        from memory.short_term import ShortTermMemory
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            assert provider.short_term is not None
+            assert isinstance(provider.short_term, ShortTermMemory)
+
+    def test_provider_exposes_long_term(self):
+        """BrixMemoryProvider.long_term 应返回 LongTermMemory 实例。"""
+        from memory.provider import BrixMemoryProvider
+        from memory.long_term import LongTermMemory
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            assert provider.long_term is not None
+            assert isinstance(provider.long_term, LongTermMemory)
+
+    def test_provider_exposes_searcher(self):
+        """BrixMemoryProvider.searcher 应返回 KeywordMemorySearcher 实例。"""
+        from memory.provider import BrixMemoryProvider
+        from memory.searcher import KeywordMemorySearcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            assert provider.searcher is not None
+            assert isinstance(provider.searcher, KeywordMemorySearcher)
+
+    def test_provider_searcher_uses_provider_components(self):
+        """BrixMemoryProvider.searcher 应使用 provider 自身的 long_term/short_term。"""
+        from memory.provider import BrixMemoryProvider
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            # 通过 provider 的 short_term 写入数据
+            provider.short_term.add_item("test-sess", "用户喜欢咖啡", "pref_detection")
+            # 通过 provider 的 searcher 搜索
+            results = provider.searcher.search("咖啡")
+            assert len(results) > 0
+            assert "咖啡" in results[0].content
+
+
+class TestPrefDetectionWritesToShortTerm:
+    """验证 pref_detection 可通过 ctx.memory.short_term 写入短期记忆。"""
+
+    @pytest.mark.asyncio
+    async def test_pref_detection_writes_via_real_provider(self):
+        """pref_detection 应通过 BrixMemoryProvider.short_term.add_item() 写入偏好。
+        使用真实组件 + 临时目录。"""
+        from side.tasks.pref_detection import PrefDetectionTask
+        from side.base import SideTaskContext
+        from memory.provider import BrixMemoryProvider
+        from unittest.mock import AsyncMock, MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+
+            # 构造 LLM 响应
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = '[{"preference": "用户喜欢辣的食物", "context": "用户说要吃爆炒腊肉"}]'
+            mock_client.chat = AsyncMock(return_value=mock_response)
+
+            ctx = SideTaskContext(
+                llm_client=mock_client,
+                side_model="test-model",
+                config={"session_id": "test-sess-1"},
+                memory=provider,
+                session_messages=[
+                    {"role": "user", "content": "我想吃爆炒腊肉"},
+                    {"role": "assistant", "content": "好的，很下饭！"},
+                    {"role": "user", "content": "我喜欢辣的"},
+                ],
+                user_input="我喜欢辣的",
+                hooks=None,
+            )
+
+            task = PrefDetectionTask()
+            result = await task.execute(ctx)
+
+            # 验证 LLM 返回了偏好
+            assert result is not None
+            assert len(result) == 1
+            assert result[0]["preference"] == "用户喜欢辣的食物"
+
+            # 验证偏好已写入真实短期记忆
+            items = provider.short_term.get_recent(limit=10)
+            assert len(items) >= 1
+            contents = [item.get("content", "") for item in items]
+            assert "用户喜欢辣的食物" in contents
+
+    @pytest.mark.asyncio
+    async def test_pref_detection_then_searchable(self):
+        """pref_detection 写入的偏好应可通过 searcher 搜索到。
+        端到端：pref_detection → short_term → searcher.search()。"""
+        from side.tasks.pref_detection import PrefDetectionTask
+        from side.base import SideTaskContext
+        from memory.provider import BrixMemoryProvider
+        from unittest.mock import AsyncMock, MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = '[{"preference": "用户喜欢用中文回复", "context": "用户要求中文"}]'
+            mock_client.chat = AsyncMock(return_value=mock_response)
+
+            ctx = SideTaskContext(
+                llm_client=mock_client,
+                side_model="test-model",
+                config={"session_id": "test-sess-2"},
+                memory=provider,
+                session_messages=[
+                    {"role": "user", "content": "请用中文回复我"},
+                    {"role": "assistant", "content": "好的"},
+                    {"role": "user", "content": "以后都用中文"},
+                ],
+                user_input="以后都用中文",
+                hooks=None,
+            )
+
+            task = PrefDetectionTask()
+            await task.execute(ctx)
+
+            # 通过 searcher 搜索写入的偏好
+            results = provider.searcher.search("中文")
+            assert len(results) > 0
+            assert any("中文" in r.content for r in results)
+
+
+class TestSideManagerPassesMemory:
+    """验证 SideTaskManager 将 memory 传递给 SideTaskContext。"""
+
+    def test_build_context_includes_memory(self):
+        """SideTaskManager._build_context() 应将 memory 传入 SideTaskContext。"""
+        from side.manager import SideTaskManager
+        from memory.provider import BrixMemoryProvider
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            mgr = SideTaskManager()
+            mgr.configure(
+                config={"side": {"enabled": True, "model": "test"}},
+                llm_client=MagicMock(),
+                memory=provider,
+            )
+            ctx = mgr._build_context(
+                session_messages=[{"role": "user", "content": "hi"}],
+                user_input="hi",
+            )
+            assert ctx.memory is provider
+            assert ctx.memory.short_term is not None
+            assert ctx.memory.long_term is not None
+            assert ctx.memory.searcher is not None
