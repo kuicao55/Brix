@@ -229,8 +229,6 @@ side:
         - "previously"
         - "last time"
         - "remember"
-    voice_cleanup:
-      enabled: true
     context_compress:
       enabled: true
       message_threshold: 50
@@ -285,3 +283,9 @@ voice:
 
   # 连续对话
   continuous_idle_timeout: 10  # 秒
+
+  # LLM 文本清理（原 VoiceCleanupTask 逻辑迁移为可插拔 LLMCleanupProcessor）
+  cleanup_enabled: false
+  cleanup_model: ""
+  cleanup_timeout: 0.8
+  cleanup_min_length: 10

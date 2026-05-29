@@ -31,7 +31,6 @@ def test_config_side_tasks_structure():
         "tool_summary",
         "pref_detection",
         "history_search",
-        "voice_cleanup",
         "context_compress",
         "session_summary",
     ]

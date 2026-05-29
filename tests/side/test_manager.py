@@ -474,8 +474,8 @@ class TestSideEnabledNonBoolWarning:
 
 
 def test_import_all_tasks():
-    """side.tasks.ALL_TASKS 应可导入，包含所有 7 个 task。"""
+    """side.tasks.ALL_TASKS 应可导入，包含所有 6 个 task。"""
     from side.tasks import ALL_TASKS
 
     assert isinstance(ALL_TASKS, list)
-    assert len(ALL_TASKS) == 7
+    assert len(ALL_TASKS) == 6

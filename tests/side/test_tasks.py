@@ -1395,72 +1395,6 @@ async def test_history_search_indices_non_int_filtered():
     assert result[1]["title"] == "数据库优化"
 
 
-# --- VoiceCleanupTask ---
-
-@pytest.mark.asyncio
-async def test_voice_cleanup_basic():
-    """VoiceCleanupTask 清理语音文本。"""
-    from side.tasks.voice_cleanup import VoiceCleanupTask
-    task = VoiceCleanupTask()
-    ctx = _make_ctx(
-        llm_response="你好，请帮我看看这个问题",
-        config={"_side_task_args": {"raw_text": "嗯 你好啊 那个 请帮我看看这个问题"}},
-    )
-    result = await task.execute(ctx)
-    assert result == "你好，请帮我看看这个问题"
-
-@pytest.mark.asyncio
-async def test_voice_cleanup_empty():
-    """VoiceCleanupTask 空文本时返回原文。"""
-    from side.tasks.voice_cleanup import VoiceCleanupTask
-    task = VoiceCleanupTask()
-    ctx = _make_ctx(config={"_side_task_args": {"raw_text": ""}})
-    result = await task.execute(ctx)
-    assert result == ""
-
-@pytest.mark.asyncio
-async def test_voice_cleanup_short():
-    """VoiceCleanupTask 文本太短时返回原文。"""
-    from side.tasks.voice_cleanup import VoiceCleanupTask
-    task = VoiceCleanupTask()
-    ctx = _make_ctx(config={"_side_task_args": {"raw_text": "hi"}})
-    result = await task.execute(ctx)
-    assert result == "hi"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("llm_response", ["", None])
-async def test_voice_cleanup_llm_empty_fallback(llm_response):
-    """VoiceCleanupTask LLM 返回空/None 时回退到 raw_text。"""
-    from side.tasks.voice_cleanup import VoiceCleanupTask
-    task = VoiceCleanupTask()
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    mock_response.content = llm_response
-    mock_client.chat = AsyncMock(return_value=mock_response)
-    ctx = SideTaskContext(
-        llm_client=mock_client,
-        side_model="test-model",
-        config={"_side_task_args": {"raw_text": "嗯 你好啊 请帮我看看"}},
-        memory=None,
-        session_messages=[],
-        user_input="",
-        hooks=None,
-    )
-    result = await task.execute(ctx)
-    assert result == "嗯 你好啊 请帮我看看"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("bad_value", [123, 45.6, [], {}, None, True])
-async def test_voice_cleanup_non_string_returns_none(bad_value):
-    """CQR-3 MEDIUM: raw_text 非字符串时应返回 None。"""
-    from side.tasks.voice_cleanup import VoiceCleanupTask
-    task = VoiceCleanupTask()
-    ctx = _make_ctx(config={"_side_task_args": {"raw_text": bad_value}})
-    result = await task.execute(ctx)
-    assert result is None
-
 # --- ContextCompressTask ---
 
 @pytest.mark.asyncio
@@ -1592,12 +1526,19 @@ async def test_session_summary_threshold_not_met():
 # --- ALL_TASKS 注册 ---
 
 def test_all_tasks_registered():
-    """ALL_TASKS 包含所有 7 个 task。"""
+    """ALL_TASKS 包含所有 6 个 task。"""
     from side.tasks import ALL_TASKS
     task_names = {t.name for t in ALL_TASKS}
     expected = {
         "session_title", "tool_summary", "pref_detection",
-        "history_search", "voice_cleanup", "context_compress",
+        "history_search", "context_compress",
         "session_summary",
     }
     assert task_names == expected
+
+
+def test_voice_cleanup_not_in_all_tasks():
+    """VoiceCleanupTask 应已从 ALL_TASKS 中移除。"""
+    from side.tasks import ALL_TASKS
+    names = [t.name for t in ALL_TASKS]
+    assert "voice_cleanup" not in names
