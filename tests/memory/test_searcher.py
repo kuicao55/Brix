@@ -103,6 +103,81 @@ def test_malformed_short_term_item_skipped():
     assert "关键词" in results[0].content
 
 
+def test_single_char_japanese_keyword_preserved():
+    """单字假名（如平假名「あ」）不应被过滤。"""
+    from memory.searcher import KeywordMemorySearcher
+
+    # 直接测试 _extract_keywords 保留平假名单字
+    keywords = KeywordMemorySearcher._extract_keywords("あ")
+    assert "あ" in keywords, f"平假名「あ」应被保留，实际: {keywords}"
+
+    # 测试片假名
+    keywords = KeywordMemorySearcher._extract_keywords("イ")
+    assert "イ" in keywords, f"片假名「イ」应被保留，实际: {keywords}"
+
+    # 测试韩文
+    keywords = KeywordMemorySearcher._extract_keywords("한")
+    assert "한" in keywords, f"韩文「한」应被保留，实际: {keywords}"
+
+
+def test_list_topics_returns_none():
+    """list_topics() 返回 None 时不应崩溃。"""
+    from memory.searcher import KeywordMemorySearcher
+
+    class FakeLongTerm:
+        def list_topics(self):
+            return None
+
+        def read_topic(self, filename):
+            return "some content"
+
+    searcher = KeywordMemorySearcher(FakeLongTerm(), short_term=None)
+    results = searcher.search("关键词")
+    assert results == []
+
+
+def test_get_recent_returns_none():
+    """get_recent() 返回 None 时不应崩溃。"""
+    from memory.searcher import KeywordMemorySearcher
+
+    class FakeShortTerm:
+        def get_recent(self, limit=100):
+            return None
+
+    searcher = KeywordMemorySearcher(long_term=None, short_term=FakeShortTerm())
+    results = searcher.search("关键词")
+    assert results == []
+
+
+def test_list_topics_raises_exception():
+    """list_topics() 抛出异常时不应崩溃。"""
+    from memory.searcher import KeywordMemorySearcher
+
+    class FakeLongTerm:
+        def list_topics(self):
+            raise RuntimeError("连接失败")
+
+        def read_topic(self, filename):
+            return "some content"
+
+    searcher = KeywordMemorySearcher(FakeLongTerm(), short_term=None)
+    results = searcher.search("关键词")
+    assert results == []
+
+
+def test_get_recent_raises_exception():
+    """get_recent() 抛出异常时不应崩溃。"""
+    from memory.searcher import KeywordMemorySearcher
+
+    class FakeShortTerm:
+        def get_recent(self, limit=100):
+            raise RuntimeError("连接失败")
+
+    searcher = KeywordMemorySearcher(long_term=None, short_term=FakeShortTerm())
+    results = searcher.search("关键词")
+    assert results == []
+
+
 def test_repeated_keywords_not_inflated():
     """重复关键词不应导致分数膨胀。"""
     from memory.searcher import KeywordMemorySearcher

@@ -42,7 +42,12 @@ class KeywordMemorySearcher:
 
         # 搜索长期记忆
         if self._long_term:
-            for topic in self._long_term.list_topics():
+            try:
+                topics = self._long_term.list_topics() or []
+            except Exception:
+                logger.warning("list_topics() 调用失败", exc_info=True)
+                topics = []
+            for topic in topics:
                 try:
                     if not isinstance(topic, dict) or "file" not in topic:
                         logger.warning("跳过格式异常的长期记忆条目: %r", topic)
@@ -64,7 +69,12 @@ class KeywordMemorySearcher:
 
         # 搜索短期记忆
         if self._short_term:
-            for item in self._short_term.get_recent(limit=100):
+            try:
+                items = self._short_term.get_recent(limit=100) or []
+            except Exception:
+                logger.warning("get_recent() 调用失败", exc_info=True)
+                items = []
+            for item in items:
                 try:
                     if not isinstance(item, dict):
                         logger.warning("跳过格式异常的短期记忆条目: %r", item)
@@ -96,8 +106,9 @@ class KeywordMemorySearcher:
         for w in words:
             if w in seen:
                 continue
-            is_cjk = bool(re.match(r"[\u4e00-\u9fff]", w))
-            if len(w) >= 2 or is_cjk:
+            # 单字保留：Unicode 字母（CJK、假名、韩文等）均保留；ASCII 数字/下划线不保留
+            is_single_letter = len(w) == 1 and w.isalpha()
+            if len(w) >= 2 or is_single_letter:
                 seen.add(w)
                 result.append(w)
         return result
