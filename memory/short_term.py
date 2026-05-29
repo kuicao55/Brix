@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ class ShortTermMemory:
     def __init__(self, data_dir: Path) -> None:
         self._dir = (data_dir / "short-term").resolve()
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
     def _session_path(self, session_id: str) -> Path:
         """返回 session 文件路径，校验 session_id 防止路径遍历。"""
@@ -46,13 +48,23 @@ class ShortTermMemory:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            logger.warning("session 文件损坏，返回空: %s", path)
+            self._quarantine_file(path)
             return self._empty_session(session_id)
         # 校验基本结构
         if not isinstance(data, dict) or "items" not in data:
-            logger.warning("session 文件结构异常，返回空: %s", path)
+            self._quarantine_file(path)
             return self._empty_session(session_id)
         return data
+
+    @staticmethod
+    def _quarantine_file(path: Path) -> None:
+        """将损坏的文件重命名为 .corrupt，保留原始内容供排查。"""
+        quarantine_path = path.with_suffix(path.suffix + ".corrupt")
+        try:
+            os.replace(path, quarantine_path)
+            logger.warning("session 文件损坏，已隔离为: %s", quarantine_path)
+        except OSError:
+            logger.warning("session 文件损坏且隔离失败: %s", path)
 
     def _save_session(self, data: dict) -> None:
         """原子写入：先写临时文件，再 rename，防止中断导致数据损坏。"""
@@ -74,19 +86,20 @@ class ShortTermMemory:
             raise
 
     def add_item(self, session_id: str, content: str, source: str, context: str = "") -> None:
-        data = self._load_session(session_id)
-        now = datetime.now(timezone.utc).isoformat()
-        if not data["created"]:
-            data["created"] = now
-        data["updated"] = now
-        data["items"].append({
-            "id": str(uuid.uuid4()),
-            "content": content,
-            "source": source,
-            "created": now,
-            "context": context,
-        })
-        self._save_session(data)
+        with self._lock:
+            data = self._load_session(session_id)
+            now = datetime.now(timezone.utc).isoformat()
+            if not data["created"]:
+                data["created"] = now
+            data["updated"] = now
+            data["items"].append({
+                "id": str(uuid.uuid4()),
+                "content": content,
+                "source": source,
+                "created": now,
+                "context": context,
+            })
+            self._save_session(data)
 
     def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
         all_items = []

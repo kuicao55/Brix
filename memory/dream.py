@@ -110,11 +110,22 @@ class DreamManager:
 
         # 3. 写入（跟踪成功/失败）
         all_writes_ok = True
-        for item in classification.get("core", []):
+        core_items = classification.get("core", [])
+        topics = classification.get("topics", {})
+
+        # Issue 2: 降级处理 — sink 不可用但有需写入内容时视为失败
+        if core_items and not self._user_manager:
+            logger.warning("user_manager 不可用但有 core items，视为写入失败")
+            all_writes_ok = False
+        if topics and not self._long_term:
+            logger.warning("long_term 不可用但有 topics，视为写入失败")
+            all_writes_ok = False
+
+        for item in core_items:
             if self._user_manager:
                 self._append_to_user_md(item)
 
-        for topic, contents in classification.get("topics", {}).items():
+        for topic, contents in topics.items():
             if self._long_term:
                 if not self._write_to_long_term(topic, contents):
                     all_writes_ok = False
@@ -124,9 +135,10 @@ class DreamManager:
             logger.warning("部分写入失败，跳过清理短期记忆和状态推进")
             return
 
-        self._short_term.cleanup_sessions(
-            list({i.get("session_id", "") for i in items if i.get("session_id")})
-        )
+        # Issue 1: 用 item 级删除替代 session 级清理，避免误删未处理的 items
+        processed_ids = [i.get("id", "") for i in items if i.get("id")]
+        if processed_ids:
+            self._short_term.remove_items(processed_ids)
         self._update_state_after_dream()
 
     async def _classify_items(self, llm_client: Any, model: str, items: list[dict]) -> dict:

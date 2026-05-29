@@ -338,3 +338,230 @@ def test_slug_collision_merges_contents():
     contents = validated["topics"]["untitled"]
     assert "记忆A" in contents, f"'记忆A' 应在合并结果中，实际: {contents}"
     assert "记忆B" in contents, f"'记忆B' 应在合并结果中，实际: {contents}"
+
+
+# --- Issue 1: session 级清理删除未处理的记忆 ---
+
+def test_dream_cleanup_only_removes_processed_items():
+    """Issue 1: Dream run 应只清理被处理的 items，不应删除整个 session 文件。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        # 在同一个 session 中添加多个 items
+        # get_recent(limit=200) 会返回这些
+        for i in range(5):
+            stm.add_item("sess-many", f"item-{i}", "pref_detection")
+
+        # mock LLM 分类
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": [],
+            "topics": {"general": ["item-0", "item-1"]},
+            "discard": ["item-2", "item-3", "item-4"],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 关键断言：所有被采样到的 items 应被清理（通过 remove_items 而非 cleanup_sessions）
+        remaining = stm.get_by_session("sess-many")
+        assert len(remaining) == 0, \
+            f"所有被采样的 items 应被清理，实际剩余 {len(remaining)} 个"
+        # session 文件本身不应被删除（cleanup_sessions 已移除）
+        session_file = Path(d) / "short-term" / "sess-many.json"
+        assert session_file.exists(), "session 文件不应被整个删除，应通过 item 级删除"
+
+
+def test_dream_cleanup_preserves_unprocessed_items_in_session():
+    """Issue 1: 当 session 有部分 items 未被采样到时，Dream 不应销毁它们。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        # 在同一个 session 中添加多个 items
+        for i in range(10):
+            stm.add_item("sess-big", f"item-{i}", "pref_detection")
+
+        # 保存所有 item IDs
+        all_items = stm.get_by_session("sess-big")
+        all_ids = {item["id"] for item in all_items}
+
+        # mock get_recent 只返回前 5 个（模拟 limit 截断）
+        original_get_recent = stm.get_recent
+        sampled_ids = set()
+
+        def mock_get_recent(limit=50):
+            items = original_get_recent(limit=5)
+            for item in items:
+                item["session_id"] = "sess-big"
+            return items
+
+        stm.get_recent = mock_get_recent
+
+        # mock LLM
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": [],
+            "topics": {},
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 验证：session 中未被采样的 items 不应被销毁
+        remaining = stm.get_by_session("sess-big")
+        # 应该至少有 5 个 items 未被采样到，不应被删除
+        assert len(remaining) >= 5, \
+            f"未被采样的 items 不应被销毁，应至少剩 5 个，实际剩 {len(remaining)} 个"
+
+
+# --- Issue 2: 降级模式下 sink 不可用仍清理 ---
+
+def test_degraded_long_term_none_prevents_cleanup():
+    """Issue 2: 当 _long_term 为 None 但有 topics 时，不应清理短期记忆。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        # _long_term = None
+        dm = DreamManager(Path(d), stm, long_term=None, user_manager=um)
+
+        stm.add_item("sess-1", "有价值的知识", "pref_detection")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": [],
+            "topics": {"knowledge": ["有价值的知识"]},
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # _long_term 为 None 但 topics 非空 => 应视为写入失败
+        assert len(stm.get_by_session("sess-1")) > 0, \
+            "long_term 不可用时有 topics 应视为写入失败，不应清理短期记忆"
+        assert dm._state["sessions_since_dream"] == 5, \
+            "写入失败时不应推进 dream 状态"
+        assert dm._state["total_dreams"] == 0, \
+            "写入失败时不应递增 total_dreams"
+
+
+def test_degraded_user_manager_none_prevents_cleanup():
+    """Issue 2: 当 _user_manager 为 None 但有 core items 时，不应清理短期记忆。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        # _user_manager = None
+        dm = DreamManager(Path(d), stm, long_term=ltm, user_manager=None)
+
+        stm.add_item("sess-1", "核心记忆", "pref_detection")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": ["核心记忆"],
+            "topics": {},
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # _user_manager 为 None 但 core 非空 => 应视为写入失败
+        assert len(stm.get_by_session("sess-1")) > 0, \
+            "user_manager 不可用时有 core items 应视为写入失败，不应清理短期记忆"
+        assert dm._state["sessions_since_dream"] == 5, \
+            "写入失败时不应推进 dream 状态"
+
+
+def test_degraded_both_sinks_none_prevents_cleanup():
+    """Issue 2: 当 long_term 和 user_manager 都为 None 时，不应清理。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        # 两个 sink 都为 None
+        dm = DreamManager(Path(d), stm, long_term=None, user_manager=None)
+
+        stm.add_item("sess-1", "一些内容", "pref_detection")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": ["核心"],
+            "topics": {"topic1": ["知识"]},
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        assert len(stm.get_by_session("sess-1")) > 0, \
+            "所有 sink 不可用时不应清理短期记忆"
+
+
+def test_all_discard_with_no_sinks_still_cleans():
+    """Issue 2: 当所有 items 都是 discard 且没有 core/topics 时，即使 sink 为 None 也可以安全清理。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        dm = DreamManager(Path(d), stm, long_term=None, user_manager=None)
+
+        stm.add_item("sess-1", "垃圾信息", "pref_detection")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "core": [],
+            "topics": {},
+            "discard": ["垃圾信息"],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 全部 discard，不需要写入任何 sink，可以安全清理
+        assert dm._state["total_dreams"] == 1, \
+            "全部 discard 时应正常完成 dream"
