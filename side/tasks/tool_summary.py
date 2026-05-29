@@ -216,8 +216,12 @@ class ToolSummaryTask(SideTask):
                 model=ctx.side_model,
             )
             result = _sanitize_summary(response.content)
+            # hook 发射与主返回值解耦：异常不影响返回值
             if result is not None and ctx.hooks is not None:
-                ctx.hooks.fire("tool_summary", text=result)
+                try:
+                    ctx.hooks.fire("tool_summary", text=result)
+                except Exception:
+                    logger.debug("tool_summary hook 发射失败", exc_info=True)
             return result
         except Exception:
             logger.warning("ToolSummaryTask 执行失败", exc_info=True)
