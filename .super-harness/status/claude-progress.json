@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-29T02:30:00Z",
+  "updated_at": "2026-05-29T04:00:00Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feature/voice-module",
@@ -214,11 +214,11 @@
       "title": "搜索工具 + 记忆注入",
       "description": "搜索工具 + 记忆注入",
       "depends_on": [],
-      "passed": false,
+      "passed": true,
       "spec_file": ".super-harness/specs/2026-05-29-memory-system-refactor.md",
       "plan_file": ".super-harness/plans/2026-05-29-milestone-19.md",
       "session_date": "2026-05-29T00:32:25Z",
-      "notes": null
+      "notes": "Completed 2026-05-29. 4 tasks: KeywordMemorySearcher (12 tests, 3 CQR rounds), MemorySearchTool (13 tests, 1 CQR round), MemorySummaryTask+Provider集成 (61 tests, 1 CQR round), 完整集成 (11 tests). 779 tests pass, 4 pre-existing failures."
     },
     {
       "id": "milestone-20",
