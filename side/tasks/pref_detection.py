@@ -83,11 +83,12 @@ class PrefDetectionTask(SideTask):
         recent = ctx.session_messages[-10:]
         if len(recent) < 3:
             return None
+        # 只保留 user/assistant 消息，过滤 system 等角色
         conversation = "\n".join(
             f"{'用户' if m.get('role') == 'user' else '助手'}: "
             f"{m.get('content', '')[:200]}"
             for m in recent
-            if isinstance(m.get("content"), str)
+            if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
         )
         try:
             response = await ctx.llm_client.chat(
@@ -101,7 +102,26 @@ class PrefDetectionTask(SideTask):
             preferences = _extract_json_array(content)
             if preferences is None:
                 preferences = []
+            # 将检测到的偏好写入短期记忆
+            self._write_to_short_term_memory(ctx, preferences)
             return preferences
         except Exception:
             logger.warning("PrefDetectionTask 执行失败", exc_info=True)
             return None
+
+    @staticmethod
+    def _write_to_short_term_memory(ctx: SideTaskContext, preferences: list[dict]) -> None:
+        """将偏好写入短期记忆（容错：memory 属性不存在时不报错）。"""
+        if not preferences:
+            return
+        try:
+            if not (hasattr(ctx, "memory") and ctx.memory is not None):
+                return
+            if not (hasattr(ctx.memory, "short_term") and ctx.memory.short_term is not None):
+                return
+            for pref in preferences:
+                text = pref.get("preference", "")
+                if text:
+                    ctx.memory.short_term.add_item(text)
+        except Exception:
+            logger.warning("PrefDetectionTask 写入短期记忆失败", exc_info=True)
