@@ -43,36 +43,64 @@ class KeywordMemorySearcher:
         # 搜索长期记忆
         if self._long_term:
             for topic in self._long_term.list_topics():
-                content = self._long_term.read_topic(topic["file"])
-                score = self._score(content, keywords)
-                if score > 0:
-                    results.append(MemoryResult(
-                        source="long_term",
-                        content=self._extract_snippet(content, keywords),
-                        relevance=score,
-                        topic=topic["file"],
-                    ))
+                try:
+                    if not isinstance(topic, dict) or "file" not in topic:
+                        logger.warning("跳过格式异常的长期记忆条目: %r", topic)
+                        continue
+                    content = self._long_term.read_topic(topic["file"])
+                    if not isinstance(content, str):
+                        logger.warning("长期记忆 topic=%s 内容非字符串，跳过", topic["file"])
+                        continue
+                    score = self._score(content, keywords)
+                    if score > 0:
+                        results.append(MemoryResult(
+                            source="long_term",
+                            content=self._extract_snippet(content, keywords),
+                            relevance=score,
+                            topic=topic["file"],
+                        ))
+                except Exception:
+                    logger.warning("读取长期记忆 topic=%r 失败，跳过", topic, exc_info=True)
 
         # 搜索短期记忆
         if self._short_term:
             for item in self._short_term.get_recent(limit=100):
-                content = item.get("content", "")
-                score = self._score(content, keywords)
-                if score > 0:
-                    results.append(MemoryResult(
-                        source="short_term",
-                        content=content,
-                        relevance=score,
-                    ))
+                try:
+                    if not isinstance(item, dict):
+                        logger.warning("跳过格式异常的短期记忆条目: %r", item)
+                        continue
+                    content = item.get("content")
+                    if not isinstance(content, str):
+                        logger.warning("短期记忆 content 非字符串 (%r)，跳过", content)
+                        continue
+                    score = self._score(content, keywords)
+                    if score > 0:
+                        results.append(MemoryResult(
+                            source="short_term",
+                            content=content,
+                            relevance=score,
+                        ))
+                except Exception:
+                    logger.warning("读取短期记忆条目 %r 失败，跳过", item, exc_info=True)
 
         results.sort(key=lambda r: r.relevance, reverse=True)
         return results[:limit]
 
     @staticmethod
     def _extract_keywords(query: str) -> list[str]:
-        """从查询中提取关键词，过滤短词。"""
+        """从查询中提取关键词，过滤短词（CJK 单字保留）。"""
         words = re.findall(r"[\w\u4e00-\u9fff]+", query.lower())
-        return [w for w in words if len(w) >= 2]
+        # CJK 单字有意义，保留；拉丁/数字仍要求 len >= 2
+        seen: set[str] = set()
+        result: list[str] = []
+        for w in words:
+            if w in seen:
+                continue
+            is_cjk = bool(re.match(r"[\u4e00-\u9fff]", w))
+            if len(w) >= 2 or is_cjk:
+                seen.add(w)
+                result.append(w)
+        return result
 
     @staticmethod
     def _score(text: str, keywords: list[str]) -> float:
