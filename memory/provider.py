@@ -9,6 +9,9 @@ from memory.soul import SoulManager
 from memory.user import UserMemoryManager
 from memory.storage import MemoryStorage
 from memory.strategy import MemoryStrategy
+from memory.short_term import ShortTermMemory
+from memory.long_term import LongTermMemory
+from memory.searcher import KeywordMemorySearcher
 
 
 class BrixMemoryProvider:
@@ -31,6 +34,13 @@ class BrixMemoryProvider:
             soul_manager=self._soul,
             user_manager=self._user,
             max_tokens=max_context_tokens,
+        )
+        # 记忆系统组件
+        self._short_term = ShortTermMemory(data_dir)
+        self._long_term = LongTermMemory(data_dir)
+        self._searcher = KeywordMemorySearcher(
+            long_term=self._long_term,
+            short_term=self._short_term,
         )
 
     def _ensure_session(self) -> None:
@@ -55,6 +65,21 @@ class BrixMemoryProvider:
     def user_memory_exists(self) -> bool:
         """user.md 是否存在且非空。"""
         return self._user.exists()
+
+    @property
+    def short_term(self) -> ShortTermMemory:
+        """短期记忆管理器。"""
+        return self._short_term
+
+    @property
+    def long_term(self) -> LongTermMemory:
+        """长期记忆管理器。"""
+        return self._long_term
+
+    @property
+    def searcher(self) -> KeywordMemorySearcher:
+        """记忆搜索器。"""
+        return self._searcher
 
     def _cleanup_empty_session(self) -> None:
         """如果当前 session 从未添加过消息，从索引中移除。"""

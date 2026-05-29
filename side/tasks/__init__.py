@@ -5,6 +5,7 @@ from side.tasks.pref_detection import PrefDetectionTask
 from side.tasks.history_search import HistorySearchTask
 from side.tasks.context_compress import ContextCompressTask
 from side.tasks.session_summary import SessionSummaryTask
+from side.tasks.memory_summary import MemorySummaryTask
 
 ALL_TASKS = [
     SessionTitleTask(),
@@ -13,4 +14,5 @@ ALL_TASKS = [
     HistorySearchTask(),
     ContextCompressTask(),
     SessionSummaryTask(),
+    MemorySummaryTask(),
 ]

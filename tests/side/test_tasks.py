@@ -1598,13 +1598,13 @@ async def test_session_summary_triggers_on_idle():
 # --- ALL_TASKS 注册 ---
 
 def test_all_tasks_registered():
-    """ALL_TASKS 包含所有 6 个 task。"""
+    """ALL_TASKS 包含所有 7 个 task。"""
     from side.tasks import ALL_TASKS
     task_names = {t.name for t in ALL_TASKS}
     expected = {
         "session_title", "tool_summary", "pref_detection",
         "history_search", "context_compress",
-        "session_summary",
+        "session_summary", "memory_summary",
     }
     assert task_names == expected
 
