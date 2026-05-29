@@ -29,6 +29,10 @@ from capability.tools.file_read import FileReadTool
 from capability.tools.file_write import FileWriteTool
 from capability.tools.skill_tool import SkillTool
 from capability.tools.weather import WeatherTool
+from capability.tools.memory_search import MemorySearchTool
+from memory.long_term import LongTermMemory
+from memory.searcher import KeywordMemorySearcher
+from memory.short_term import ShortTermMemory
 from cli.banner import show_banner
 from cli.completer import SlashCommandCompleter
 from cli.display import render_history
@@ -549,6 +553,12 @@ class BrixCLI:
         self._tool_runner.register(FileReadTool())
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))
+        # 记忆搜索工具
+        searcher = KeywordMemorySearcher(
+            long_term=LongTermMemory(data_root),
+            short_term=ShortTermMemory(data_root),
+        )
+        self._tool_runner.register(MemorySearchTool(searcher))
 
     def _init_voice(self) -> None:
         """初始化语音模块（如果配置启用）。"""
