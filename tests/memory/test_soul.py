@@ -299,3 +299,117 @@ def test_save_growth_creates_separator_on_append():
         # 分隔标记之后是成长内容
         idx = full.index("# Soul — 成长部分")
         assert "成长内容" in full[idx:]
+
+
+# ============================================================
+# 6. 行锚定解析 — 防止正文中的标题文本被误匹配
+# ============================================================
+
+def test_load_fixed_header_in_body_not_matched():
+    """固定部分正文中出现 '# Soul — 成长部分' 时不应被误识别为分隔标记。
+
+    这是 CQR Finding 2 的核心回归测试：content.find() 子串匹配会错误地
+    把正文里的标题文本当作真正的 section header。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        # 固定部分正文里提到了成长部分标题（比如引用说明）
+        sm.save(
+            "# Soul — 固定部分\n"
+            "注意：不要修改 # Soul — 成长部分 的格式。\n"
+            "保持专业。\n"
+        )
+        fixed = sm.load_fixed()
+        # 应该返回全部内容（因为没有真正的成长部分 header 行）
+        assert "注意：不要修改" in fixed
+        assert "保持专业" in fixed
+
+
+def test_load_growth_header_in_body_not_matched():
+    """固定部分正文中出现 '# Soul — 成长部分' 时，load_growth 不应误匹配。
+
+    验证 load_growth 使用行锚定解析而非子串搜索。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        # 固定部分正文里嵌入了成长标题文本（但不在独立行上）
+        sm.save(
+            "# Soul — 固定部分\n"
+            "提示：请参考 # Soul — 成长部分 的格式。\n"
+            "保持简洁。\n"
+        )
+        growth = sm.load_growth()
+        # 没有真正的成长部分 header 行，load_growth 应返回空
+        assert growth == "", \
+            f"正文中的标题文本不应被误匹配为 section header: {growth!r}"
+
+
+def test_save_growth_header_in_fixed_body_preserved():
+    """save_growth 替换成长部分时，固定部分正文中的标题文本应被保留。
+
+    验证行锚定解析在写入路径也正确工作。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save(
+            "# Soul — 固定部分\n"
+            "记住 # Soul — 成长部分 的格式很重要。\n"
+            "\n"
+            "# Soul — 成长部分\n"
+            "旧内容\n"
+        )
+        sm.save_growth(
+            "# Soul — 成长部分\n"
+            "新内容\n"
+        )
+        full = sm.load()
+        # 固定部分正文中的引用应被保留
+        assert "记住 # Soul — 成长部分 的格式很重要" in full
+        # 新成长内容应存在
+        assert "新内容" in full
+        # 旧成长内容应被替换
+        assert "旧内容" not in full
+
+
+# ============================================================
+# 7. save_growth — growth_content 缺少 header 时自动补齐
+# ============================================================
+
+def test_save_growth_auto_prepends_header_if_missing():
+    """save_growth 的 growth_content 如果缺少成长标题，应自动补齐。
+
+    这是 CQR Finding 3 的核心测试：防止后续 load_growth() 返回空。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save("# Soul — 固定部分\n我是助手。\n")
+        # 调用时不带成长标题
+        sm.save_growth("## 性格倾向\n简洁直接\n")
+        growth = sm.load_growth()
+        assert "性格倾向" in growth, \
+            f"缺少 header 时应自动补齐，load_growth() 不应返回空: {growth!r}"
+        assert "简洁直接" in growth
+
+
+def test_save_growth_auto_prepends_header_on_update():
+    """save_growth 更新已有成长部分时，如果新内容缺少 header，也应自动补齐。"""
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save(
+            "# Soul — 固定部分\n"
+            "我是助手。\n"
+            "\n"
+            "# Soul — 成长部分\n"
+            "旧成长内容\n"
+        )
+        # 新内容不带成长标题
+        sm.save_growth("## 新经验\n学到新东西\n")
+        growth = sm.load_growth()
+        assert "新经验" in growth
+        assert "学到新东西" in growth
+        assert "旧成长内容" not in growth
