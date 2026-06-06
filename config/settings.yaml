@@ -87,23 +87,6 @@ models:
     cost_tier: "low"
 
   # ============================================================
-  # DeepSeek 官方
-  # ============================================================
-  - id: "deepseek/deepseek-v4-flash"
-    provider: "deepseek"
-    purpose: ["fast_chat", "simple_qa"]
-    capabilities: ["tool_calling", "low_latency", "low_cost"]
-    max_context: 64000
-    cost_tier: "low"
-
-  - id: "deepseek/deepseek-v4-pro"
-    provider: "deepseek"
-    purpose: ["coding", "reasoning", "planning"]
-    capabilities: ["tool_calling", "strong_reasoning"]
-    max_context: 128000
-    cost_tier: "low"
-
-  # ============================================================
   # ZenMux — 编程
   # ============================================================
   - id: "zenmux-openai/moonshotai/kimi-k2.6"
@@ -138,23 +121,20 @@ models:
     cost_tier: "high"
 
   # ============================================================
-  # 阿里云 — Qwen (intent 分类等轻量任务)
-  # ============================================================
-  - id: "ali/qwen3.6-flash"
-    provider: "ali"
-    purpose: ["fast_chat", "simple_qa"]
-    capabilities: ["low_latency", "low_cost"]
-    max_context: 64000
-    cost_tier: "low"
-
-  # ============================================================
-  # ZenMux — Qwen (intent 分类等轻量任务)
+  # ZenMux — intent (intent 分类等轻量任务)
   # ============================================================
   - id: "zenmux-openai/qwen/qwen3.5-flash"
     provider: "zenmux-openai"
     purpose: ["fast_chat", "simple_qa"]
     capabilities: ["low_latency", "low_cost"]
-    max_context: 64000
+    max_context: 1020000
+    cost_tier: "low"
+
+  - id: "zenmux-openai/openai/gpt-5-nano"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["low_latency", "low_cost"]
+    max_context: 128000
     cost_tier: "low"
 
   # ============================================================
@@ -188,6 +168,33 @@ models:
     max_context: 200000
     cost_tier: "high"
 
+  # ============================================================
+  # DeepSeek 官方
+  # ============================================================
+  - id: "deepseek/deepseek-v4-flash"
+    provider: "deepseek"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["tool_calling", "low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
+  - id: "deepseek/deepseek-v4-pro"
+    provider: "deepseek"
+    purpose: ["coding", "reasoning", "planning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
+    cost_tier: "low"
+
+  # ============================================================
+  # 阿里云 — Qwen (intent 分类等轻量任务)
+  # ============================================================
+  - id: "ali/qwen3.6-flash"
+    provider: "ali"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
   # 添加新 model 模板:
   # - id: "provider-name/model-name"
   #   provider: "provider-name"
@@ -199,7 +206,7 @@ models:
 engine: "state_machine"
 
 routing:
-  default_model: "minimax/MiniMax-M2.7"
+  default_model: "zenmux-openai/deepseek/deepseek-v4-flash"
   fallback_model: "minimax/MiniMax-M2.7"
 
 # ============================================================
@@ -207,16 +214,13 @@ routing:
 # ============================================================
 side:
   enabled: true
-  model: "ali/qwen3.6-flash"           # side 任务专用小模型
+  model: "zenmux-openai/qwen/qwen3.5-flash"           # side 任务专用小模型
 
   tasks:
     session_title:
       enabled: true
     tool_summary:
       enabled: true
-    pref_detection:
-      enabled: true
-      interval: 5                       # 每 N 轮用户消息检测一次
     history_search:
       enabled: true
       top_k: 3
@@ -235,6 +239,10 @@ side:
     session_summary:
       enabled: true
       idle_threshold_minutes: 5
+    memory_summary:
+      enabled: true
+    dream:
+      enabled: true
 
 retry:
   max_retries: 3

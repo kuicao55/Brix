@@ -14,11 +14,13 @@ MAX_TITLE_LEN = 80
 
 PROMPT = """\
 Generate a concise title (3-7 words) that captures the main topic of this conversation.
+IMPORTANT: The title MUST be in the same language as the user's messages.
 Use sentence case. Return JSON with a single "title" field.
 
 Examples:
-{"title": "Fix login button on mobile"}
+{"title": "修复移动端登录按钮"}
 {"title": "Add OAuth authentication"}
+{"title": "记忆系统重构"}
 {"title": "Debug failing CI tests"}"""
 
 
@@ -71,20 +73,35 @@ class SessionTitleTask(SideTask):
         return "session_title"
 
     async def execute(self, ctx: SideTaskContext) -> str | None:
+        # 提取用户消息用于回退
         user_msgs = [
             m["content"]
             for m in ctx.session_messages
             if m.get("role") == "user" and isinstance(m.get("content"), str)
-        ][:3]
+        ]
+        if not user_msgs and ctx.user_input:
+            user_msgs = [ctx.user_input]
         if not user_msgs:
             return None
-        prompt_text = "\n".join(user_msgs)
+
+        # 构建对话上下文：system + 历史消息（跳过 system，保留 user/assistant 交替）
+        llm_messages: list[dict[str, str]] = []
+        for m in ctx.session_messages:
+            if m.get("role") == "system":
+                continue
+            content = m.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            llm_messages.append({"role": m["role"], "content": content})
+        # 追加当前用户输入（如果不在 session_messages 中）
+        if ctx.user_input and (not llm_messages or llm_messages[-1].get("content") != ctx.user_input):
+            llm_messages.append({"role": "user", "content": ctx.user_input})
+        if not llm_messages:
+            return _fallback_title(user_msgs)
+
         try:
             response = await ctx.llm_client.chat(
-                messages=[
-                    {"role": "system", "content": PROMPT},
-                    {"role": "user", "content": prompt_text},
-                ],
+                messages=[{"role": "system", "content": PROMPT}] + llm_messages,
                 model=ctx.side_model,
             )
             data = _extract_json_object(response.content)

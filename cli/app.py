@@ -30,9 +30,7 @@ from capability.tools.file_write import FileWriteTool
 from capability.tools.skill_tool import SkillTool
 from capability.tools.weather import WeatherTool
 from capability.tools.memory_search import MemorySearchTool
-from memory.long_term import LongTermMemory
-from memory.searcher import KeywordMemorySearcher
-from memory.short_term import ShortTermMemory
+from capability.tools.save_memory import SaveMemoryTool
 from cli.banner import show_banner
 from cli.completer import SlashCommandCompleter
 from cli.display import render_history
@@ -252,7 +250,10 @@ class BrixCLI:
         hooks.bind_log(log)
 
         dynamic_ctx = self._build_dynamic_context()
-        system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
+        st_summary = self._memory.get_short_term_summary() or ""
+        system_prompt = self._memory.build_system_prompt(
+            dynamic_context=dynamic_ctx, short_term_summary=st_summary,
+        )
         # 注入 Skill 列表到 system prompt
         skill_listing = self._command_registry.get_skill_listing_text()
         if skill_listing:
@@ -278,8 +279,11 @@ class BrixCLI:
         # 记录 history 长度，用于提取本轮新增消息
         original_history_count = len(context.history)
 
+        # 用户消息前加时间戳
+        ts_input = f"{self._format_timestamp()} {user_input}"
+
         try:
-            response = await self._orchestrator.run(user_input, context)
+            response = await self._orchestrator.run(ts_input, context)
         except Exception as exc:
             log.set_error(str(exc))
             try:
@@ -324,7 +328,10 @@ class BrixCLI:
 
         # Memory stage — build system prompt and context via MemoryProvider
         dynamic_ctx = self._build_dynamic_context()
-        system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
+        st_summary = self._memory.get_short_term_summary() or ""
+        system_prompt = self._memory.build_system_prompt(
+            dynamic_context=dynamic_ctx, short_term_summary=st_summary,
+        )
         # 注入 Skill 列表到 system prompt
         skill_listing = self._command_registry.get_skill_listing_text()
         if skill_listing:
@@ -368,7 +375,7 @@ class BrixCLI:
         hooks.fire("router", model=model, reason="direct_config")
         log.set_model(model)
 
-        # 用户消息计数（用于 pref_detection 间隔）
+        # 用户消息计数（用于 session_title 间隔触发）
         if self._side_manager:
             self._side_manager.on_user_message()
 
@@ -393,8 +400,11 @@ class BrixCLI:
         tool_display = ToolDisplay(self._console)
         _tool_input_cache: dict[str, dict] = {}  # tool_call_id → input，供 tool_result 关联
 
+        # 用户消息前加时间戳
+        ts_input = f"{self._format_timestamp()} {user_input}"
+
         try:
-            async for event in self._orchestrator.run_stream(user_input, context):
+            async for event in self._orchestrator.run_stream(ts_input, context):
                 event_type = event.get("type", "")
 
                 if event_type == "thinking_delta":
@@ -459,8 +469,6 @@ class BrixCLI:
                 # fire-and-forget 工具摘要
                 if (event_type == "tool_result"
                         and self._side_manager and self._side_manager.enabled):
-                    # NOTE: fire-and-forget 任务的返回值当前被丢弃。
-                    # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
                     _tc_id = event.get("id", "")
                     _tc_input = _tool_input_cache.pop(_tc_id, {})
                     self._side_manager.fire_and_forget(
@@ -532,13 +540,18 @@ class BrixCLI:
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not has_error else 1)
 
-        # 偏好检测（按间隔触发）
-        # NOTE: fire-and-forget 任务的返回值当前被丢弃。
-        # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
+        # 会话标题生成（fire-and-forget，第 1、3 条消息时触发）
         if (self._side_manager and self._side_manager.enabled
-                and self._side_manager.should_run_pref_detection()):
+                and self._side_manager.should_run_session_title()):
+            session_id = self._memory.current_session_id or ""
+
+            async def _save_title(title: str) -> None:
+                if session_id:
+                    self._memory.update_session_title(session_id, title)
+
             self._side_manager.fire_and_forget(
-                "pref_detection",
+                "session_title",
+                on_result=_save_title,
                 session_messages=context_messages,
                 user_input=user_input,
                 hooks=hooks,
@@ -562,12 +575,16 @@ class BrixCLI:
         self._tool_runner.register(FileReadTool())
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))
-        # 记忆搜索工具
-        searcher = KeywordMemorySearcher(
-            long_term=LongTermMemory(data_root),
-            short_term=ShortTermMemory(data_root),
-        )
-        self._tool_runner.register(MemorySearchTool(searcher))
+        # 记忆搜索工具（复用 BrixMemoryProvider 的 searcher，避免重复实例化）
+        searcher = self._memory.searcher
+        if searcher is not None:
+            self._tool_runner.register(MemorySearchTool(searcher))
+        # SaveMemoryTool — 主模型主动写入短期记忆
+        if self._memory.short_term is not None:
+            self._tool_runner.register(SaveMemoryTool(
+                short_term=self._memory.short_term,
+                memory_provider=self._memory,
+            ))
 
     def _init_voice(self) -> None:
         """初始化语音模块（如果配置启用）。"""
@@ -745,17 +762,18 @@ class BrixCLI:
 
     @staticmethod
     def _build_dynamic_context() -> str:
-        """构建动态上下文 — 日期、平台等运行时信息。"""
+        """构建静态运行时上下文 — 平台、工作目录（session 内不变）。"""
         import platform
-        from datetime import datetime, timezone
 
-        now_utc = datetime.now(timezone.utc)
-        now_local = datetime.now().astimezone()
-        utc_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
-        local_str = now_local.strftime("%Y-%m-%d %H:%M %Z")
         parts = [
-            f"Current date/time: {local_str} ({utc_str})",
             f"Platform: {platform.system()} {platform.release()}",
             f"Working directory: {Path.cwd()}",
         ]
         return "\n".join(parts)
+
+    @staticmethod
+    def _format_timestamp() -> str:
+        """返回当前时间戳，用于用户消息前缀。格式: [Weekday YYYY-MM-DD HH:MM TZ]"""
+        from datetime import datetime
+        now = datetime.now().astimezone()
+        return now.strftime("[%A %Y-%m-%d %H:%M %Z]")

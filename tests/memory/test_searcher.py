@@ -37,7 +37,7 @@ def test_search_includes_short_term():
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
         stm = ShortTermMemory(Path(d))
-        stm.add_item("sess-1", "用户喜欢吃火锅", "pref_detection")
+        stm.add_item("用户喜欢吃火锅", "pref_detection", session_id="sess-1")
         searcher = KeywordMemorySearcher(ltm, short_term=stm)
         results = searcher.search("火锅")
         assert any("火锅" in r.content for r in results)

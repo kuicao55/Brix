@@ -120,10 +120,15 @@ class ResumeCommand(Command):
         # 交互式分页选择器
         def format_session(s: dict, idx: int) -> str:
             sid = s.get("id", "?")[:8]
+            title = s.get("title", "")
             count = s.get("message_count", 0)
             updated = s.get("updated", "")[:10]  # YYYY-MM-DD
-            preview = s.get("preview", "")[:40].replace("\n", " ")
-            return f"{sid}  {count:>3} msgs  {updated}  {preview}"
+            preview = s.get("preview", "")[:30].replace("\n", " ")
+            if title:
+                display = f"「{title}」  {preview}" if preview else f"「{title}」"
+            else:
+                display = preview
+            return f"{sid}  {count:>3} msgs  {updated}  {display}"
 
         from cli.paginated_selector import PaginatedSelector
 
@@ -144,9 +149,17 @@ class ResumeCommand(Command):
         """恢复会话并用完整聊天 UI 渲染历史。"""
         try:
             msgs = context.memory.resume_session(session_id)
+            # 尝试获取 session title
+            title = ""
+            if context.memory:
+                for s in context.memory.list_sessions():
+                    if s["id"] == session_id:
+                        title = s.get("title", "")
+                        break
+            label = title if title else session_id[:8]
             if context.console:
                 context.console.print(
-                    f"[dim]Resumed session {session_id[:8]}... ({len(msgs)} messages)[/]"
+                    f"[dim]Resumed: {label} ({len(msgs)} messages)[/]"
                 )
                 if msgs:
                     from cli.display import render_history
@@ -154,6 +167,6 @@ class ResumeCommand(Command):
                     context.console.print()
                     render_history(context.console, msgs)
             else:
-                print(f"Resumed session {session_id[:8]}... ({len(msgs)} messages)")
+                print(f"Resumed: {label} ({len(msgs)} messages)")
         except FileNotFoundError:
             print(f"Session not found: {session_id[:8]}...")

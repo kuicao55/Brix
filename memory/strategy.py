@@ -97,6 +97,28 @@ Use the file_edit tool to update specific sections. Don't overwrite the whole fi
 - Temporary information (current task details, debugging state)
 - Information that belongs in session history, not long-term memory
 - Speculative inferences — only record what the user explicitly stated
+
+### save_memory — 主动写入短期记忆
+When the conversation reveals information worth remembering long-term, use the `save_memory` tool to write it to short-term memory. This is for quick, structured captures during conversation.
+
+**When to use save_memory:**
+- User explicitly states a preference, habit, or correction ("我喜欢...", "以后别...", "请用中文")
+- User shares a meaningful personal fact (role, location, tech stack, project)
+- User gives feedback about your behavior that should be remembered
+- A task-related insight that may be useful in future conversations
+
+**When NOT to use save_memory:**
+- Temporary context (current debugging state, one-time task details)
+- Speculative inferences — only save what the user explicitly stated
+- Information already captured in user.md or soul.md
+- Jokes, small talk, or emotional expressions without lasting value
+
+**How to use:**
+Call `save_memory` with:
+- `type`: preference / fact / emotion / task / reflection
+- `category`: user (about the user) / self (about your own behavior)
+- `content`: concise description (max 500 chars)
+- `context`: optional, the conversation context that prompted this save
 """
 
 
@@ -124,6 +146,7 @@ class MemoryStrategy:
         self,
         session_context: str = "",
         dynamic_context: str = "",
+        short_term_summary: str = "",
     ) -> str:
         """构建完整的 system prompt，包含灵魂、用户记忆和引导指令。"""
         parts: list[str] = []
@@ -147,6 +170,8 @@ class MemoryStrategy:
             parts.append(f"<soul>\n{soul_content}\n</soul>")
         if user_content:
             parts.append(f"{_DATA_GUARD}\n\n<user_memory>\n{user_content}\n</user_memory>")
+        if short_term_summary:
+            parts.append(f"{_DATA_GUARD}\n\n<short_term_memory>\n{short_term_summary}\n</short_term_memory>")
 
         # 检查是否需要 onboarding
         if not self._soul.exists() or not self._user.exists():

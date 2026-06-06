@@ -8,7 +8,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from side.base import SideTask, SideTaskContext
-from side.manager import SideTaskManager, _sanitize_interval
+from side.manager import SideTaskManager
 
 
 class MockTask(SideTask):
@@ -199,82 +199,33 @@ def test_on_user_message(manager):
 
 
 # ------------------------------------------------------------------
-# 12. test_should_run_pref_detection
+# 11.5. test_should_run_session_title
 # ------------------------------------------------------------------
 
-def test_should_run_pref_detection(manager):
-    """should_run_pref_detection 基于间隔判断。"""
-    config = {"side": {"tasks": {"pref_detection": {"interval": 3}}}}
-    manager.configure(config=config, llm_client=None, memory=None)
+def test_should_run_session_title(manager):
+    """should_run_session_title 在第 1、3 条用户消息时触发。"""
+    manager.configure(config={}, llm_client=None, memory=None)
 
     # 0 条消息时不触发
-    assert manager.should_run_pref_detection() is False
+    assert manager.should_run_session_title() is False
 
-    # 1, 2 条时不触发
+    # 第 1 条消息触发
     manager.on_user_message()
-    assert manager.should_run_pref_detection() is False
+    assert manager.should_run_session_title() is True
+
+    # 第 2 条消息不触发
     manager.on_user_message()
-    assert manager.should_run_pref_detection() is False
+    assert manager.should_run_session_title() is False
 
-    # 3 条时触发
+    # 第 3 条消息触发
     manager.on_user_message()
-    assert manager.should_run_pref_detection() is True
+    assert manager.should_run_session_title() is True
 
-    # 6 条时触发
+    # 第 4 条及以后不触发
     manager.on_user_message()
+    assert manager.should_run_session_title() is False
     manager.on_user_message()
-    manager.on_user_message()
-    assert manager.should_run_pref_detection() is True
-
-
-# ------------------------------------------------------------------
-# Fix 1: interval 校验 — 防止 ZeroDivisionError / TypeError
-# ------------------------------------------------------------------
-
-
-class TestPrefDetectionIntervalSanitization:
-    """should_run_pref_detection 必须处理非法 interval 值。"""
-
-    def test_interval_zero_defaults_to_5(self, manager):
-        """interval=0 会 ZeroDivisionError，必须回退到默认值 5。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": 0}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        # 不应抛异常
-        for _ in range(5):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
-
-    def test_interval_negative_defaults_to_5(self, manager):
-        """interval=-3 语义无效，必须回退到默认值 5。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": -3}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        for _ in range(5):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
-
-    def test_interval_string_defaults_to_5(self, manager):
-        """interval="abc" 会 TypeError，必须回退到默认值 5。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": "abc"}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        for _ in range(5):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
-
-    def test_interval_none_defaults_to_5(self, manager):
-        """interval=None 会 TypeError，必须回退到默认值 5。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": None}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        for _ in range(5):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
-
-    def test_interval_float_is_coerced(self, manager):
-        """interval=3.5 应被转为 int(3)，基于转换后的值判断。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": 3.5}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        for _ in range(3):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
+    assert manager.should_run_session_title() is False
 
 
 # ------------------------------------------------------------------
@@ -296,49 +247,49 @@ class TestFireAndForgetNoLoop:
                     for r in caplog.records if r.levelno >= logging.WARNING)
 
 
-# ------------------------------------------------------------------
-# Fix 3: interval 布尔值 — bool 是 int 子类，True 会变成 interval=1
-# ------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_fire_and_forget_on_result(manager, config_enabled):
+    """fire_and_forget 的 on_result 回调接收 task 返回值。"""
+    manager.configure(config=config_enabled, llm_client=None, memory=None)
+    manager.register(MockTask(result="title-value"))
+    callback = AsyncMock()
+
+    manager.fire_and_forget("mock", on_result=callback)
+    # 等待 asyncio.create_task 完成
+    import asyncio
+    await asyncio.sleep(0.05)
+
+    callback.assert_awaited_once_with("title-value")
 
 
-class TestPrefDetectionIntervalBool:
-    """_sanitize_interval 必须拒绝布尔值，防止 interval: true 变成每轮触发。"""
+@pytest.mark.asyncio
+async def test_fire_and_forget_on_result_none(manager, config_enabled):
+    """task 返回 None 时不调用 on_result。"""
+    manager.configure(config=config_enabled, llm_client=None, memory=None)
+    manager.register(MockTask(result=None))
+    callback = AsyncMock()
 
-    def test_interval_true_defaults_to_5(self, manager):
-        """interval=True 会变成 1（每轮触发），必须回退到默认值 5。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": True}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        # interval 应为 5，所以第 1-4 条消息不触发
-        for _ in range(4):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is False
-        # 第 5 条触发
-        manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
+    manager.fire_and_forget("mock", on_result=callback)
+    import asyncio
+    await asyncio.sleep(0.05)
 
-    def test_interval_false_defaults_to_5(self, manager):
-        """interval=False 会变成 0（ZeroDivisionError），必须回退到默认值 5。"""
-        config = {"side": {"tasks": {"pref_detection": {"interval": False}}}}
-        manager.configure(config=config, llm_client=None, memory=None)
-        for _ in range(5):
-            manager.on_user_message()
-        assert manager.should_run_pref_detection() is True
+    callback.assert_not_awaited()
 
-    def test_sanitize_interval_true_warns(self, caplog):
-        """_sanitize_interval(True) 应发出警告并返回默认值。"""
-        with caplog.at_level(logging.WARNING, logger="side.manager"):
-            result = _sanitize_interval(True)
-        assert result == 5
-        assert any("bool" in r.message.lower() or "true" in r.message.lower()
-                    for r in caplog.records)
 
-    def test_sanitize_interval_false_warns(self, caplog):
-        """_sanitize_interval(False) 应发出警告并返回默认值。"""
-        with caplog.at_level(logging.WARNING, logger="side.manager"):
-            result = _sanitize_interval(False)
-        assert result == 5
-        assert any("bool" in r.message.lower() or "false" in r.message.lower()
-                    for r in caplog.records)
+@pytest.mark.asyncio
+async def test_fire_and_forget_on_result_exception(manager, config_enabled, caplog):
+    """on_result 回调异常不影响主流程。"""
+    manager.configure(config=config_enabled, llm_client=None, memory=None)
+    manager.register(MockTask(result="val"))
+
+    async def _bad_callback(val):
+        raise RuntimeError("callback boom")
+
+    manager.fire_and_forget("mock", on_result=_bad_callback)
+    import asyncio
+    await asyncio.sleep(0.05)
+
+    assert any("on_result" in r.message for r in caplog.records)
 
 
 # ------------------------------------------------------------------
@@ -474,8 +425,8 @@ class TestSideEnabledNonBoolWarning:
 
 
 def test_import_all_tasks():
-    """side.tasks.ALL_TASKS 应可导入，包含所有 7 个 task。"""
+    """side.tasks.ALL_TASKS 应可导入，包含所有 7 个 task（pref_detection 已移除）。"""
     from side.tasks import ALL_TASKS
 
     assert isinstance(ALL_TASKS, list)
-    assert len(ALL_TASKS) == 8
+    assert len(ALL_TASKS) == 7
