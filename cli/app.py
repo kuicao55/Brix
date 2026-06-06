@@ -197,6 +197,11 @@ class BrixCLI:
                 self._console.print()  # ❯ 和 ⏺ 之间的间隔
                 try:
                     await self._process_streaming(text)
+                except KeyboardInterrupt:
+                    await self._save_session_summary()
+                    self._memory.save_session()
+                    self._console.print("\n[dim]Goodbye.[/]")
+                    break
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
         finally:

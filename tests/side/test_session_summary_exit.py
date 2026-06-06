@@ -1,6 +1,7 @@
 """SessionSummaryTask 退出路径集成测试。"""
 from __future__ import annotations
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -290,3 +291,115 @@ async def test_manager_check_previous_session_summary_already_exists():
     assert result is None
     # 不应调用 load_session（已有摘要，跳过）
     mock_memory.load_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_keyboard_interrupt_during_streaming_saves_summary():
+    """Ctrl+C during streaming should save session summary before exiting.
+
+    修复 Issue 2：之前 KeyboardInterrupt during _process_streaming 会绕过摘要保存。
+    """
+    with (
+        patch("cli.app.ToolRunner"),
+        patch("cli.app.CommandRegistry"),
+        patch("cli.app.HookRegistry"),
+        patch("cli.app.StateMachineOrchestrator"),
+        patch("cli.app.LLMClient"),
+        patch("cli.app.create_memory_provider"),
+        patch("cli.app.BrixCLI._init_voice"),
+        patch("cli.app.BrixCLI._register_tools"),
+        patch("cli.app.BrixCLI._register_commands"),
+        patch("cli.app.BrixCLI._register_skill_tool"),
+        patch("cli.app.show_banner"),
+    ):
+        from cli.app import BrixCLI
+        config, mock_memory, mock_llm = _make_brix_cli_mock()
+        instance = BrixCLI(config=config)
+
+    instance._memory = mock_memory
+    instance._save_session_summary = AsyncMock()
+    instance._process_streaming = AsyncMock(side_effect=KeyboardInterrupt)
+    # _llm_client.close() 在 finally 中被 await，需 mock
+    instance._llm_client.close = AsyncMock()
+
+    # Mock prompt_async to return a message once, then block forever
+    call_count = 0
+    async def fake_prompt(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "hello"
+        # Block forever — should never reach here
+        await asyncio.Event().wait()
+
+    mock_session = MagicMock()
+    mock_session.prompt_async = fake_prompt
+
+    # Patch PromptSession to return our mock
+    with patch("cli.app.PromptSession", return_value=mock_session):
+        with patch("cli.app.FuzzyCompleter"):
+            with patch("cli.app.InMemoryHistory"):
+                try:
+                    await instance.run()
+                except KeyboardInterrupt:
+                    pass  # 修复前会传播到这里；修复后不会
+
+    # KeyboardInterrupt during streaming should trigger summary save
+    instance._save_session_summary.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_manager_check_previous_session_summary_no_current_session():
+    """current_session_id 为 None 时仍能检查最近 session 并生成摘要。
+
+    修复 Issue 1：之前 current_id is None 时直接返回 None，兜底逻辑为死代码。
+    """
+    mgr = SideTaskManager()
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = None
+    mock_memory.list_sessions = MagicMock(return_value=[
+        {"id": "some-session", "created": "2025-06-05T10:00:00+00:00"},
+    ])
+    mock_memory.short_term = MagicMock()
+    mock_memory.short_term.get_by_session = MagicMock(return_value=[])
+    mock_memory.load_session = MagicMock(return_value=[
+        {"role": "user", "content": "之前的对话"},
+    ])
+
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = "之前的摘要。"
+    mock_llm.chat = AsyncMock(return_value=mock_response)
+
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "test-model",
+                         "tasks": {"session_summary": {"enabled": True}}}},
+        llm_client=mock_llm,
+        memory=mock_memory,
+    )
+    mgr.register(SessionSummaryTask())
+
+    result = await mgr.check_previous_session_summary()
+    # 应该找到最近 session 并生成摘要（而不是直接返回 None）
+    assert result is not None
+    mock_memory.load_session.assert_called_once_with("some-session")
+
+
+@pytest.mark.asyncio
+async def test_manager_check_previous_session_summary_no_current_no_sessions():
+    """current_session_id 为 None 且无历史 session 时返回 None。"""
+    mgr = SideTaskManager()
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = None
+    mock_memory.list_sessions = MagicMock(return_value=[])
+
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "test-model",
+                         "tasks": {"session_summary": {"enabled": True}}}},
+        llm_client=MagicMock(),
+        memory=mock_memory,
+    )
+    mgr.register(SessionSummaryTask())
+
+    result = await mgr.check_previous_session_summary()
+    assert result is None

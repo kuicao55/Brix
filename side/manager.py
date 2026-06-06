@@ -167,48 +167,59 @@ class SideTaskManager:
         sid = session_id or getattr(self._memory, "current_session_id", None)
         if not sid:
             return None
+        # 临时设置 current_session_id，让 task 能找到正确的 session
+        original_id = getattr(self._memory, "current_session_id", None)
+        if session_id and original_id != session_id:
+            self._memory.current_session_id = session_id
         try:
             messages = self._memory.load_session(sid)
         except (FileNotFoundError, ValueError, AttributeError):
+            self._memory.current_session_id = original_id
             return None
         if not messages:
+            self._memory.current_session_id = original_id
             return None
-        return await self.run_task(
+        result = await self.run_task(
             "session_summary",
             session_messages=messages,
             user_input="",
             hooks=None,
         )
+        # 恢复原始 current_session_id
+        self._memory.current_session_id = original_id
+        return result
 
     async def check_previous_session_summary(self) -> str | None:
-        """兜底检查：上一个 session 是否有摘要，没有则生成。
+        """兜底检查：最近一个 session 是否有摘要，没有则生成。
 
         在 create_session() 时调用，确保历史 session 不会遗漏摘要。
+        current_id 为 None 时（首次启动），检查最近的 session。
         """
         if not self._memory:
             return None
         current_id = getattr(self._memory, "current_session_id", None)
-        if not current_id:
-            return None
         try:
             sessions = self._memory.list_sessions()
         except Exception:
             return None
-        # 找到上一个 session（排除当前 session）
+        # 找到目标 session：排除当前 session（如果有的话）
         for s in sessions:
             prev_id = s.get("id")
-            if prev_id and prev_id != current_id:
-                # 检查是否已有摘要
-                short_term = getattr(self._memory, "short_term", None)
-                if short_term:
-                    try:
-                        existing = short_term.get_by_session(prev_id)
-                        if any(i.get("type") == "event" for i in existing):
-                            return None  # 已有摘要，无需生成
-                    except Exception:
-                        pass
-                # 生成摘要
-                return await self.generate_session_summary(prev_id)
+            if not prev_id:
+                continue
+            if current_id and prev_id == current_id:
+                continue
+            # 检查是否已有摘要
+            short_term = getattr(self._memory, "short_term", None)
+            if short_term:
+                try:
+                    existing = short_term.get_by_session(prev_id)
+                    if any(i.get("type") == "event" for i in existing):
+                        return None  # 已有摘要，无需生成
+                except Exception:
+                    pass
+            # 生成摘要
+            return await self.generate_session_summary(prev_id)
         return None
 
     @property
