@@ -586,6 +586,37 @@ def test_save_growth_whitespace_preserves_existing_growth():
             f"已有成长内容应保留: {growth!r}"
 
 
+def test_save_growth_leading_newline_header_preserves_existing_growth():
+    """save_growth("\\n# Soul — 成长部分\\n") 不应破坏已有的成长部分。
+
+    回归测试：leading newline 导致 _ensure_growth_header 返回未规范化内容，
+    空 body guard 的 slice 偏移不对，误判为非空从而替换已有成长。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save(
+            "# Soul — 固定部分\n"
+            "我是助手。\n"
+            "\n"
+            "# Soul — 成长部分\n"
+            "## 性格倾向\n"
+            "简洁直接\n"
+            "\n"
+            "## 经验教训\n"
+            "用户不喜欢冗长\n"
+        )
+        # 调用带有 leading newline 的 header-only 内容
+        sm.save_growth("\n# Soul — 成长部分\n")
+        growth = sm.load_growth()
+        assert "性格倾向" in growth, \
+            f"leading newline header-only 不应破坏已有成长，但成长部分被清空: {growth!r}"
+        assert "简洁直接" in growth, \
+            f"已有成长内容应保留: {growth!r}"
+        assert "经验教训" in growth, \
+            f"已有成长内容应保留: {growth!r}"
+
+
 def test_save_growth_empty_on_no_existing_growth():
     """没有已有成长时，save_growth("") 也不应写入纯 header 的空成长。
 

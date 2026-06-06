@@ -108,6 +108,9 @@ class SoulManager:
         - 使用严格读取，读取失败时 abort 并 re-raise（CQR Finding 2）
         - 空/纯空白 body 时 no-op，防止破坏已有成长（CQR Finding 4）
         """
+        # 规范化前导空白，防止 leading newline 导致 _ensure_growth_header
+        # 返回未规范化内容，使空 body guard 的 slice 偏移不对
+        growth_content = growth_content.lstrip()
         # 确保 growth_content 包含成长标题
         growth_content = _ensure_growth_header(growth_content)
 
