@@ -560,13 +560,11 @@ class BrixCLI:
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not has_error else 1)
 
-        # 偏好检测（按间隔触发）
-        # NOTE: fire-and-forget 任务的返回值当前被丢弃。
-        # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
+        # 会话标题生成（第 1、3 条消息时触发）
         if (self._side_manager and self._side_manager.enabled
-                and self._side_manager.should_run_pref_detection()):
+                and self._side_manager.should_run_session_title()):
             self._side_manager.fire_and_forget(
-                "pref_detection",
+                "session_title",
                 session_messages=context_messages,
                 user_input=user_input,
                 hooks=hooks,
