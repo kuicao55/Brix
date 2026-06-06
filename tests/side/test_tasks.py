@@ -962,6 +962,80 @@ async def test_tool_summary_redacts_url_credentials_in_input():
     assert "api.example.com" in all_text, "非敏感 URL 部分应保留"
 
 
+# --- PrefDetectionTask ---
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_basic():
+    """PrefDetectionTask 检测用户偏好。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='[{"preference": "总是用中文回复", "context": "用户说请用中文"}]',
+        session_messages=[
+            {"role": "user", "content": "请用中文回复我"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都用中文"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert len(result) == 1
+    assert result[0]["preference"] == "总是用中文回复"
+
+@pytest.mark.asyncio
+async def test_pref_detection_no_prefs():
+    """PrefDetectionTask 无偏好时返回空列表。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='[]',
+        session_messages=[
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好"},
+            {"role": "user", "content": "今天天气怎么样"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result == []
+
+@pytest.mark.asyncio
+async def test_pref_detection_short_conversation():
+    """PrefDetectionTask 对话太短时返回 None。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(session_messages=[{"role": "user", "content": "hi"}])
+    result = await task.execute(ctx)
+    assert result is None
+
+@pytest.mark.asyncio
+async def test_pref_detection_writes_to_short_term_memory():
+    """pref_detection 应将检测到的偏好写入短期记忆（正确的 API 参数）。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    mock_stm = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.short_term = mock_stm
+    ctx = _make_ctx(
+        llm_response='[{"preference": "用户喜欢辣的食物", "context": "用户说要吃爆炒腊肉"}]',
+        session_messages=[
+            {"role": "user", "content": "我想吃爆炒腊肉"},
+            {"role": "assistant", "content": "好的，很下饭！"},
+            {"role": "user", "content": "我喜欢辣的"},
+        ],
+        config={"session_id": "test-sess-1"},
+    )
+    import types
+    fields = {k: getattr(ctx, k) for k in ctx.__dataclass_fields__}
+    fields["memory"] = mock_memory
+    ctx = types.SimpleNamespace(**fields)
+    await task.execute(ctx)
+    mock_stm.add_item.assert_called_once_with(
+        session_id="test-sess-1",
+        content="用户喜欢辣的食物",
+        source="pref_detection",
+        context="用户说要吃爆炒腊肉",
+    )
+
 # --- HistorySearchTask ---
 
 @pytest.mark.asyncio
@@ -1004,6 +1078,46 @@ async def test_history_search_no_memory():
 
 
 # --- SPEC / CQR 修复测试 ---
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_two_messages_returns_none():
+    """SPEC FIX: 2 条消息不满足 len(recent) < 3 阈值，应返回 None。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        session_messages=[
+            {"role": "user", "content": "请用中文回复"},
+            {"role": "assistant", "content": "好的"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_greedy_regex_extra_prose():
+    """SPEC FIX: LLM 响应含额外文字和多个括号时，非贪婪正则只提取第一个 JSON 数组。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    # 模拟 LLM 返回：前言 + 第一个 JSON 数组 + 中间文字 + 第二个方括号内容
+    llm_response = (
+        '这是分析结果：\n'
+        '[{"preference": "用中文", "context": "用户要求"}]\n'
+        '注意 [这是干扰文本] 不是 JSON'
+    )
+    ctx = _make_ctx(
+        llm_response=llm_response,
+        session_messages=[
+            {"role": "user", "content": "请用中文回复我"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都用中文"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "用中文"
 
 
 @pytest.mark.asyncio
@@ -1092,6 +1206,68 @@ async def test_history_search_custom_keywords_no_match():
 
 
 # --- CQR-2: Tolerant JSON extraction + keyword validation ---
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_bracketed_prose_before_json():
+    """CQR-2: 方括号散文在有效 JSON 之前时，应提取第一个可解析的 JSON 数组。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    # LLM 返回：带方括号的散文干扰 + 后面的有效 JSON 数组
+    llm_response = (
+        '分析结果如下 [请注意这不是JSON] 是一些说明文字。\n'
+        '[{"preference": "用中文回复", "context": "用户要求用中文"}]'
+    )
+    ctx = _make_ctx(
+        llm_response=llm_response,
+        session_messages=[
+            {"role": "user", "content": "请用中文回复我"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都用中文"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "用中文回复"
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_fenced_json_array():
+    """CQR-2: PrefDetectionTask 能从 ```json fenced 代码块中提取数组。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='```json\n[{"preference": "先写测试", "context": "用户要求TDD"}]\n```',
+        session_messages=[
+            {"role": "user", "content": "请先写测试"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "以后都先写测试"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "先写测试"
+
+
+@pytest.mark.asyncio
+async def test_pref_detection_direct_json_array():
+    """CQR-2: PrefDetectionTask 直接返回纯 JSON 数组时正常解析。"""
+    from side.tasks.pref_detection import PrefDetectionTask
+    task = PrefDetectionTask()
+    ctx = _make_ctx(
+        llm_response='[{"preference": "简洁回复", "context": "用户说太长了"}]',
+        session_messages=[
+            {"role": "user", "content": "你的回复太长了"},
+            {"role": "assistant", "content": "好的我会简洁"},
+            {"role": "user", "content": "以后都简洁点"},
+        ],
+    )
+    result = await task.execute(ctx)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["preference"] == "简洁回复"
 
 
 @pytest.mark.asyncio
@@ -1322,19 +1498,31 @@ async def test_context_compress_overlong_output_truncated():
 
 @pytest.mark.asyncio
 async def test_session_summary_basic():
-    """SessionSummaryTask 生成会话摘要。"""
+    """SessionSummaryTask 生成会话摘要并写入短期记忆。"""
     from side.tasks.session_summary import SessionSummaryTask
     task = SessionSummaryTask()
+    # 需要 memory mock（新行为要求 session_id）
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = "test-sess-001"
+    mock_memory.short_term = MagicMock()
+    mock_memory.short_term.get_by_session = MagicMock(return_value=[])
+    mock_memory.short_term.add_item = MagicMock()
+    mock_memory.list_sessions = MagicMock(return_value=[
+        {"id": "test-sess-001", "created": "2025-06-05T10:00:00+00:00"},
+    ])
     ctx = _make_ctx(
         llm_response="用户正在开发一个 Python 项目，下一步是添加测试。",
         session_messages=[
             {"role": "user", "content": "帮我写一个函数"},
             {"role": "assistant", "content": "好的，这是函数"},
         ],
+        memory=mock_memory,
     )
     result = await task.execute(ctx)
     assert result is not None
     assert "Python" in result
+    # 应写入短期记忆
+    mock_memory.short_term.add_item.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_session_summary_empty():
@@ -1402,31 +1590,44 @@ async def test_context_compress_triggers_on_token_count():
 
 
 @pytest.mark.asyncio
-async def test_session_summary_triggers_on_idle():
-    """session_summary 应在空闲超过阈值时触发。"""
-    import time
+async def test_session_summary_writes_to_short_term():
+    """session_summary 应将摘要写入短期记忆（type=event, source=side_summary）。"""
     from side.tasks.session_summary import SessionSummaryTask
     task = SessionSummaryTask()
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = "test-sess-002"
+    mock_memory.short_term = MagicMock()
+    mock_memory.short_term.get_by_session = MagicMock(return_value=[])
+    mock_memory.short_term.add_item = MagicMock()
+    mock_memory.list_sessions = MagicMock(return_value=[
+        {"id": "test-sess-002", "created": "2025-06-05T10:00:00+00:00"},
+    ])
     ctx = _make_ctx(
         llm_response="你之前在重构认证模块",
         session_messages=[
             {"role": "user", "content": "帮我重构认证模块"},
             {"role": "assistant", "content": "好的"},
         ],
-        config={"_side_task_args": {"last_active_at": time.time() - 600}},
+        memory=mock_memory,
     )
     result = await task.execute(ctx)
     assert result is not None
+    # 验证写入参数
+    call_kwargs = mock_memory.short_term.add_item.call_args[1]
+    assert call_kwargs["type"] == "event"
+    assert call_kwargs["source"] == "side_summary"
+    assert call_kwargs["session_id"] == "test-sess-002"
+    assert call_kwargs["date"] == "2025-06-05"
 
 
 # --- ALL_TASKS 注册 ---
 
 def test_all_tasks_registered():
-    """ALL_TASKS 包含所有 7 个 task（pref_detection 已移除）。"""
+    """ALL_TASKS 包含所有 7 个 task。"""
     from side.tasks import ALL_TASKS
     task_names = {t.name for t in ALL_TASKS}
     expected = {
-        "session_title", "tool_summary",
+        "session_title", "tool_summary", "pref_detection",
         "history_search", "context_compress",
         "session_summary", "memory_summary", "dream",
     }
