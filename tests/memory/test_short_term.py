@@ -729,3 +729,313 @@ def test_multiprocess_add_item_no_lost_items():
         expected = num_workers * items_per_worker
         assert len(items) == expected, \
             f"跨进程写入应有 {expected} 个 items，实际只有 {len(items)} 个"
+
+
+# ============================================================
+# 17. CQR Round 2 Issue 1: 并发 add+remove 竞态 — 文件锁缺失
+# ============================================================
+
+def _worker_remove_items(data_dir: str, item_ids: list[str]) -> None:
+    """子进程 worker：调用 remove_items。"""
+    import sys
+    sys.path.insert(0, str(Path(data_dir).parent))
+    from memory.short_term import ShortTermMemory
+    stm = ShortTermMemory(Path(data_dir))
+    stm.remove_items(item_ids)
+
+
+def _worker_cleanup_sessions(data_dir: str, session_ids: list[str]) -> None:
+    """子进程 worker：调用 cleanup_sessions。"""
+    import sys
+    sys.path.insert(0, str(Path(data_dir).parent))
+    from memory.short_term import ShortTermMemory
+    stm = ShortTermMemory(Path(data_dir))
+    stm.cleanup_sessions(session_ids)
+
+
+def _worker_add_and_remove_race(data_dir: str, num_ops: int, worker_id: int) -> None:
+    """子进程 worker：交替 add 和 remove 操作来制造竞态。"""
+    import sys
+    sys.path.insert(0, str(Path(data_dir).parent))
+    from memory.short_term import ShortTermMemory
+    stm = ShortTermMemory(Path(data_dir))
+    for i in range(num_ops):
+        # 添加一个新 item
+        stm.add_item(f"race-w{worker_id}-{i}", "test", date="2026-06-06",
+                      session_id=f"sess-w{worker_id}")
+        # 删除上一个 item（如果有的话）
+        if i > 0:
+            stm.remove_items([f"fake-id-w{worker_id}-{i-1}"])
+
+
+def test_multiprocess_add_and_remove_real_race():
+    """多进程并发 add + remove 操作，remove 实际修改文件时不应丢数据。
+    此测试验证跨进程文件锁在所有写入路径上都生效。
+    """
+    import multiprocessing
+    with tempfile.TemporaryDirectory() as d:
+        data_dir = str(Path(d))
+        from memory.short_term import ShortTermMemory
+        stm = ShortTermMemory(Path(data_dir))
+        # 预填充一些 items，确保 remove 有东西可读（即使不删除）
+        for i in range(10):
+            stm.add_item(f"seed-{i}", "test", date="2026-06-06",
+                         session_id="seed-sess")
+
+        num_workers = 4
+        ops_per_worker = 20
+        procs = []
+        for w in range(num_workers):
+            p = multiprocessing.Process(
+                target=_worker_add_and_remove_race,
+                args=(data_dir, ops_per_worker, w)
+            )
+            procs.append(p)
+
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=30)
+
+        for p in procs:
+            assert p.exitcode == 0, f"进程退出码: {p.exitcode}"
+
+        stm2 = ShortTermMemory(Path(data_dir))
+        items = stm2.get_by_date("2026-06-06")
+        # 至少应有种子 items + 每个 worker 最后一个 add
+        expected_min = 10 + num_workers
+        assert len(items) >= expected_min, \
+            f"应至少有 {expected_min} 个 items，实际 {len(items)} 个"
+
+
+# ============================================================
+# 18. CQR Round 2 Issue 2: 旧格式文件迁移
+# ============================================================
+
+def test_legacy_uuid_session_file_migrated_on_load():
+    """旧格式 UUID session 文件应被迁移到日期 bucket，不隔离。
+    迁移在 glob 扫描（get_recent/get_by_session）时触发。
+    """
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # 模拟旧格式：UUID 命名文件，items 无 date 字段
+        legacy_data = {
+            "session_id": "550e8400-e29b-41d4-a716-446655440000",
+            "items": [
+                {
+                    "id": "item-legacy-1",
+                    "content": "旧记忆条目",
+                    "source": "pref_detection",
+                    "type": "note",
+                    "category": "",
+                    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "created": "2026-06-01T10:00:00+00:00",
+                    "context": "旧格式数据",
+                },
+            ]
+        }
+        legacy_file = date_dir / "550e8400-e29b-41d4-a716-446655440000.json"
+        legacy_file.write_text(
+            json.dumps(legacy_data, ensure_ascii=False), encoding="utf-8"
+        )
+        # get_recent 触发 glob 扫描，应迁移旧文件
+        items = stm.get_recent()
+        assert len(items) == 1
+        assert items[0]["content"] == "旧记忆条目"
+        # 旧文件应已删除
+        assert not legacy_file.exists()
+        # 不应有 .corrupt 文件
+        corrupt_files = list(date_dir.glob("*.corrupt"))
+        assert len(corrupt_files) == 0, f"不应隔离旧格式文件: {corrupt_files}"
+        # 新日期文件应存在
+        date_file = date_dir / "2026-06-01.json"
+        assert date_file.exists()
+        data = json.loads(date_file.read_text(encoding="utf-8"))
+        assert data["date"] == "2026-06-01"
+        assert len(data["items"]) == 1
+        # get_by_date 也能读取迁移后的数据
+        by_date = stm.get_by_date("2026-06-01")
+        assert len(by_date) == 1
+        assert by_date[0]["content"] == "旧记忆条目"
+
+
+def test_legacy_session_file_migrated_on_glob_operations():
+    """get_recent 扫描时也应迁移旧格式文件。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # 旧格式文件
+        legacy_data = {
+            "items": [
+                {
+                    "id": "item-legacy",
+                    "content": "旧数据",
+                    "source": "test",
+                    "type": "note",
+                    "category": "",
+                    "session_id": "old-sess",
+                    "created": "2026-06-02T15:00:00+00:00",
+                    "context": "",
+                },
+            ]
+        }
+        (date_dir / "a1b2c3d4-e5f6-7890-abcd-ef1234567890.json").write_text(
+            json.dumps(legacy_data, ensure_ascii=False), encoding="utf-8"
+        )
+        # 同时有一个正常的日期文件
+        stm.add_item("新数据", "test", date="2026-06-06")
+        items = stm.get_recent()
+        contents = {it["content"] for it in items}
+        assert "旧数据" in contents, f"应迁移并返回旧数据: {contents}"
+        assert "新数据" in contents
+
+
+def test_legacy_file_with_no_created_field_is_quarantined():
+    """旧格式但 items 缺少 created 字段时应隔离（无法确定日期 bucket）。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # UUID 文件但 items 没有 created
+        legacy_data = {
+            "items": [
+                {"id": "item-1", "content": "test", "source": "test",
+                 "type": "note", "category": "", "session_id": "s1"},
+            ]
+        }
+        (date_dir / "a1b2c3d4-e5f6-7890-abcd-ef1234567890.json").write_text(
+            json.dumps(legacy_data, ensure_ascii=False), encoding="utf-8"
+        )
+        items = stm.get_recent()
+        # 应被隔离
+        assert (date_dir / "a1b2c3d4-e5f6-7890-abcd-ef1234567890.json.corrupt").exists()
+
+
+# ============================================================
+# 19. CQR Round 2 Issue 3: Item 级 schema 校验
+# ============================================================
+
+def test_items_with_missing_required_fields_are_dropped():
+    """items 缺少必要字段时应丢弃坏条目，保留好条目。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # 混合好条目和坏条目
+        mixed_data = {
+            "date": "2026-06-06",
+            "items": [
+                {"id": "good-1", "content": "好的条目", "source": "test",
+                 "created": "2026-06-06T10:00:00+00:00", "type": "note",
+                 "category": "", "session_id": "s1", "context": ""},
+                {"id": "bad-no-content", "source": "test", "created": "2026-06-06T11:00:00+00:00"},
+                {"created": 123},  # 缺少所有必要字段
+                {"id": "good-2", "content": "另一个好条目", "source": "tool",
+                 "created": "2026-06-06T12:00:00+00:00", "type": "preference",
+                 "category": "", "session_id": "s2", "context": ""},
+            ]
+        }
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(mixed_data, ensure_ascii=False), encoding="utf-8"
+        )
+        items = stm.get_by_date("2026-06-06")
+        # 好条目应保留，坏条目应被丢弃
+        assert len(items) == 2
+        assert items[0]["content"] == "好的条目"
+        assert items[1]["content"] == "另一个好条目"
+        # 文件不应被隔离
+        assert not (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+def test_sort_key_uses_string_fallback_for_non_string_created():
+    """items 的 created 字段为非字符串时，排序应降级处理不崩溃。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # created 为数字（非字符串）
+        data_with_numeric_created = {
+            "date": "2026-06-06",
+            "items": [
+                {"id": "item-1", "content": "正常条目", "source": "test",
+                 "created": "2026-06-06T10:00:00+00:00", "type": "note",
+                 "category": "", "session_id": "s1", "context": ""},
+                {"id": "item-2", "content": "数字时间", "source": "test",
+                 "created": 1749200000, "type": "note",
+                 "category": "", "session_id": "s1", "context": ""},
+            ]
+        }
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(data_with_numeric_created, ensure_ascii=False), encoding="utf-8"
+        )
+        # 不应崩溃
+        items = stm.get_by_date("2026-06-06")
+        assert len(items) == 2
+
+        # get_recent 也不应崩溃
+        all_items = stm.get_recent()
+        assert len(all_items) == 2
+
+
+def test_get_recent_with_mixed_created_types_sorts_safely():
+    """get_recent 混合 created 类型（字符串 + 整数）时排序不崩溃。
+    created=None 的条目会被 _sanitize_items 丢弃（None 不是有效值）。
+    """
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "date": "2026-06-06",
+            "items": [
+                {"id": "item-1", "content": "str time", "source": "test",
+                 "created": "2026-06-06T10:00:00+00:00", "type": "note",
+                 "category": "", "session_id": "s1", "context": ""},
+                {"id": "item-2", "content": "int time", "source": "test",
+                 "created": 12345, "type": "note",
+                 "category": "", "session_id": "s1", "context": ""},
+                {"id": "item-3", "content": "none time", "source": "test",
+                 "created": None, "type": "note",
+                 "category": "", "session_id": "s1", "context": ""},
+            ]
+        }
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+        items = stm.get_recent()
+        # created=None 被丢弃，其余 2 个保留
+        assert len(items) == 2
+
+
+def test_all_items_bad_content_is_dropped_file_still_valid():
+    """所有 items 都缺失必要字段时，items 列表为空但文件不被隔离。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "date": "2026-06-06",
+            "items": [
+                {"random_field": "value"},
+                {"id": 123},  # id 不是字符串
+            ]
+        }
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+        items = stm.get_by_date("2026-06-06")
+        assert items == []
+        # 文件不应被隔离 — 结构正确，只是 items 全是坏的
+        assert not (date_dir / "2026-06-06.json.corrupt").exists()
+        # 原始文件应保留
+        assert (date_dir / "2026-06-06.json").exists()
