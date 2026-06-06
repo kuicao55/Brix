@@ -157,15 +157,12 @@ class DreamManager:
             if not self._write_to_long_term("history", history_items):
                 all_writes_ok = False
 
-        # soul → soul_manager
-        # 将所有 soul items 合并为一批写入，避免逐条 save_growth 覆盖已有内容
-        # TODO: Task 3 会实现 _update_soul_growth() 替代此临时方案
+        # soul → soul_manager（人格演化：LLM 提炼后写入）
         if soul_items and self._soul_manager:
             try:
-                batch = "\n".join(f"- {s}" for s in soul_items)
-                self._soul_manager.save_growth(batch)
+                await self._update_soul_growth(llm_client, model, soul_items)
             except Exception:
-                logger.warning("写入 soul 失败", exc_info=True)
+                logger.warning("soul 演化失败", exc_info=True)
                 all_writes_ok = False
 
         # 4. 仅在全部写入成功后清理和推进状态
@@ -193,6 +190,55 @@ class DreamManager:
                 source = i.get("source", "?")
                 lines.append(f"- [{source}] {content}")
         return "\n".join(lines)
+
+    async def _update_soul_growth(
+        self, llm_client: Any, model: str, soul_items: list[str]
+    ) -> None:
+        """人格演化：将新 soul items 与现有成长内容合并，由 LLM 提炼后写入。
+
+        LLM 职责：
+        - 分析性格倾向的变化趋势（不是个别事件，而是趋势）
+        - 提炼经验教训（用户明确纠正或 agent 犯了可总结的错误）
+        - 更新情绪基线（最近的状态和氛围）
+        """
+        existing_growth = ""
+        if self._soul_manager:
+            existing_growth = self._soul_manager.load_growth()
+
+        new_items_text = "\n".join(f"- {s}" for s in soul_items)
+
+        prompt_parts = [
+            "你是人格演化助手。将以下新的灵魂观察与已有成长记录合并，提炼为更新后的成长内容。",
+            "",
+            "提炼原则：",
+            "- 分析性格倾向的变化趋势（不是个别事件，而是趋势）",
+            "- 提炼经验教训（用户明确纠正或 agent 犯了可总结的错误）",
+            "- 更新情绪基线（最近的状态和氛围）",
+            "- 保留已有的重要成长记录，合并新增趋势",
+            "- 趋势性内容优先于个别事件",
+        ]
+        if existing_growth:
+            prompt_parts.append("")
+            prompt_parts.append("已有成长记录：")
+            prompt_parts.append(existing_growth)
+        prompt_parts.append("")
+        prompt_parts.append("新的灵魂观察：")
+        prompt_parts.append(new_items_text)
+        prompt_parts.append("")
+        prompt_parts.append("请输出更新后的完整成长内容（纯文本，不要加任何标题或格式标记）：")
+
+        prompt = "\n".join(prompt_parts)
+
+        response = await llm_client.chat(
+            messages=[
+                {"role": "system", "content": "你是人格演化助手。负责将观察提炼为持久的成长记录。只输出成长内容，不要解释。"},
+                {"role": "user", "content": prompt},
+            ],
+            model=model,
+        )
+        refined = response.content.strip()
+        if refined and self._soul_manager:
+            self._soul_manager.save_growth(refined)
 
     async def _classify_items(self, llm_client: Any, model: str, items: list[dict]) -> dict:
         """用 LLM 对短期记忆分类（五路径）。

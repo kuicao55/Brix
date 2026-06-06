@@ -6,6 +6,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 
 def test_should_dream_returns_false_initially():
     """初始状态不应触发 dream。"""
@@ -833,7 +835,7 @@ def test_run_writes_history_items_to_long_term():
 
 
 def test_run_writes_soul_items_to_soul_manager():
-    """五路径: soul 类 items 应写入 soul_manager。"""
+    """五路径: soul 类 items 应写入 soul_manager（经 LLM 提炼）。"""
     from memory.dream import DreamManager
     from memory.short_term import ShortTermMemory
     from memory.long_term import LongTermMemory
@@ -850,14 +852,18 @@ def test_run_writes_soul_items_to_soul_manager():
         stm.add_item("性格偏内向", "reflection_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
-        mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "user": [],
-            "knowledge": [],
-            "work": [],
-            "history": [],
-            "soul": ["性格偏内向"],
-            "discard": [],
-        }))
+        # run() 现在调用两次 LLM：分类 + soul 演化
+        mock_llm.chat.side_effect = [
+            MagicMock(content=json.dumps({
+                "user": [],
+                "knowledge": [],
+                "work": [],
+                "history": [],
+                "soul": ["性格偏内向"],
+                "discard": [],
+            })),
+            MagicMock(content="性格倾向：偏内向"),
+        ]
 
         dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
         dm._state["sessions_since_dream"] = 5
@@ -866,7 +872,7 @@ def test_run_writes_soul_items_to_soul_manager():
         asyncio.run(dm.run(mock_llm, "test/model"))
 
         soul_content = sm.load_growth()
-        assert "性格偏内向" in soul_content, "soul items 应通过 soul_manager 写入"
+        assert "偏内向" in soul_content, "soul items 应经 LLM 提炼后通过 soul_manager 写入"
 
 
 def test_degraded_soul_manager_none_prevents_cleanup():
@@ -926,14 +932,18 @@ def test_five_path_run_mixed_all_sinks():
         stm.add_item("混合测试", "pref_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
-        mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "user": ["用户喜欢咖啡"],
-            "knowledge": ["Python 是解释型语言"],
-            "work": ["项目 deadline 下周五"],
-            "history": ["去年去了日本"],
-            "soul": ["容易焦虑"],
-            "discard": ["天气不错"],
-        }))
+        # run() 现在调用两次 LLM：分类 + soul 演化
+        mock_llm.chat.side_effect = [
+            MagicMock(content=json.dumps({
+                "user": ["用户喜欢咖啡"],
+                "knowledge": ["Python 是解释型语言"],
+                "work": ["项目 deadline 下周五"],
+                "history": ["去年去了日本"],
+                "soul": ["容易焦虑"],
+                "discard": ["天气不错"],
+            })),
+            MagicMock(content="情绪基线：容易焦虑，需要关注"),
+        ]
 
         dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
         dm._state["sessions_since_dream"] = 5
@@ -946,7 +956,7 @@ def test_five_path_run_mixed_all_sinks():
         assert "Python 是解释型语言" in ltm.read_topic("knowledge.md"), "knowledge items 应写入 knowledge.md"
         assert "项目 deadline 下周五" in ltm.read_topic("work.md"), "work items 应写入 work.md"
         assert "去年去了日本" in ltm.read_topic("history.md"), "history items 应写入 history.md"
-        assert "容易焦虑" in sm.load_growth(), "soul items 应写入 soul.md"
+        assert "焦虑" in sm.load_growth(), "soul items 应经 LLM 提炼后写入 soul.md"
 
         # discard 不写入任何 sink，但 dream 应成功完成
         assert dm._state["total_dreams"] == 1, "混合场景应成功完成 dream"
@@ -1078,7 +1088,7 @@ def test_all_empty_buckets_does_not_delete_memory():
 
 
 def test_soul_items_batched_before_save_growth():
-    """Finding 3: soul items 应被合并为一次 save_growth 调用，而非逐条调用。"""
+    """Finding 3: soul items 应被合并后经 LLM 提炼写入（一次 _update_soul_growth 调用）。"""
     from memory.dream import DreamManager
     from memory.short_term import ShortTermMemory
     from memory.long_term import LongTermMemory
@@ -1095,12 +1105,295 @@ def test_soul_items_batched_before_save_growth():
         stm.add_item("混合测试", "pref_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
+        # run() 现在调用两次 LLM：分类 + soul 演化
+        mock_llm.chat.side_effect = [
+            MagicMock(content=json.dumps({
+                "user": [],
+                "knowledge": [],
+                "work": [],
+                "history": [],
+                "soul": ["性格偏内向", "需要更多耐心"],
+                "discard": [],
+            })),
+            MagicMock(content="性格倾向：偏内向但正在学习耐心"),
+        ]
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # LLM 提炼后的结果应被写入
+        soul_content = sm.load_growth()
+        assert "偏内向" in soul_content, \
+            f"soul 演化结果应在成长中，实际:\n{soul_content}"
+        assert "耐心" in soul_content, \
+            f"soul 演化结果应在成长中，实际:\n{soul_content}"
+
+
+# === Task 3: _update_soul_growth 人格演化逻辑 ===
+
+
+def test_update_soul_growth_calls_llm_with_existing_growth():
+    """_update_soul_growth 应读取现有成长内容并结合新 items 发送给 LLM 做提炼。"""
+    from memory.dream import DreamManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), soul_manager=sm)
+
+        # 预设已有成长内容
+        sm.save_growth("性格偏内向")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(
+            content="性格偏内向，近期变得更加耐心"
+        )
+
+        asyncio.run(dm._update_soul_growth(mock_llm, "test/model", ["变得更加耐心"]))
+
+        # LLM 应被调用一次
+        assert mock_llm.chat.call_count == 1, "应调用 LLM 一次"
+        # prompt 应包含已有成长内容
+        call_args = mock_llm.chat.call_args
+        prompt_text = call_args.kwargs["messages"][1]["content"]
+        assert "性格偏内向" in prompt_text, \
+            f"prompt 应包含已有成长内容，实际 prompt:\n{prompt_text}"
+        assert "变得更加耐心" in prompt_text, \
+            f"prompt 应包含新 soul items，实际 prompt:\n{prompt_text}"
+
+
+def test_update_soul_growth_saves_llm_output():
+    """_update_soul_growth 应将 LLM 提炼后的内容通过 save_growth 写入。"""
+    from memory.dream import DreamManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), soul_manager=sm)
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(
+            content="性格偏内向，近期在学习耐心"
+        )
+
+        asyncio.run(dm._update_soul_growth(mock_llm, "test/model", ["学习耐心"]))
+
+        growth = sm.load_growth()
+        assert "学习耐心" in growth, \
+            f"LLM 输出应被 save_growth 写入，实际成长内容:\n{growth}"
+
+
+def test_update_soul_growth_empty_existing():
+    """_update_soul_growth 无已有成长内容时，应仅基于新 items 做提炼。"""
+    from memory.dream import DreamManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), soul_manager=sm)
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(
+            content="初识印象：用户偏好直接沟通"
+        )
+
+        asyncio.run(dm._update_soul_growth(mock_llm, "test/model", ["用户偏好直接沟通"]))
+
+        # LLM 应被调用
+        assert mock_llm.chat.call_count == 1
+        growth = sm.load_growth()
+        assert "直接沟通" in growth, \
+            f"首次成长内容应被写入，实际:\n{growth}"
+
+
+def test_update_soul_growth_llm_failure_propagates():
+    """_update_soul_growth LLM 调用失败时应抛出异常。"""
+    from memory.dream import DreamManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), soul_manager=sm)
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.side_effect = RuntimeError("LLM 连接超时")
+
+        with pytest.raises(RuntimeError, match="LLM 连接超时"):
+            asyncio.run(dm._update_soul_growth(mock_llm, "test/model", ["测试"]))
+
+
+def test_update_soul_growth_independent_llm_call():
+    """_update_soul_growth 的 LLM 调用应独立于分类调用（不同 prompt、不同 role 设置）。"""
+    from memory.dream import DreamManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), soul_manager=sm)
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(
+            content="人格演化结果"
+        )
+
+        asyncio.run(dm._update_soul_growth(mock_llm, "test/model", ["测试项"]))
+
+        # 检查 system message 不是分类助手
+        call_args = mock_llm.chat.call_args
+        system_msg = call_args.kwargs["messages"][0]["content"]
+        assert "分类" not in system_msg, \
+            f"soul 演化的 system prompt 不应是分类助手，实际:\n{system_msg}"
+
+
+def test_update_soul_growth_merges_and_refines():
+    """_update_soul_growth 应将新旧内容合并后交给 LLM 做趋势提炼，而非简单追加。"""
+    from memory.dream import DreamManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), soul_manager=sm)
+
+        # 预设已有成长内容
+        sm.save_growth("用户近期情绪稳定")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(
+            content="性格倾向：用户近期情绪稳定，但工作压力导致偶尔焦虑"
+        )
+
+        asyncio.run(dm._update_soul_growth(
+            mock_llm, "test/model",
+            ["工作压力大", "偶尔感到焦虑"],
+        ))
+
+        growth = sm.load_growth()
+        # LLM 提炼后的结果应被保存（不是简单追加原始 items）
+        assert "焦虑" in growth, \
+            f"LLM 提炼结果应被保存，实际:\n{growth}"
+
+
+def test_run_calls_update_soul_growth_instead_of_direct_save():
+    """run() 中 soul 路径应调用 _update_soul_growth，而非直接 save_growth。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=sm)
+
+        stm.add_item("性格偏内向", "reflection_detection", session_id="sess-1")
+
+        # run() 会调用两次 LLM：分类 + soul 演化
+        mock_llm = AsyncMock()
+        mock_llm.chat.side_effect = [
+            # 第一次：分类
+            MagicMock(content=json.dumps({
+                "user": [],
+                "knowledge": [],
+                "work": [],
+                "history": [],
+                "soul": ["性格偏内向"],
+                "discard": [],
+            })),
+            # 第二次：soul 演化提炼
+            MagicMock(content="性格倾向：偏内向，但近期社交能力有所提升"),
+        ]
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # LLM 应被调用两次（分类 + soul 演化）
+        assert mock_llm.chat.call_count == 2, \
+            f"run() 应调用 LLM 两次（分类 + soul 演化），实际调用 {mock_llm.chat.call_count} 次"
+        # 成长内容应是 LLM 提炼后的结果
+        growth = sm.load_growth()
+        assert "内向" in growth, \
+            f"soul 演化结果应被写入，实际:\n{growth}"
+
+
+def test_run_soul_evolution_failure_blocks_cleanup():
+    """run() 中 soul 演化 LLM 调用失败时，不应清理短期记忆。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=sm)
+
+        stm.add_item("性格偏内向", "reflection_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.side_effect = [
+            # 第一次：分类成功
+            MagicMock(content=json.dumps({
+                "user": [],
+                "knowledge": [],
+                "work": [],
+                "history": [],
+                "soul": ["性格偏内向"],
+                "discard": [],
+            })),
+            # 第二次：soul 演化 LLM 失败
+            RuntimeError("LLM 调用失败"),
+        ]
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 演化失败应被视为写入失败，不应清理短期记忆
+        assert len(stm.get_by_session("sess-1")) > 0, \
+            "soul 演化失败时不应清理短期记忆"
+        assert dm._state["sessions_since_dream"] == 5, \
+            "soul 演化失败时不应推进 dream 状态"
+
+
+def test_run_no_soul_items_skips_soul_llm():
+    """run() 中无 soul items 时，不应调用 soul 演化 LLM。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=sm)
+
+        stm.add_item("测试", "pref_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        # 只有分类调用，无 soul items
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "user": [],
+            "user": ["测试用户"],
             "knowledge": [],
             "work": [],
             "history": [],
-            "soul": ["性格偏内向", "需要更多耐心"],
+            "soul": [],
             "discard": [],
         }))
 
@@ -1110,9 +1403,6 @@ def test_soul_items_batched_before_save_growth():
 
         asyncio.run(dm.run(mock_llm, "test/model"))
 
-        # 所有 soul items 都应被写入
-        soul_content = sm.load_growth()
-        assert "性格偏内向" in soul_content, \
-            f"soul item '性格偏内向' 应在成长中，实际:\n{soul_content}"
-        assert "需要更多耐心" in soul_content, \
-            f"soul item '需要更多耐心' 应在成长中，实际:\n{soul_content}"
+        # 只应调用一次 LLM（分类），不应有第二次（soul 演化）
+        assert mock_llm.chat.call_count == 1, \
+            f"无 soul items 时不应调用 soul 演化 LLM，实际调用 {mock_llm.chat.call_count} 次"
