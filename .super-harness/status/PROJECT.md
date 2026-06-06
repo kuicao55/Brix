@@ -7,7 +7,7 @@
 **Project Name:** Brix
 **Harness Version:** 3.6.0
 **Generated:** 2026-05-07
-**Last Updated:** 2026-05-08 (milestone-8 complete)
+**Last Updated:** 2026-06-06 (milestone-22 complete)
 
 ## Tech Stack
 
@@ -29,8 +29,12 @@
 | Memory | Conversation persistence, context window management | `memory/` |
 | **MemoryProvider** | **Memory system Protocol + factory (soul, user, session, strategy)** | **`memory/__init__.py`, `memory/provider.py`** |
 | **SessionManager** | **Session CRUD, UUID validation, atomic writes, concurrent resume** | **`memory/session.py`** |
-| **SoulManager** | **Agent personality (soul.md) load/exists** | **`memory/soul.py`** |
+| **SoulManager** | **Agent personality (soul.md) — fixed/growth sections, load_fixed, load_growth, save_growth with flock** | **`memory/soul.py`** |
 | **UserMemoryManager** | **User profile (user.md) load/exists** | **`memory/user.py`** |
+| **DreamManager** | **Dream 蒸馏: 5-path classification (user/knowledge/work/history/soul), personality evolution** | **`memory/dream.py`** |
+| **ShortTermMemory** | **Date-based short-term memory with fcntl.flock, item-level CRUD** | **`memory/short_term.py`** |
+| **LongTermMemory** | **Category-based long-term memory (user/knowledge/work/history.md), append+dedup** | **`memory/long_term.py`** |
+| **KeywordMemorySearcher** | **Cross-module keyword search (short-term + long-term)** | **`memory/searcher.py`** |
 | **FileWriteTool** | **Write files in memory/data/ with path sandboxing** | **`capability/tools/file_write.py`** |
 | **FileEditTool** | **Edit files in memory/data/ with exact match** | **`capability/tools/file_edit.py`** |
 | CLI | User input, output display, command handling | `cli/` |
@@ -42,6 +46,8 @@
 | **ToolDisplay** | **Tool execution status panels with Rich markup** | **`cli/tool_display.py`** |
 | Log | FlowLog event recording, JSONL persistence | `log/` |
 | **Hook** | **Event registry, observer pattern dispatch** | **`hooks/`** |
+| **SideTaskManager** | **Background side tasks (dream, session_title, context_compress, etc.)** | **`side/`** |
+| **SaveMemoryTool** | **Tool for agent to主动写入短期记忆 (preference/fact/emotion/task/reflection)** | **`capability/tools/save_memory.py`** |
 
 ## Key Architectural Decisions
 
