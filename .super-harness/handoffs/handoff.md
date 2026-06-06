@@ -1,7 +1,7 @@
 # Handoff — 2026-06-06 22:00
 
 ## State
-**Status:** MILESTONE_DONE
+**Status:** ALL_DONE
 
 ## Context Index
 - **spec:** .super-harness/specs/2026-06-06-memory-system-v3.md
@@ -32,4 +32,4 @@ None
 soul.md固定/成长分隔使用Markdown标题; 人格演化LLM独立调用(不与分类合并); Dream阈值不变(MIN_HOURS=24,MIN_SESSIONS=5); Dream输入格式加入type/category标签
 
 ## Next Action
-/super-harness:plan for milestone-23
+Project complete — all 21 milestones PASSED
