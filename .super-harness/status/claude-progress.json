@@ -1,7 +1,7 @@
 {
   "project": "Brix",
   "created_at": "2026-05-02T23:48:07Z",
-  "updated_at": "2026-05-29T09:02:30.342955+00:00",
+  "updated_at": "2026-06-06T12:00:00Z",
   "spec_file": ".super-harness/specs/2026-05-07-phase1-experience-upgrade.md",
   "current_session_handoff": ".super-harness/handoffs/handoff.md",
   "version_branch": "feature/voice-module",
@@ -230,6 +230,19 @@
       "plan_file": ".super-harness/plans/2026-05-29-milestone-20.md",
       "session_date": "2026-05-29T00:32:25Z",
       "notes": "Completed 2026-05-29. 2 tasks: DreamManager (12 tests, 4 CQR rounds), DreamTask+CLI (3 tests, 1 CQR round). 802 tests pass, 5 pre-existing failures."
+    },
+    {
+      "id": "milestone-21",
+      "title": "记忆存储 + 写入方式全面改造",
+      "description": "记忆系统 v3: 短期记忆按日期文件、长期记忆按大分类、SaveMemoryTool、Side Session Summary、移除 PrefDetectionTask",
+      "depends_on": [
+        "milestone-20"
+      ],
+      "passed": true,
+      "spec_file": ".super-harness/specs/2026-06-06-memory-system-v3.md",
+      "plan_file": ".super-harness/plans/2026-06-06-milestone-21.md",
+      "session_date": "2026-06-06T00:00:00Z",
+      "notes": "6 tasks all complete. 918 tests pass (6 pre-existing failures)."
     }
   ]
 }
