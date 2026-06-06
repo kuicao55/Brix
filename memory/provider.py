@@ -69,6 +69,7 @@ class BrixMemoryProvider:
                 short_term=self._short_term,
                 long_term=self._long_term,
                 user_manager=self._user,
+                soul_manager=self._soul,
             )
         except OSError:
             logger.warning("DreamManager 初始化失败", exc_info=True)

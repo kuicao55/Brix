@@ -1233,6 +1233,16 @@ class TestBrixMemoryProvider:
         assert len(messages) >= 1
         assert messages[0]["role"] == "system"
 
+    def test_dream_manager_receives_soul_manager(self, tmp_path):
+        """BrixMemoryProvider 初始化 DreamManager 时应传入 soul_manager。"""
+        from memory import create_memory_provider
+        provider = create_memory_provider(data_dir=tmp_path)
+        # DreamManager 应已初始化（非 None）
+        assert provider.dream is not None, "DreamManager 应已初始化"
+        # DreamManager 的 _soul_manager 应与 provider 的 _soul 是同一实例
+        assert provider.dream._soul_manager is provider._soul, \
+            "DreamManager 的 soul_manager 应与 provider._soul 是同一实例"
+
 
 class TestConcurrentResume:
     """并发 resume 安全性测试 — 验证 session-level locking + merge。"""
