@@ -80,30 +80,44 @@ class LongTermMemory:
         """
         path = self._topic_path(topic_file)
 
-        if append and path.exists():
-            # 追加模式：文件锁保护读-去重-写关键区域
+        if append:
+            # 追加模式：文件锁保护完整的 读-去重-写-原子替换 流程
+            # 即使文件不存在也要加锁，防止两个 writer 竞争创建新文件
             with self._file_lock(path):
-                existing = path.read_text(encoding="utf-8")
-                existing_fm = self._parse_frontmatter(existing)
-                existing_body = self._extract_body(existing)
-                # 去重：行级精确匹配（strip 后），而非子串匹配
-                existing_lines = {line.strip() for line in existing_body.splitlines()}
-                if content.strip() in existing_lines:
-                    return
-                # 合并 frontmatter（新的覆盖旧的）
-                merged_fm = {**existing_fm, **frontmatter}
-                fm_str = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
-                new_body = existing_body.rstrip() + "\n" + content + "\n"
-                full = f"---\n{fm_str}\n---\n\n{new_body}"
+                if path.exists():
+                    existing = path.read_text(encoding="utf-8")
+                    existing_fm = self._parse_frontmatter(existing)
+                    existing_body = self._extract_body(existing)
+                    # 去重：行级精确匹配（strip 后），逐行比较
+                    existing_lines = {line.strip() for line in existing_body.splitlines()}
+                    incoming_lines = [line for line in content.splitlines() if line.strip()]
+                    new_lines = [line for line in incoming_lines if line.strip() not in existing_lines]
+                    if not new_lines:
+                        return
+                    # 合并 frontmatter（新的覆盖旧的）
+                    merged_fm = {**existing_fm, **frontmatter}
+                    fm_str = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
+                    new_body = existing_body.rstrip() + "\n" + "\n".join(new_lines) + "\n"
+                    full = f"---\n{fm_str}\n---\n\n{new_body}"
+                else:
+                    fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
+                    full = f"---\n{fm}\n---\n\n{content}"
+                # 锁内完成原子写入
+                self._atomic_write(path, full)
+                return
         else:
             fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
             full = f"---\n{fm}\n---\n\n{content}"
 
-        # 原子写入：先写临时文件，再 replace
+        # 非追加模式：直接原子写入
+        self._atomic_write(path, full)
+
+    def _atomic_write(self, path: Path, content: str) -> None:
+        """原子写入：先写临时文件，再 replace。"""
         fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(full)
+                f.write(content)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, path)
@@ -115,11 +129,29 @@ class LongTermMemory:
             raise
 
     def update_index(self) -> None:
-        """扫描 long-term 目录，重建 MEMORY.md 索引（仅索引 CATEGORY_FILES）。"""
+        """扫描 long-term 目录，重建 MEMORY.md 索引。
+        索引所有 *.md 文件（除 MEMORY.md），包括 CATEGORY_FILES 和其他 topic 文件。
+        """
         entries: list[str] = []
+        indexed_names: set[str] = set()
+        # 先索引 CATEGORY_FILES（保持固定顺序）
         for name in sorted(CATEGORY_FILES):
             p = self._dir / name
             if not p.exists():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+                fm = self._parse_frontmatter(text)
+                topic_name = fm.get("name", p.stem)
+                desc = fm.get("description", "")
+                entries.append(f"- [{topic_name}]({name}) — {desc}")
+                indexed_names.add(name)
+            except OSError:
+                continue
+        # 再索引其他 *.md 文件（非 CATEGORY_FILES、非 MEMORY.md）
+        for p in sorted(self._dir.glob("*.md")):
+            name = p.name
+            if name in indexed_names or name in self._RESERVED_FILES:
                 continue
             try:
                 text = p.read_text(encoding="utf-8")

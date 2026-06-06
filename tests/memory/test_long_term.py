@@ -1,4 +1,6 @@
+import os
 import pytest
+from contextlib import contextmanager
 from pathlib import Path
 import tempfile
 
@@ -366,9 +368,9 @@ def test_extract_body_with_delimiter_in_content():
     assert "正文第二行" in body
 
 
-def test_update_index_only_indexes_category_files():
-    """Issue 4: update_index 应只索引 CATEGORY_FILES，不索引其他 *.md 文件。
-    当前 bug：所有 *.md 文件（除 MEMORY.md）都被索引。
+def test_update_index_includes_non_category_topic_files():
+    """update_index 应索引所有 *.md 文件（除 MEMORY.md），包括非分类 topic 文件。
+    修复 Issue 3 后，dream.py 等模块写入的 topic 文件也会被索引。
     """
     from memory.long_term import LongTermMemory, CATEGORY_FILES
     with tempfile.TemporaryDirectory() as d:
@@ -383,5 +385,158 @@ def test_update_index_only_indexes_category_files():
         indexed_files = {t["file"] for t in topics}
         # 分类文件应在索引中
         assert "user.md" in indexed_files
-        # 非分类文件不应在索引中
-        assert "custom.md" not in indexed_files
+        # 非分类文件也应在索引中（修复后行为）
+        assert "custom.md" in indexed_files
+        # MEMORY.md 不应在索引中
+        assert "MEMORY.md" not in indexed_files
+
+
+# ============================================================
+# CQR Round 2 Fix Tests
+# ============================================================
+
+
+def test_cqr2_lock_covers_write_and_replace():
+    """Issue 1 (CRITICAL): append 锁必须覆盖 temp write + os.replace 阶段。
+    验证 os.replace 在 _file_lock 上下文内被调用，而非锁外。
+    """
+    from memory.long_term import LongTermMemory
+    import unittest.mock
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+        # 先创建文件
+        ltm.write_topic("user.md", "初始内容", fm, append=True)
+
+        # 追踪 os.replace 调用时锁是否仍持有
+        lock_is_held = False
+        replace_called_inside_lock = []
+
+        original_file_lock = ltm._file_lock
+
+        @contextmanager
+        def tracking_file_lock(path, exclusive=True):
+            nonlocal lock_is_held
+            lock_is_held = True
+            try:
+                with original_file_lock(path, exclusive):
+                    yield
+            finally:
+                lock_is_held = False
+
+        original_replace = os.replace
+
+        def tracking_replace(src, dst):
+            replace_called_inside_lock.append(lock_is_held)
+            return original_replace(src, dst)
+
+        with unittest.mock.patch.object(ltm, '_file_lock', tracking_file_lock), \
+             unittest.mock.patch('os.replace', side_effect=tracking_replace):
+            ltm.write_topic("user.md", "追加内容", fm, append=True)
+
+        assert len(replace_called_inside_lock) == 1, "os.replace 应被调用一次"
+        assert replace_called_inside_lock[0] is True, \
+            "os.replace 必须在 _file_lock 持有期间调用（当前在锁外调用）"
+
+
+def test_cqr2_append_on_missing_file_uses_lock():
+    """Issue 2 (HIGH): append=True 且文件不存在时，仍应使用文件锁。
+    两个 writer 竞争创建新文件时，必须有锁保护。
+    """
+    from memory.long_term import LongTermMemory
+    import unittest.mock
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        # 追踪 _file_lock 是否被调用
+        lock_called = False
+        original_file_lock = ltm._file_lock
+
+        @contextmanager
+        def tracking_file_lock(path, exclusive=True):
+            nonlocal lock_called
+            lock_called = True
+            with original_file_lock(path, exclusive):
+                yield
+
+        with unittest.mock.patch.object(ltm, '_file_lock', tracking_file_lock):
+            # 文件不存在时 append
+            ltm.write_topic("user.md", "第一条", fm, append=True)
+
+        assert lock_called, "append=True 且文件不存在时，_file_lock 应被调用"
+
+
+def test_cqr2_update_index_includes_topic_files():
+    """Issue 3 (HIGH): update_index 应索引 CATEGORY_FILES + 其他 topic 文件。
+    dream.py 等模块仍写入非分类 topic 文件，这些文件不能从索引中消失。
+    """
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+        # 写入分类文件
+        ltm.write_topic("user.md", "用户内容", fm)
+        # 写入非分类 topic 文件（模拟 dream.py 写入）
+        ltm.write_topic("dream_insights.md", "Dream 内容", fm)
+        ltm.write_topic("custom_topic.md", "自定义内容", fm)
+        ltm.update_index()
+
+        topics = ltm.list_topics()
+        indexed_files = {t["file"] for t in topics}
+        # 分类文件应在索引中
+        assert "user.md" in indexed_files
+        # 非分类 topic 文件也应在索引中
+        assert "dream_insights.md" in indexed_files, \
+            "非分类 topic 文件（如 dream 写入的文件）应被索引"
+        assert "custom_topic.md" in indexed_files, \
+            "非分类 topic 文件应被索引"
+
+
+def test_cqr2_multiline_content_dedup():
+    """Issue 4 (MEDIUM): 多行 payload 的行级去重应正确工作。
+    当前 bug：content.strip() 是整个多行字符串，与单行集合比较永远不匹配。
+    """
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        multiline = "第一行\n第二行\n第三行"
+        ltm.write_topic("user.md", multiline, fm, append=True)
+        # 再次追加相同多行内容
+        ltm.write_topic("user.md", multiline, fm, append=True)
+
+        content = ltm.read_topic("user.md")
+        body = ltm._extract_body(content)
+        # 多行内容去重后应只出现一次
+        count = body.count("第一行")
+        assert count == 1, f"多行内容应去重，'第一行' 出现 {count} 次"
+
+
+def test_cqr2_multiline_partial_overlap_not_deduped():
+    """Issue 4 (MEDIUM): 多行 payload 中部分行重复不应整块去重。
+    如果已有 ['第一行', '第二行']，追加 ['第二行', '第三行'] 只应跳过已有的行。
+    """
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        ltm.write_topic("user.md", "第一行\n第二行", fm, append=True)
+        ltm.write_topic("user.md", "第二行\n第三行", fm, append=True)
+
+        content = ltm.read_topic("user.md")
+        body = ltm._extract_body(content)
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        # 应有 3 行（第一行、第二行、第三行），第二行不重复
+        assert "第一行" in lines
+        assert "第二行" in lines
+        assert "第三行" in lines
+        assert lines.count("第二行") == 1, \
+            f"'第二行' 应去重，出现 {lines.count('第二行')} 次"
