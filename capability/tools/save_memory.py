@@ -101,10 +101,8 @@ class SaveMemoryTool(Tool):
         if not session_id:
             return "错误：当前无活跃 session，无法保存记忆。"
 
-        # 7. 从 session 索引中查找 session 开始日期
+        # 7. 从 session 索引中查找 session 开始日期（降级到当天）
         date = self._resolve_session_date(session_id)
-        if not date:
-            return f"错误：无法找到 session {session_id} 的信息。"
 
         # 8. 写入短期记忆
         try:
@@ -120,17 +118,21 @@ class SaveMemoryTool(Tool):
             return f"已保存：[{item_type}] {content[:50]}"
         except Exception as e:
             logger.warning("SaveMemoryTool 写入失败: %s", e, exc_info=True)
-            return f"保存失败：{e}"
+            return "保存失败：写入记忆时发生内部错误，请稍后重试。"
 
-    def _resolve_session_date(self, session_id: str) -> str | None:
-        """从 session 索引中查找 session 的 created 日期，返回 YYYY-MM-DD。"""
+    def _resolve_session_date(self, session_id: str) -> str:
+        """从 session 索引中查找 session 的 created 日期，返回 YYYY-MM-DD。
+
+        降级策略：查找失败时 fallback 到当天日期，不阻塞写入。
+        """
         try:
             sessions = self._provider.list_sessions()
-        except Exception:
-            return None
-        for s in sessions:
-            if s.get("id") == session_id:
-                created = s.get("created", "")
-                if isinstance(created, str) and len(created) >= 10:
-                    return created[:10]
-        return None
+            for s in sessions:
+                if s.get("id") == session_id:
+                    created = s.get("created", "")
+                    if isinstance(created, str) and len(created) >= 10:
+                        return created[:10]
+        except Exception as e:
+            logger.warning("查询 session 索引失败，fallback 到当天日期: %s", e)
+        # 降级：使用当天日期
+        return datetime.now().strftime("%Y-%m-%d")

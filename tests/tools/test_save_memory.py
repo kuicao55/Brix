@@ -41,6 +41,11 @@ def tool(short_term: ShortTermMemory, mock_provider: MagicMock) -> SaveMemoryToo
     return SaveMemoryTool(short_term=short_term, memory_provider=mock_provider)
 
 
+def _today_str() -> str:
+    """返回今天的日期字符串 YYYY-MM-DD。"""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 class TestSaveMemoryToolSchema:
     """测试工具元数据。"""
 
@@ -178,16 +183,34 @@ class TestSaveMemoryToolWrite:
         assert "错误" in result or "session" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_session_not_in_index_returns_error(
+    async def test_session_not_in_index_uses_today_fallback(
         self, short_term: ShortTermMemory
     ) -> None:
-        """session 不在索引中时应返回错误。"""
+        """session 不在索引中时，应 fallback 到当天日期并写入成功。"""
         provider = MagicMock()
         provider.current_session_id = "unknown-session"
         provider.list_sessions.return_value = []
         tool = SaveMemoryTool(short_term=short_term, memory_provider=provider)
-        result = await tool.execute(type="fact", category="user", content="test")
-        assert "错误" in result or "session" in result.lower()
+        result = await tool.execute(type="fact", category="user", content="fallback test")
+        assert "已保存" in result or "成功" in result
+        items = short_term.get_by_date(_today_str())
+        assert len(items) >= 1
+        assert items[0]["content"] == "fallback test"
+
+    @pytest.mark.asyncio
+    async def test_session_index_read_error_uses_today_fallback(
+        self, short_term: ShortTermMemory
+    ) -> None:
+        """list_sessions() 抛异常时，应 fallback 到当天日期并写入成功。"""
+        provider = MagicMock()
+        provider.current_session_id = "some-session"
+        provider.list_sessions.side_effect = RuntimeError("I/O error")
+        tool = SaveMemoryTool(short_term=short_term, memory_provider=provider)
+        result = await tool.execute(type="fact", category="user", content="io error fallback")
+        assert "已保存" in result or "成功" in result
+        items = short_term.get_by_date(_today_str())
+        assert len(items) >= 1
+        assert items[0]["content"] == "io error fallback"
 
     @pytest.mark.asyncio
     async def test_all_valid_types(
@@ -201,3 +224,25 @@ class TestSaveMemoryToolWrite:
             assert "已保存" in result or "成功" in result
         items = short_term.get_recent(limit=10)
         assert len(items) == 5
+
+    @pytest.mark.asyncio
+    async def test_write_error_returns_sanitized_message(
+        self, short_term: ShortTermMemory
+    ) -> None:
+        """写入失败时应返回不泄露内部路径/异常细节的错误消息。"""
+        provider = MagicMock()
+        provider.current_session_id = "test-session-uuid"
+        provider.list_sessions.return_value = [
+            {"id": "test-session-uuid", "created": "2026-06-06T10:00:00+00:00"},
+        ]
+        tool = SaveMemoryTool(short_term=short_term, memory_provider=provider)
+        # 让 add_item 抛出包含敏感路径的异常
+        short_term.add_item = MagicMock(  # type: ignore[method-assign]
+            side_effect=OSError("[Errno 13] Permission denied: '/Users/kuicao/Applications/Brix/memory/data/short-term/2026-06-06.json'")
+        )
+        result = await tool.execute(type="fact", category="user", content="should fail")
+        assert "保存失败" in result
+        # 不应泄露内部路径
+        assert "/Users/kuicao" not in result
+        assert "Permission denied" not in result
+        assert "memory/data" not in result
