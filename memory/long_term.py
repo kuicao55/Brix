@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 # topic_file 白名单：仅允许字母、数字、下划线、短横线、点号
 _SAFE_TOPIC_RE = re.compile(r"^[A-Za-z0-9_\-\.]+$")
 
+# 按大分类存储的固定文件列表
+CATEGORY_FILES: set[str] = {"user.md", "knowledge.md", "work.md", "history.md"}
+
 
 class LongTermMemory:
     """管理长期记忆文件和 MEMORY.md 索引。"""
@@ -54,11 +57,31 @@ class LongTermMemory:
             return ""
         return path.read_text(encoding="utf-8")
 
-    def write_topic(self, topic_file: str, content: str, frontmatter: dict[str, str]) -> None:
-        """原子写入主题文件，包含 frontmatter。"""
+    def write_topic(self, topic_file: str, content: str, frontmatter: dict[str, str], append: bool = False) -> None:
+        """原子写入主题文件，包含 frontmatter。
+
+        Args:
+            append: True 时追加内容（带去重），False 时覆盖写入。
+        """
         path = self._topic_path(topic_file)
-        fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
-        full = f"---\n{fm}\n---\n\n{content}"
+
+        if append and path.exists():
+            # 追加模式：读取已有内容，去重后追加
+            existing = path.read_text(encoding="utf-8")
+            existing_fm = self._parse_frontmatter(existing)
+            existing_body = self._extract_body(existing)
+            # 去重：新内容（strip 后）已在已有 body 中则跳过
+            if content.strip() in existing_body:
+                return
+            # 合并 frontmatter（新的覆盖旧的）
+            merged_fm = {**existing_fm, **frontmatter}
+            fm = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
+            new_body = existing_body.rstrip() + "\n" + content + "\n"
+            full = f"---\n{fm}\n---\n\n{new_body}"
+        else:
+            fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
+            full = f"---\n{fm}\n---\n\n{content}"
+
         # 原子写入：先写临时文件，再 replace
         fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
         try:
@@ -125,3 +148,19 @@ class LongTermMemory:
                 k, v = line.split(":", 1)
                 result[k.strip()] = v.strip()
         return result
+
+    @staticmethod
+    def _extract_body(text: str) -> str:
+        """提取 frontmatter 之后的 body 内容。无 frontmatter 时返回原文。"""
+        if not text.startswith("---"):
+            return text
+        end = text.find("---", 3)
+        if end == -1:
+            return text
+        body = text[end + 3:]
+        # 跳过 frontmatter 结束后的换行
+        if body.startswith("\n"):
+            body = body[1:]
+        if body.startswith("\n"):
+            body = body[1:]
+        return body
