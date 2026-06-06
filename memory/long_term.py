@@ -80,18 +80,23 @@ class LongTermMemory:
         """
         path = self._topic_path(topic_file)
 
-        if append:
-            # 追加模式：文件锁保护完整的 读-去重-写-原子替换 流程
-            # 即使文件不存在也要加锁，防止两个 writer 竞争创建新文件
-            with self._file_lock(path):
+        # 所有写路径共用同一把锁，防止并发 overwrite + append 丢失数据
+        with self._file_lock(path):
+            if append:
                 if path.exists():
                     existing = path.read_text(encoding="utf-8")
                     existing_fm = self._parse_frontmatter(existing)
                     existing_body = self._extract_body(existing)
-                    # 去重：行级精确匹配（strip 后），逐行比较
-                    existing_lines = {line.strip() for line in existing_body.splitlines()}
+                    # 去重：行级精确匹配（strip 后），用可变 seen 集合
+                    # 初始化为已有行，逐行处理 incoming 并更新 seen
+                    seen = {line.strip() for line in existing_body.splitlines() if line.strip()}
                     incoming_lines = [line for line in content.splitlines() if line.strip()]
-                    new_lines = [line for line in incoming_lines if line.strip() not in existing_lines]
+                    new_lines = []
+                    for line in incoming_lines:
+                        stripped = line.strip()
+                        if stripped not in seen:
+                            seen.add(stripped)
+                            new_lines.append(line)
                     if not new_lines:
                         return
                     # 合并 frontmatter（新的覆盖旧的）
@@ -100,17 +105,24 @@ class LongTermMemory:
                     new_body = existing_body.rstrip() + "\n" + "\n".join(new_lines) + "\n"
                     full = f"---\n{fm_str}\n---\n\n{new_body}"
                 else:
+                    # 新文件也要去重 payload 内部重复行
+                    seen: set[str] = set()
+                    deduped_lines = []
+                    for line in content.splitlines():
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        if stripped not in seen:
+                            seen.add(stripped)
+                            deduped_lines.append(line)
                     fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
-                    full = f"---\n{fm}\n---\n\n{content}"
-                # 锁内完成原子写入
-                self._atomic_write(path, full)
-                return
-        else:
-            fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
-            full = f"---\n{fm}\n---\n\n{content}"
+                    full = f"---\n{fm}\n---\n\n" + "\n".join(deduped_lines) + "\n"
+            else:
+                fm = "\n".join(f"{k}: {v}" for k, v in frontmatter.items())
+                full = f"---\n{fm}\n---\n\n{content}"
 
-        # 非追加模式：直接原子写入
-        self._atomic_write(path, full)
+            # 锁内完成原子写入
+            self._atomic_write(path, full)
 
     def _atomic_write(self, path: Path, content: str) -> None:
         """原子写入：先写临时文件，再 replace。"""

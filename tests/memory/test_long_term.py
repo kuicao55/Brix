@@ -540,3 +540,125 @@ def test_cqr2_multiline_partial_overlap_not_deduped():
         assert "第三行" in lines
         assert lines.count("第二行") == 1, \
             f"'第二行' 应去重，出现 {lines.count('第二行')} 次"
+
+
+# ============================================================
+# CQR Round 3 Fix Tests
+# ============================================================
+
+
+def test_cqr3_overwrite_uses_file_lock():
+    """Issue 1 (HIGH): append=False（覆盖写入）也应使用文件锁。
+    并发的 overwrite + append 操作必须使用同一把锁，否则会丢失数据。
+    验证 write_topic(..., append=False) 也会调用 _file_lock。
+    """
+    from memory.long_term import LongTermMemory
+    import unittest.mock
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        lock_called = False
+        original_file_lock = ltm._file_lock
+
+        @contextmanager
+        def tracking_file_lock(path, exclusive=True):
+            nonlocal lock_called
+            lock_called = True
+            with original_file_lock(path, exclusive):
+                yield
+
+        with unittest.mock.patch.object(ltm, '_file_lock', tracking_file_lock):
+            ltm.write_topic("user.md", "覆盖内容", fm, append=False)
+
+        assert lock_called, "append=False（覆盖写入）也应使用 _file_lock 保护"
+
+
+def test_cqr3_overwrite_lock_covers_atomic_write():
+    """Issue 1 (HIGH): append=False 时，锁应覆盖整个写入操作（包括 _atomic_write）。
+    验证 os.replace 在 _file_lock 上下文内被调用。
+    """
+    from memory.long_term import LongTermMemory
+    import unittest.mock
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        # 先创建文件
+        ltm.write_topic("user.md", "初始内容", fm)
+
+        lock_is_held = False
+        replace_called_inside_lock = []
+        original_file_lock = ltm._file_lock
+
+        @contextmanager
+        def tracking_file_lock(path, exclusive=True):
+            nonlocal lock_is_held
+            lock_is_held = True
+            try:
+                with original_file_lock(path, exclusive):
+                    yield
+            finally:
+                lock_is_held = False
+
+        original_replace = os.replace
+
+        def tracking_replace(src, dst):
+            replace_called_inside_lock.append(lock_is_held)
+            return original_replace(src, dst)
+
+        with unittest.mock.patch.object(ltm, '_file_lock', tracking_file_lock), \
+             unittest.mock.patch('os.replace', side_effect=tracking_replace):
+            ltm.write_topic("user.md", "新内容", fm, append=False)
+
+        assert len(replace_called_inside_lock) == 1, "os.replace 应被调用一次"
+        assert replace_called_inside_lock[0] is True, \
+            "os.replace 必须在 _file_lock 持有期间调用"
+
+
+def test_cqr3_internal_duplicates_in_payload_deduped():
+    """Issue 2 (MEDIUM): 单次 append payload 内部的重复行也应被去重。
+    如果 payload 为 'A\\nA\\nB'，追加后应只出现一个 A（不是两个）。
+    """
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        # payload 内部有重复行
+        ltm.write_topic("user.md", "事实A\n事实A\n事实B", fm, append=True)
+
+        content = ltm.read_topic("user.md")
+        body = ltm._extract_body(content)
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        # '事实A' 应只出现一次
+        assert lines.count("事实A") == 1, \
+            f"'事实A' 应只出现一次，实际出现 {lines.count('事实A')} 次: {lines}"
+        assert lines.count("事实B") == 1
+        assert len(lines) == 2, f"期望 2 行，实际 {len(lines)} 行: {lines}"
+
+
+def test_cqr3_internal_duplicates_with_existing_dedup():
+    """Issue 2 (MEDIUM): payload 内部重复 + 已有内容重复应同时去重。
+    已有 'A'，追加 payload 'A\\nA\\nB'，最终应只有一个 A 和一个 B。
+    """
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+
+        ltm.write_topic("user.md", "事实A", fm, append=True)
+        # payload 内部有重复 + 与已有内容重复
+        ltm.write_topic("user.md", "事实A\n事实A\n事实B", fm, append=True)
+
+        content = ltm.read_topic("user.md")
+        body = ltm._extract_body(content)
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        assert lines.count("事实A") == 1, \
+            f"'事实A' 应只出现一次，实际出现 {lines.count('事实A')} 次: {lines}"
+        assert lines.count("事实B") == 1
+        assert len(lines) == 2, f"期望 2 行，实际 {len(lines)} 行: {lines}"
