@@ -950,3 +950,169 @@ def test_five_path_run_mixed_all_sinks():
 
         # discard 不写入任何 sink，但 dream 应成功完成
         assert dm._state["total_dreams"] == 1, "混合场景应成功完成 dream"
+
+
+# === CQR Fixes: Finding 1-4 ===
+
+
+def test_write_to_long_term_uses_append_mode():
+    """Finding 1: _write_to_long_term 应使用 append=True 模式，保留已有内容并追加新内容。"""
+    from memory.dream import DreamManager
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        dm = DreamManager(Path(d), long_term=ltm)
+
+        # 第一次写入
+        dm._write_to_long_term("knowledge", ["Python 是解释型语言"])
+        first_content = ltm.read_topic("knowledge.md")
+        assert "Python 是解释型语言" in first_content
+
+        # 第二次写入：应追加而非覆盖
+        dm._write_to_long_term("knowledge", ["Go 是编译型语言"])
+        second_content = ltm.read_topic("knowledge.md")
+        assert "Python 是解释型语言" in second_content, \
+            "第二次写入不应覆盖第一次的内容"
+        assert "Go 是编译型语言" in second_content, \
+            "第二次写入的内容应被追加"
+
+
+def test_write_to_long_term_frontmatter_type_is_long_term():
+    """Finding 1: _write_to_long_term 写入的 frontmatter type 应为 long_term 而非 user。"""
+    from memory.dream import DreamManager
+    from memory.long_term import LongTermMemory
+
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        dm = DreamManager(Path(d), long_term=ltm)
+
+        dm._write_to_long_term("knowledge", ["测试内容"])
+
+        # 读取原始文件检查 frontmatter
+        raw = (Path(d) / "long-term" / "knowledge.md").read_text(encoding="utf-8")
+        assert 'type: long_term' in raw, \
+            f"frontmatter type 应为 long_term，实际文件内容:\n{raw}"
+        assert 'type: user' not in raw, \
+            f"frontmatter type 不应为 user，实际文件内容:\n{raw}"
+
+
+def test_empty_classification_does_not_delete_memory():
+    """Finding 2 & 4: LLM 返回 {} 时，不应删除任何短期记忆，不应推进 dream 状态。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("重要记忆", "pref_detection", session_id="sess-1")
+        stm.add_item("另一条记忆", "fact_detection", session_id="sess-1")
+
+        # mock LLM 返回空分类
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content="{}")
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._state["total_dreams"] = 2
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 短期记忆不应被删除
+        remaining = stm.get_by_session("sess-1")
+        assert len(remaining) >= 2, \
+            f"空分类不应删除短期记忆，应至少剩 2 条，实际剩 {len(remaining)} 条"
+        # dream 状态不应推进
+        assert dm._state["sessions_since_dream"] == 5, \
+            "空分类时 sessions_since_dream 应保持不变"
+        assert dm._state["total_dreams"] == 2, \
+            "空分类时 total_dreams 不应递增"
+
+
+def test_all_empty_buckets_does_not_delete_memory():
+    """Finding 2: 所有 bucket 为空但 discard 也为空时，不应删除短期记忆。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("重要内容", "pref_detection", session_id="sess-1")
+
+        # mock LLM 返回所有 bucket 为空（含 discard）
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": [],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._state["total_dreams"] = 1
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        remaining = stm.get_by_session("sess-1")
+        assert len(remaining) >= 1, \
+            f"所有 bucket 为空时不应删除短期记忆，实际剩 {len(remaining)} 条"
+        assert dm._state["sessions_since_dream"] == 5, \
+            "所有 bucket 为空时不应推进 dream 状态"
+        assert dm._state["total_dreams"] == 1, \
+            "所有 bucket 为空时 total_dreams 不应递增"
+
+
+def test_soul_items_batched_before_save_growth():
+    """Finding 3: soul items 应被合并为一次 save_growth 调用，而非逐条调用。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=sm)
+
+        stm.add_item("混合测试", "pref_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": ["性格偏内向", "需要更多耐心"],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 所有 soul items 都应被写入
+        soul_content = sm.load_growth()
+        assert "性格偏内向" in soul_content, \
+            f"soul item '性格偏内向' 应在成长中，实际:\n{soul_content}"
+        assert "需要更多耐心" in soul_content, \
+            f"soul item '需要更多耐心' 应在成长中，实际:\n{soul_content}"

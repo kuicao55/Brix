@@ -118,6 +118,12 @@ class DreamManager:
         work_items = classification.get("work", [])
         history_items = classification.get("history", [])
         soul_items = classification.get("soul", [])
+        discard_items = classification.get("discard", [])
+
+        # Finding 2: 全空分类守卫 — LLM 返回退化响应时跳过清理和状态推进
+        if not any([user_items, knowledge_items, work_items, history_items, soul_items, discard_items]):
+            logger.warning("分类结果全部为空（退化 LLM 响应），跳过清理和状态推进")
+            return
 
         # 降级处理 — sink 不可用但有需写入内容时视为失败
         if user_items and not self._user_manager:
@@ -151,10 +157,13 @@ class DreamManager:
             if not self._write_to_long_term("history", history_items):
                 all_writes_ok = False
 
-        # soul → soul_manager（Task 3 会实现 _update_soul_growth，暂直接调用）
+        # soul → soul_manager
+        # 将所有 soul items 合并为一批写入，避免逐条 save_growth 覆盖已有内容
+        # TODO: Task 3 会实现 _update_soul_growth() 替代此临时方案
         if soul_items and self._soul_manager:
             try:
-                self._soul_manager.save_growth("\n".join(f"- {s}" for s in soul_items))
+                batch = "\n".join(f"- {s}" for s in soul_items)
+                self._soul_manager.save_growth(batch)
             except Exception:
                 logger.warning("写入 soul 失败", exc_info=True)
                 all_writes_ok = False
@@ -272,7 +281,7 @@ class DreamManager:
             self._user_manager.save(updated)
 
     def _write_to_long_term(self, topic: str, contents: list[str]) -> bool:
-        """将主题知识写入长期记忆。topic 应已被 _slugify_topic 处理。
+        """将主题知识写入长期记忆（使用 append 模式，由 write_topic 内部去重和加锁）。
 
         Returns:
             True 表示写入成功，False 表示写入失败。
@@ -281,16 +290,13 @@ class DreamManager:
             return True
         safe_name = topic + ".md"
         try:
-            existing = self._long_term.read_topic(safe_name)
             new_content = "\n".join(f"- {c}" for c in contents)
-            if new_content not in existing:
-                combined = existing.rstrip() + "\n" + new_content + "\n" if existing else new_content + "\n"
-                self._long_term.write_topic(safe_name, combined, {
-                    "name": topic,
-                    "description": f"关于{topic}的记忆",
-                    "type": "user",
-                })
-                self._long_term.update_index()
+            self._long_term.write_topic(safe_name, new_content, {
+                "name": topic,
+                "description": f"关于{topic}的记忆",
+                "type": "long_term",
+            }, append=True)
+            self._long_term.update_index()
             return True
         except Exception:
             logger.warning("写入长期记忆主题 %r 失败", topic, exc_info=True)
