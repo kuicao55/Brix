@@ -527,3 +527,78 @@ def test_load_growth_crlf_file():
         assert "性格倾向" in growth, f"CRLF 文件应正确解析成长部分: {growth!r}"
         assert "简洁" in growth
         assert "我是助手" not in growth
+
+
+# ============================================================
+# 10. CQR: save_growth 空内容不应破坏已有成长
+# ============================================================
+
+def test_save_growth_empty_string_preserves_existing_growth():
+    """save_growth("") 不应破坏已有的成长部分。
+
+    回归测试：空字符串经过 _ensure_growth_header() 后变成纯 header，
+    导致所有已有成长内容丢失。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save(
+            "# Soul — 固定部分\n"
+            "我是助手。\n"
+            "\n"
+            "# Soul — 成长部分\n"
+            "## 性格倾向\n"
+            "简洁直接\n"
+            "\n"
+            "## 经验教训\n"
+            "用户不喜欢冗长\n"
+        )
+        # 调用空内容
+        sm.save_growth("")
+        growth = sm.load_growth()
+        assert "性格倾向" in growth, \
+            f"空内容不应破坏已有成长，但成长部分被清空: {growth!r}"
+        assert "简洁直接" in growth, \
+            f"已有成长内容应保留: {growth!r}"
+        assert "经验教训" in growth, \
+            f"已有成长内容应保留: {growth!r}"
+
+
+def test_save_growth_whitespace_preserves_existing_growth():
+    """save_growth("   ") 不应破坏已有的成长部分。"""
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save(
+            "# Soul — 固定部分\n"
+            "我是助手。\n"
+            "\n"
+            "# Soul — 成长部分\n"
+            "## 情绪基线\n"
+            "平静\n"
+        )
+        # 调用纯空白内容
+        sm.save_growth("   \n  \n")
+        growth = sm.load_growth()
+        assert "情绪基线" in growth, \
+            f"纯空白内容不应破坏已有成长: {growth!r}"
+        assert "平静" in growth, \
+            f"已有成长内容应保留: {growth!r}"
+
+
+def test_save_growth_empty_on_no_existing_growth():
+    """没有已有成长时，save_growth("") 也不应写入纯 header 的空成长。
+
+    无已有成长 + 空内容 = 应该是 no-op（无文件变更或只保留固定部分）。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm.save("# Soul — 固定部分\n我是助手。\n")
+        sm.save_growth("")
+        full = sm.load()
+        assert "我是助手" in full, "固定部分应保留"
+        # 不应出现没有实质内容的纯成长 header
+        growth = sm.load_growth()
+        assert growth.strip() == "", \
+            f"空内容不应创建纯 header 的成长部分: {growth!r}"

@@ -106,9 +106,17 @@ class SoulManager:
         - growth_content 缺少成长标题时自动补齐（CQR Finding 3）
         - 全程持有 flock 互斥锁（CQR Finding 1）
         - 使用严格读取，读取失败时 abort 并 re-raise（CQR Finding 2）
+        - 空/纯空白 body 时 no-op，防止破坏已有成长（CQR Finding 4）
         """
         # 确保 growth_content 包含成长标题
         growth_content = _ensure_growth_header(growth_content)
+
+        # 剥离标题后，若 body 为空或纯空白则 no-op
+        # 防止空内容经过 _ensure_growth_header 后变成纯 header，
+        # 从而在替换路径上清空已有成长内容
+        body = growth_content[len(_GROWTH_HEADER):]
+        if not body.strip():
+            return
 
         # 获取互斥锁，保护读-改-写临界区
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
