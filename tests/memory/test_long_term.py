@@ -14,12 +14,12 @@ def test_write_and_read_topic():
 
 
 def test_list_topics():
-    """list_topics 应返回 MEMORY.md 中的索引。"""
+    """list_topics 应返回 MEMORY.md 中的索引（仅 CATEGORY_FILES）。"""
     from memory.long_term import LongTermMemory
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
-        ltm.write_topic("topic1.md", "内容1", {"name": "主题1", "description": "描述1", "type": "user"})
-        ltm.write_topic("topic2.md", "内容2", {"name": "主题2", "description": "描述2", "type": "user"})
+        ltm.write_topic("user.md", "内容1", {"name": "主题1", "description": "描述1", "type": "long_term"})
+        ltm.write_topic("work.md", "内容2", {"name": "主题2", "description": "描述2", "type": "long_term"})
         ltm.update_index()
         topics = ltm.list_topics()
         assert len(topics) == 2
@@ -228,3 +228,160 @@ def test_append_preserves_existing_frontmatter():
         parsed = LongTermMemory._parse_frontmatter(content)
         assert parsed["name"] == "用户画像"
         assert parsed["type"] == "long_term"
+
+
+# ============================================================
+# CQR Fix Tests
+# ============================================================
+
+
+def test_append_dedup_not_substring_match():
+    """Issue 1: 去重应使用行级精确匹配，而非子串匹配。
+    如果已有内容 '用户喜欢中餐和西餐'，追加 '用户喜欢中餐' 应被允许。
+    当前 bug：'用户喜欢中餐' 是 '用户喜欢中餐和西餐' 的子串，会被错误去重。
+    修复后应出现两行（行级去重不误判子串）。
+    """
+    from memory.long_term import LongTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "用户画像", "description": "描述", "type": "long_term"}
+        ltm.write_topic("user.md", "用户喜欢中餐和西餐", fm, append=True)
+        ltm.write_topic("user.md", "用户喜欢中餐", fm, append=True)
+        body = ltm._extract_body(ltm.read_topic("user.md"))
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        # 行级去重后应有两条不同的事实
+        assert len(lines) == 2, f"期望 2 行，实际 {len(lines)} 行: {lines}"
+        assert "用户喜欢中餐和西餐" in lines
+        assert "用户喜欢中餐" in lines
+
+
+def test_append_dedup_exact_line_match_still_works():
+    """Issue 1: 行级精确去重 — 完全相同的行应被去重。"""
+    from memory.long_term import LongTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "用户画像", "description": "描述", "type": "long_term"}
+        ltm.write_topic("user.md", "用户喜欢中餐", fm, append=True)
+        ltm.write_topic("user.md", "用户喜欢中餐", fm, append=True)
+        body = ltm._extract_body(ltm.read_topic("user.md"))
+        # 精确重复的行应只出现一次
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        assert lines.count("用户喜欢中餐") == 1
+
+
+def test_append_dedup_exact_line_with_whitespace_still_works():
+    """Issue 1: 行级去重应 strip 比较。"""
+    from memory.long_term import LongTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "用户画像", "description": "描述", "type": "long_term"}
+        ltm.write_topic("user.md", "  用户喜欢中餐  ", fm, append=True)
+        ltm.write_topic("user.md", "用户喜欢中餐", fm, append=True)
+        body = ltm._extract_body(ltm.read_topic("user.md"))
+        lines = [line.strip() for line in body.strip().splitlines() if line.strip()]
+        assert lines.count("用户喜欢中餐") == 1
+
+
+def test_append_uses_file_lock():
+    """Issue 2: 追加模式应使用文件锁保护读-去重-写流程。
+    验证 _file_lock 被调用。
+    """
+    from memory.long_term import LongTermMemory
+    from unittest.mock import patch, MagicMock
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+        ltm.write_topic("user.md", "第一行", fm, append=True)
+
+        # 检查 write_topic 在 append 模式下是否创建了 lock 文件
+        lock_path = (ltm._dir / "user.md.lock")
+        # 当前实现没有锁，lock 文件不应存在
+        # 修复后，lock 文件应该在 append 操作期间被创建
+        # 我们通过检查 _file_lock 是否被调用来验证
+        with patch.object(ltm, '_file_lock', wraps=ltm._file_lock) as mock_lock:
+            ltm.write_topic("user.md", "第二行", fm, append=True)
+            mock_lock.assert_called()
+
+
+def test_append_file_lock_covers_read_and_write():
+    """Issue 2: 文件锁应覆盖完整的读-去重-写关键区域。
+    通过 monkeypatch 验证锁被正确使用。
+    """
+    from memory.long_term import LongTermMemory
+    import fcntl
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+        ltm.write_topic("user.md", "第一行", fm, append=True)
+
+        flock_calls = []
+        original_flock = fcntl.flock
+
+        def tracking_flock(fd, operation):
+            flock_calls.append(operation)
+            return original_flock(fd, operation)
+
+        import unittest.mock
+        with unittest.mock.patch('fcntl.flock', side_effect=tracking_flock):
+            ltm.write_topic("user.md", "第二行", fm, append=True)
+        # 应该有 LOCK_EX 和 LOCK_UN 两次调用
+        assert fcntl.LOCK_EX in flock_calls
+        assert fcntl.LOCK_UN in flock_calls
+
+
+def test_frontmatter_parsing_with_delimiter_in_value():
+    """Issue 3: frontmatter 值中包含 '---' 时不应提前终止解析。
+    当前 bug：text.find("---", 3) 会匹配值中的 '---'，导致解析截断。
+    """
+    from memory.long_term import LongTermMemory
+    # frontmatter 值中包含 '---'
+    text = "---\ntest: a---b\n---\nbody\n"
+    fm = LongTermMemory._parse_frontmatter(text)
+    # frontmatter 应完整解析，test 的值应为 'a---b'
+    assert fm.get("test") == "a---b", f"期望 'a---b'，实际 '{fm.get('test')}'"
+
+
+def test_frontmatter_parsing_with_triple_dash_in_content():
+    """Issue 3: body 中独立的 '---' 行不应终止 frontmatter 解析。"""
+    from memory.long_term import LongTermMemory
+
+    # 测试一个内容中包含 '---' 的完整文件
+    text = "---\nname: 测试\ntype: user\n---\n\n## 标题\n\n一些内容\n\n---\n\n更多内容\n"
+    fm = LongTermMemory._parse_frontmatter(text)
+    assert fm.get("name") == "测试"
+    assert fm.get("type") == "user"
+
+    body = LongTermMemory._extract_body(text)
+    # body 应包含分隔线之后的全部内容
+    assert "更多内容" in body
+
+
+def test_extract_body_with_delimiter_in_content():
+    """Issue 3: _extract_body 应正确提取含 '---' 的 body。"""
+    from memory.long_term import LongTermMemory
+
+    text = "---\nname: 测试\n---\n\n正文第一行\n---\n正文第二行\n"
+    body = LongTermMemory._extract_body(text)
+    assert "正文第一行" in body
+    assert "正文第二行" in body
+
+
+def test_update_index_only_indexes_category_files():
+    """Issue 4: update_index 应只索引 CATEGORY_FILES，不索引其他 *.md 文件。
+    当前 bug：所有 *.md 文件（除 MEMORY.md）都被索引。
+    """
+    from memory.long_term import LongTermMemory, CATEGORY_FILES
+    with tempfile.TemporaryDirectory() as d:
+        ltm = LongTermMemory(Path(d))
+        fm = {"name": "测试", "description": "描述", "type": "long_term"}
+        # 写入一个分类文件
+        ltm.write_topic("user.md", "用户内容", fm)
+        # 写入一个非分类文件
+        ltm.write_topic("custom.md", "自定义内容", fm)
+        ltm.update_index()
+        topics = ltm.list_topics()
+        indexed_files = {t["file"] for t in topics}
+        # 分类文件应在索引中
+        assert "user.md" in indexed_files
+        # 非分类文件不应在索引中
+        assert "custom.md" not in indexed_files

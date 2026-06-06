@@ -9,8 +9,8 @@ def test_keyword_search_finds_match():
     from memory.long_term import LongTermMemory
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
-        ltm.write_topic("food.md", "## 食物偏好\n- 喜欢辣的食物\n- 会做爆炒腊肉",
-                        {"name": "食物偏好", "description": "用户的食物偏好", "type": "user"})
+        ltm.write_topic("user.md", "## 食物偏好\n- 喜欢辣的食物\n- 会做爆炒腊肉",
+                        {"name": "用户画像", "description": "用户的食物偏好", "type": "long_term"})
         ltm.update_index()
         searcher = KeywordMemorySearcher(ltm, short_term=None)
         results = searcher.search("辣的食物")
@@ -37,7 +37,7 @@ def test_search_includes_short_term():
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
         stm = ShortTermMemory(Path(d))
-        stm.add_item("用户喜欢吃火锅", "pref_detection", session_id="sess-1")
+        stm.add_item("sess-1", "用户喜欢吃火锅", "pref_detection")
         searcher = KeywordMemorySearcher(ltm, short_term=stm)
         results = searcher.search("火锅")
         assert any("火锅" in r.content for r in results)
@@ -49,8 +49,8 @@ def test_single_char_cjk_query_finds_match():
     from memory.long_term import LongTermMemory
     with tempfile.TemporaryDirectory() as d:
         ltm = LongTermMemory(Path(d))
-        ltm.write_topic("food.md", "## 食物偏好\n- 喜欢辣的食物",
-                        {"name": "食物偏好", "description": "用户的食物偏好", "type": "user"})
+        ltm.write_topic("user.md", "## 食物偏好\n- 喜欢辣的食物",
+                        {"name": "用户画像", "description": "用户的食物偏好", "type": "long_term"})
         ltm.update_index()
         searcher = KeywordMemorySearcher(ltm, short_term=None)
         results = searcher.search("辣")
