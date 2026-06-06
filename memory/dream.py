@@ -27,6 +27,7 @@ class DreamManager:
         short_term: Any | None = None,
         long_term: Any | None = None,
         user_manager: Any | None = None,
+        soul_manager: Any | None = None,
     ) -> None:
         self._data_dir = data_dir
         self._dream_dir = data_dir / "dream"
@@ -35,6 +36,7 @@ class DreamManager:
         self._short_term = short_term
         self._long_term = long_term
         self._user_manager = user_manager
+        self._soul_manager = soul_manager
         self._state = self._load_state()
 
     def _load_state(self) -> dict:
@@ -91,7 +93,7 @@ class DreamManager:
         self._save_state()
 
     async def run(self, llm_client: Any, model: str) -> None:
-        """执行 Dream 蒸馏。"""
+        """执行 Dream 蒸馏（五路径）。"""
         if not self._short_term:
             return
 
@@ -101,7 +103,7 @@ class DreamManager:
             self._update_state_after_dream()
             return
 
-        # 2. 去重/合并 + 3. 分类（用 LLM）
+        # 2. 分类（用 LLM）
         try:
             classification = await self._classify_items(llm_client, model, items)
         except Exception:
@@ -110,25 +112,52 @@ class DreamManager:
 
         # 3. 写入（跟踪成功/失败）
         all_writes_ok = True
-        core_items = classification.get("core", [])
-        topics = classification.get("topics", {})
 
-        # Issue 2: 降级处理 — sink 不可用但有需写入内容时视为失败
-        if core_items and not self._user_manager:
-            logger.warning("user_manager 不可用但有 core items，视为写入失败")
+        user_items = classification.get("user", [])
+        knowledge_items = classification.get("knowledge", [])
+        work_items = classification.get("work", [])
+        history_items = classification.get("history", [])
+        soul_items = classification.get("soul", [])
+
+        # 降级处理 — sink 不可用但有需写入内容时视为失败
+        if user_items and not self._user_manager:
+            logger.warning("user_manager 不可用但有 user items，视为写入失败")
             all_writes_ok = False
-        if topics and not self._long_term:
-            logger.warning("long_term 不可用但有 topics，视为写入失败")
+        long_term_items = knowledge_items or work_items or history_items
+        if long_term_items and not self._long_term:
+            logger.warning("long_term 不可用但有 knowledge/work/history items，视为写入失败")
+            all_writes_ok = False
+        if soul_items and not self._soul_manager:
+            logger.warning("soul_manager 不可用但有 soul items，视为写入失败")
             all_writes_ok = False
 
-        for item in core_items:
+        # user → user_manager
+        for item in user_items:
             if self._user_manager:
                 self._append_to_user_md(item)
 
-        for topic, contents in topics.items():
-            if self._long_term:
-                if not self._write_to_long_term(topic, contents):
-                    all_writes_ok = False
+        # knowledge → knowledge.md
+        if knowledge_items and self._long_term:
+            if not self._write_to_long_term("knowledge", knowledge_items):
+                all_writes_ok = False
+
+        # work → work.md
+        if work_items and self._long_term:
+            if not self._write_to_long_term("work", work_items):
+                all_writes_ok = False
+
+        # history → history.md
+        if history_items and self._long_term:
+            if not self._write_to_long_term("history", history_items):
+                all_writes_ok = False
+
+        # soul → soul_manager（Task 3 会实现 _update_soul_growth，暂直接调用）
+        if soul_items and self._soul_manager:
+            try:
+                self._soul_manager.save_growth("\n".join(f"- {s}" for s in soul_items))
+            except Exception:
+                logger.warning("写入 soul 失败", exc_info=True)
+                all_writes_ok = False
 
         # 4. 仅在全部写入成功后清理和推进状态
         if not all_writes_ok:
@@ -141,25 +170,49 @@ class DreamManager:
             self._short_term.remove_items(processed_ids)
         self._update_state_after_dream()
 
+    @staticmethod
+    def _format_items_text(items: list[dict]) -> str:
+        """格式化 items 为带 type/category 信息的文本。"""
+        lines = []
+        for i in items:
+            content = i.get("content", "")
+            item_type = i.get("type", "")
+            category = i.get("category", "")
+            if item_type or category:
+                lines.append(f"- [{item_type}/{category}] {content}")
+            else:
+                source = i.get("source", "?")
+                lines.append(f"- [{source}] {content}")
+        return "\n".join(lines)
+
     async def _classify_items(self, llm_client: Any, model: str, items: list[dict]) -> dict:
-        """用 LLM 对短期记忆分类。
+        """用 LLM 对短期记忆分类（五路径）。
 
         解析失败时抛出异常，由调用方决定是否清理短期记忆。
         """
-        items_text = "\n".join(
-            f"- [{i.get('source', '?')}] {i.get('content', '')}"
-            for i in items[:50]  # 限制输入量
-        )
-        prompt = f"""分析以下短期记忆，分类为：
-1. core：核心信息（用户反复强调、基本偏好、关键个人信息），写入永久记忆
-2. topics：主题知识（有价值但非核心），按主题分组
-3. discard：琐碎/过时/一次性的信息
+        items_text = self._format_items_text(items[:50])
+        prompt = f"""分析以下短期记忆，分类为 6 个路径：
+
+1. user：核心用户画像信息（偏好、基本信息、关键个人信息）
+2. knowledge：通用知识（有价值的事实、技术知识）
+3. work：工作相关信息（项目、任务、截止日期）
+4. history：经历事件（非工作的生活经历、旅行等）
+5. soul：性格倾向、经验教训、情绪状态、反思
+6. discard：琐碎/过时/一次性的信息
+
+判断指引：
+- preference + fact(category=user, 核心) → user
+- fact(通用知识) → knowledge
+- fact + event(工作相关) → work
+- event(非工作经历) → history
+- emotion + reflection → soul
+- 琐碎/过时/一次性 → discard
 
 短期记忆：
 {items_text}
 
 返回 JSON 格式：
-{{"core": ["核心记忆1", "核心记忆2"], "topics": {{"主题名": ["知识1", "知识2"]}}, "discard": ["丢弃1"]}}"""
+{{"user": ["信息1"], "knowledge": ["知识1"], "work": ["工作1"], "history": ["经历1"], "soul": ["反思1"], "discard": ["丢弃1"]}}"""
 
         response = await llm_client.chat(
             messages=[
@@ -193,28 +246,16 @@ class DreamManager:
 
     @staticmethod
     def _validate_classification(result: dict) -> dict:
-        """校验分类结果结构，过滤无效条目。"""
-        # core: 保留字符串条目
-        raw_core = result.get("core", [])
-        if isinstance(raw_core, list):
-            core = [s for s in raw_core if isinstance(s, str)]
-        else:
-            core = []
-
-        # topics: dict[str, list[str]]，key 转为安全 slug
-        raw_topics = result.get("topics", {})
-        topics: dict[str, list[str]] = {}
-        if isinstance(raw_topics, dict):
-            for key, val in raw_topics.items():
-                if isinstance(key, str) and isinstance(val, list):
-                    safe_key = DreamManager._slugify_topic(key)
-                    filtered = [s for s in val if isinstance(s, str)]
-                    if safe_key in topics:
-                        topics[safe_key].extend(filtered)
-                    else:
-                        topics[safe_key] = filtered
-
-        return {"core": core, "topics": topics}
+        """校验分类结果结构（6-key 五路径），过滤无效条目。"""
+        keys = ("user", "knowledge", "work", "history", "soul", "discard")
+        validated: dict[str, list[str]] = {}
+        for key in keys:
+            raw = result.get(key, [])
+            if isinstance(raw, list):
+                validated[key] = [s for s in raw if isinstance(s, str)]
+            else:
+                validated[key] = []
+        return validated
 
     def _append_to_user_md(self, content: str) -> None:
         """将核心记忆追加到 user.md（严格控制行数）。"""

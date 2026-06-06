@@ -66,11 +66,14 @@ def test_run_updates_state():
         # 添加一些短期记忆
         stm.add_item("用户喜欢辣的食物", "pref_detection", session_id="sess-1")
 
-        # mock LLM 返回合法分类 JSON
+        # mock LLM 返回合法分类 JSON（6-key 格式）
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": ["用户喜欢辣的食物"],
-            "topics": {},
+            "user": ["用户喜欢辣的食物"],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         }))
 
@@ -144,11 +147,14 @@ def test_invalid_classification_schema_handled():
 
         stm.add_item("用户喜欢咖啡", "pref_detection", session_id="sess-1")
 
-        # mock LLM 返回类型错误的 JSON：core 含非字符串，topics 含非字符串列表
+        # mock LLM 返回类型错误的 JSON：user 含非字符串
         mock_llm = AsyncMock()
         bad_classification = json.dumps({
-            "core": [123, "valid item", None],  # 混合类型，应只保留 "valid item"
-            "topics": {"topic1": [456, "valid content"]},  # list 内有 int，应只保留 "valid content"
+            "user": [123, "valid item", None],  # 混合类型，应只保留 "valid item"
+            "knowledge": [456, "valid content"],  # list 内有 int，应只保留 "valid content"
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         })
         mock_llm.chat.return_value = MagicMock(content=bad_classification)
@@ -166,8 +172,8 @@ def test_invalid_classification_schema_handled():
         # 验证只有有效字符串被写入 user.md（非字符串条目应被过滤）
         user_content = um.load()
         assert "valid item" in user_content, "有效字符串应被写入"
-        assert "123" not in user_content, "非字符串 core 条目应被过滤"
-        assert "None" not in user_content, "None core 条目应被过滤"
+        assert "123" not in user_content, "非字符串 user 条目应被过滤"
+        assert "None" not in user_content, "None user 条目应被过滤"
 
 
 def test_future_timestamp_does_not_suppress_dream():
@@ -186,7 +192,7 @@ def test_future_timestamp_does_not_suppress_dream():
 
 
 def test_non_ascii_topic_names_sanitized():
-    """非 ASCII 主题名（如 C++编程、用户偏好（重要））应被安全处理，不崩溃。"""
+    """非 ASCII 内容应被安全处理，不崩溃。"""
     from memory.dream import DreamManager
     from memory.short_term import ShortTermMemory
     from memory.long_term import LongTermMemory
@@ -200,15 +206,15 @@ def test_non_ascii_topic_names_sanitized():
 
         stm.add_item("用户喜欢 C++ 编程", "pref_detection", session_id="sess-1")
 
-        # mock LLM 返回含非 ASCII 主题名的分类结果
+        # mock LLM 返回含非 ASCII 内容的分类结果（6-key 格式）
         mock_llm = AsyncMock()
         classification = json.dumps({
-            "core": [],
-            "topics": {
-                "C++编程": ["用户喜欢 C++ 编程"],
-                "用户偏好（重要）": ["用户偏好红茶"],
-            },
-            "discard": [],
+            "user": [],
+            "knowledge": ["用户喜欢 C++ 编程"],
+            "work": [],
+            "history": [],
+            "soul": [],
+            "discard": ["用户偏好红茶"],
         })
         mock_llm.chat.return_value = MagicMock(content=classification)
 
@@ -219,11 +225,10 @@ def test_non_ascii_topic_names_sanitized():
         # 不应抛异常
         asyncio.run(dm.run(mock_llm, "test/model"))
 
-        # 验证主题被写入长期记忆（文件名应为 ASCII-safe slug）
+        # 验证内容被写入长期记忆
         assert dm._state["total_dreams"] == 1, "成功完成应递增 total_dreams"
-        # 长期记忆目录中应有对应的 .md 文件
-        topic_files = list((Path(d) / "long-term").glob("*.md"))
-        assert len(topic_files) >= 1, "应至少写入一个主题文件"
+        content = ltm.read_topic("knowledge.md")
+        assert "用户喜欢 C++ 编程" in content, "knowledge 内容应写入 knowledge.md"
 
 
 def test_classification_failure_preserves_state():
@@ -275,11 +280,14 @@ def test_write_failure_skips_cleanup_and_state_advance():
 
         stm.add_item("用户喜欢咖啡", "pref_detection", session_id="sess-1")
 
-        # mock LLM 返回分类结果，含 topics
+        # mock LLM 返回分类结果，含 knowledge
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": [],
-            "topics": {"coffee": ["用户喜欢咖啡"]},
+            "user": [],
+            "knowledge": ["用户喜欢咖啡"],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         }))
 
@@ -317,27 +325,27 @@ def test_get_recent_includes_session_id():
             f"item 应包含 session_id，实际 keys: {list(items[0].keys())}"
 
 
-def test_slug_collision_merges_contents():
-    """Issue 3: 多个非 ASCII 主题映射到同一 slug 时，内容应合并而非覆盖。"""
+def test_validate_classification_list_keys():
+    """五路径: _validate_classification 对 list 类型 key 的验证。"""
     from memory.dream import DreamManager
 
-    # 两个完全不同的非 ASCII 主题名，slugify 后都变成 "untitled"
+    # 6-key 格式，所有值都是 list[str]
     classification = {
-        "core": [],
-        "topics": {
-            "日本語": ["记忆A"],
-            "中文主题": ["记忆B"],
-        },
-        "discard": [],
+        "user": ["用户信息"],
+        "knowledge": ["知识A", "知识B"],
+        "work": ["工作内容"],
+        "history": ["历史事件"],
+        "soul": ["性格特征"],
+        "discard": ["垃圾"],
     }
     validated = DreamManager._validate_classification(classification)
 
-    # 两者 slugify 后都是 "untitled"（全非 ASCII），内容应合并
-    assert "untitled" in validated["topics"], \
-        f"两个非 ASCII 主题应映射到 'untitled'，实际 keys: {list(validated['topics'].keys())}"
-    contents = validated["topics"]["untitled"]
-    assert "记忆A" in contents, f"'记忆A' 应在合并结果中，实际: {contents}"
-    assert "记忆B" in contents, f"'记忆B' 应在合并结果中，实际: {contents}"
+    assert validated["user"] == ["用户信息"]
+    assert validated["knowledge"] == ["知识A", "知识B"]
+    assert validated["work"] == ["工作内容"]
+    assert validated["history"] == ["历史事件"]
+    assert validated["soul"] == ["性格特征"]
+    assert validated["discard"] == ["垃圾"]
 
 
 # --- Issue 1: session 级清理删除未处理的记忆 ---
@@ -360,11 +368,14 @@ def test_dream_cleanup_only_removes_processed_items():
         for i in range(5):
             stm.add_item(f"item-{i}", "pref_detection", session_id="sess-many")
 
-        # mock LLM 分类
+        # mock LLM 分类（6-key 格式）
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": [],
-            "topics": {"general": ["item-0", "item-1"]},
+            "user": [],
+            "knowledge": ["item-0", "item-1"],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": ["item-2", "item-3", "item-4"],
         }))
 
@@ -416,11 +427,14 @@ def test_dream_cleanup_preserves_unprocessed_items_in_session():
 
         stm.get_recent = mock_get_recent
 
-        # mock LLM
+        # mock LLM（6-key 格式）
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": [],
-            "topics": {},
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         }))
 
@@ -440,7 +454,7 @@ def test_dream_cleanup_preserves_unprocessed_items_in_session():
 # --- Issue 2: 降级模式下 sink 不可用仍清理 ---
 
 def test_degraded_long_term_none_prevents_cleanup():
-    """Issue 2: 当 _long_term 为 None 但有 topics 时，不应清理短期记忆。"""
+    """Issue 2: 当 _long_term 为 None 但有 knowledge/work/history items 时，不应清理短期记忆。"""
     from memory.dream import DreamManager
     from memory.short_term import ShortTermMemory
     from memory.user import UserMemoryManager
@@ -455,8 +469,11 @@ def test_degraded_long_term_none_prevents_cleanup():
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": [],
-            "topics": {"knowledge": ["有价值的知识"]},
+            "user": [],
+            "knowledge": ["有价值的知识"],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         }))
 
@@ -466,9 +483,9 @@ def test_degraded_long_term_none_prevents_cleanup():
 
         asyncio.run(dm.run(mock_llm, "test/model"))
 
-        # _long_term 为 None 但 topics 非空 => 应视为写入失败
+        # _long_term 为 None 但 knowledge 非空 => 应视为写入失败
         assert len(stm.get_by_session("sess-1")) > 0, \
-            "long_term 不可用时有 topics 应视为写入失败，不应清理短期记忆"
+            "long_term 不可用时有 knowledge items 应视为写入失败，不应清理短期记忆"
         assert dm._state["sessions_since_dream"] == 5, \
             "写入失败时不应推进 dream 状态"
         assert dm._state["total_dreams"] == 0, \
@@ -476,7 +493,7 @@ def test_degraded_long_term_none_prevents_cleanup():
 
 
 def test_degraded_user_manager_none_prevents_cleanup():
-    """Issue 2: 当 _user_manager 为 None 但有 core items 时，不应清理短期记忆。"""
+    """Issue 2: 当 _user_manager 为 None 但有 user items 时，不应清理短期记忆。"""
     from memory.dream import DreamManager
     from memory.short_term import ShortTermMemory
     from memory.long_term import LongTermMemory
@@ -491,8 +508,11 @@ def test_degraded_user_manager_none_prevents_cleanup():
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": ["核心记忆"],
-            "topics": {},
+            "user": ["核心记忆"],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         }))
 
@@ -502,9 +522,9 @@ def test_degraded_user_manager_none_prevents_cleanup():
 
         asyncio.run(dm.run(mock_llm, "test/model"))
 
-        # _user_manager 为 None 但 core 非空 => 应视为写入失败
+        # _user_manager 为 None 但 user 非空 => 应视为写入失败
         assert len(stm.get_by_session("sess-1")) > 0, \
-            "user_manager 不可用时有 core items 应视为写入失败，不应清理短期记忆"
+            "user_manager 不可用时有 user items 应视为写入失败，不应清理短期记忆"
         assert dm._state["sessions_since_dream"] == 5, \
             "写入失败时不应推进 dream 状态"
 
@@ -523,8 +543,11 @@ def test_degraded_both_sinks_none_prevents_cleanup():
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": ["核心"],
-            "topics": {"topic1": ["知识"]},
+            "user": ["核心"],
+            "knowledge": ["知识"],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": [],
         }))
 
@@ -539,7 +562,7 @@ def test_degraded_both_sinks_none_prevents_cleanup():
 
 
 def test_all_discard_with_no_sinks_still_cleans():
-    """Issue 2: 当所有 items 都是 discard 且没有 core/topics 时，即使 sink 为 None 也可以安全清理。"""
+    """Issue 2: 当所有 items 都是 discard 且没有其他类 items 时，即使 sink 为 None 也可以安全清理。"""
     from memory.dream import DreamManager
     from memory.short_term import ShortTermMemory
 
@@ -551,8 +574,11 @@ def test_all_discard_with_no_sinks_still_cleans():
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
-            "core": [],
-            "topics": {},
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": [],
             "discard": ["垃圾信息"],
         }))
 
@@ -565,3 +591,362 @@ def test_all_discard_with_no_sinks_still_cleans():
         # 全部 discard，不需要写入任何 sink，可以安全清理
         assert dm._state["total_dreams"] == 1, \
             "全部 discard 时应正常完成 dream"
+
+
+# === Milestone 22: 五路径分类改造 ===
+
+
+def test_validate_classification_six_key_structure():
+    """五路径: _validate_classification 应返回 6-key 结构 (user, knowledge, work, history, soul, discard)。"""
+    from memory.dream import DreamManager
+
+    result = {
+        "user": ["用户是创业者"],
+        "knowledge": ["Python 是解释型语言"],
+        "work": ["项目 deadline 下周五"],
+        "history": ["去年去了日本旅行"],
+        "soul": ["性格偏内向"],
+        "discard": ["天气不错"],
+    }
+    validated = DreamManager._validate_classification(result)
+
+    assert "user" in validated, "应包含 user key"
+    assert "knowledge" in validated, "应包含 knowledge key"
+    assert "work" in validated, "应包含 work key"
+    assert "history" in validated, "应包含 history key"
+    assert "soul" in validated, "应包含 soul key"
+    assert "discard" in validated, "应包含 discard key"
+    # 旧结构不应存在
+    assert "core" not in validated, "不应包含旧的 core key"
+    assert "topics" not in validated, "不应包含旧的 topics key"
+
+
+def test_validate_classification_filters_non_string_entries():
+    """五路径: _validate_classification 应过滤非字符串条目。"""
+    from memory.dream import DreamManager
+
+    result = {
+        "user": ["valid user", 123, None],
+        "knowledge": [456, "valid knowledge"],
+        "work": ["valid work", {"nested": "dict"}],
+        "history": ["valid history"],
+        "soul": [None, "valid soul"],
+        "discard": ["valid discard", []],
+    }
+    validated = DreamManager._validate_classification(result)
+
+    assert validated["user"] == ["valid user"]
+    assert validated["knowledge"] == ["valid knowledge"]
+    assert validated["work"] == ["valid work"]
+    assert validated["history"] == ["valid history"]
+    assert validated["soul"] == ["valid soul"]
+    assert validated["discard"] == ["valid discard"]
+
+
+def test_validate_classification_handles_missing_keys():
+    """五路径: _validate_classification 缺少某些 key 时应返回空列表。"""
+    from memory.dream import DreamManager
+
+    result = {"user": ["信息"]}
+    validated = DreamManager._validate_classification(result)
+
+    assert validated["user"] == ["信息"]
+    assert validated["knowledge"] == []
+    assert validated["work"] == []
+    assert validated["history"] == []
+    assert validated["soul"] == []
+    assert validated["discard"] == []
+
+
+def test_items_text_includes_type_and_category():
+    """五路径: items_text 格式应包含 type 和 category 信息。"""
+    from memory.dream import DreamManager
+
+    dm = DreamManager(Path(tempfile.mkdtemp()))
+
+    items = [
+        {"content": "在家办公", "type": "preference", "category": "user"},
+        {"content": "用户是创业者", "type": "fact", "category": "user"},
+        {"content": "Python 很好用", "type": "fact", "category": ""},
+    ]
+
+    items_text = dm._format_items_text(items)
+
+    assert "- [preference/user] 在家办公" in items_text
+    assert "- [fact/user] 用户是创业者" in items_text
+    assert "- [fact/] Python 很好用" in items_text
+
+
+def test_items_text_fallback_without_type_category():
+    """五路径: items 缺少 type/category 字段时应降级到 source。"""
+    from memory.dream import DreamManager
+
+    dm = DreamManager(Path(tempfile.mkdtemp()))
+
+    items = [
+        {"content": "一些内容", "source": "pref_detection"},
+    ]
+
+    items_text = dm._format_items_text(items)
+
+    assert "- [pref_detection] 一些内容" in items_text
+
+
+def test_run_writes_user_items_to_user_manager():
+    """五路径: user 类 items 应写入 user_manager。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("用户是创业者", "pref_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": ["用户是创业者"],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": [],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        user_content = um.load()
+        assert "用户是创业者" in user_content, "user items 应写入 user.md"
+
+
+def test_run_writes_knowledge_items_to_long_term():
+    """五路径: knowledge 类 items 应写入 knowledge.md。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("Python 是解释型语言", "fact_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": ["Python 是解释型语言"],
+            "work": [],
+            "history": [],
+            "soul": [],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        content = ltm.read_topic("knowledge.md")
+        assert "Python 是解释型语言" in content, "knowledge items 应写入 knowledge.md"
+
+
+def test_run_writes_work_items_to_long_term():
+    """五路径: work 类 items 应写入 work.md。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("项目 deadline 下周五", "event_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": [],
+            "work": ["项目 deadline 下周五"],
+            "history": [],
+            "soul": [],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        content = ltm.read_topic("work.md")
+        assert "项目 deadline 下周五" in content, "work items 应写入 work.md"
+
+
+def test_run_writes_history_items_to_long_term():
+    """五路径: history 类 items 应写入 history.md。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um)
+
+        stm.add_item("去年去了日本旅行", "event_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": ["去年去了日本旅行"],
+            "soul": [],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        content = ltm.read_topic("history.md")
+        assert "去年去了日本旅行" in content, "history items 应写入 history.md"
+
+
+def test_run_writes_soul_items_to_soul_manager():
+    """五路径: soul 类 items 应写入 soul_manager。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=sm)
+
+        stm.add_item("性格偏内向", "reflection_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": ["性格偏内向"],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        soul_content = sm.load_growth()
+        assert "性格偏内向" in soul_content, "soul items 应通过 soul_manager 写入"
+
+
+def test_degraded_soul_manager_none_prevents_cleanup():
+    """五路径: soul_manager 为 None 但有 soul items 时应视为写入失败。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        # soul_manager=None
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=None)
+
+        stm.add_item("性格偏内向", "reflection_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": [],
+            "knowledge": [],
+            "work": [],
+            "history": [],
+            "soul": ["性格偏内向"],
+            "discard": [],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # soul_manager 为 None 但有 soul items => 写入失败
+        assert len(stm.get_by_session("sess-1")) > 0, \
+            "soul_manager 不可用时有 soul items 应视为写入失败"
+        assert dm._state["sessions_since_dream"] == 5, \
+            "写入失败时不应推进 dream 状态"
+
+
+def test_five_path_run_mixed_all_sinks():
+    """五路径: 混合场景 — user/knowledge/work/history/soul/discard 各有 items，全部写入正确 sink。"""
+    from memory.dream import DreamManager
+    from memory.short_term import ShortTermMemory
+    from memory.long_term import LongTermMemory
+    from memory.user import UserMemoryManager
+    from memory.soul import SoulManager
+
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        ltm = LongTermMemory(Path(d))
+        um = UserMemoryManager(Path(d))
+        sm = SoulManager(Path(d))
+        dm = DreamManager(Path(d), stm, ltm, um, soul_manager=sm)
+
+        stm.add_item("混合测试", "pref_detection", session_id="sess-1")
+
+        mock_llm = AsyncMock()
+        mock_llm.chat.return_value = MagicMock(content=json.dumps({
+            "user": ["用户喜欢咖啡"],
+            "knowledge": ["Python 是解释型语言"],
+            "work": ["项目 deadline 下周五"],
+            "history": ["去年去了日本"],
+            "soul": ["容易焦虑"],
+            "discard": ["天气不错"],
+        }))
+
+        dm._state["last_dream_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        dm._state["sessions_since_dream"] = 5
+        dm._save_state()
+
+        asyncio.run(dm.run(mock_llm, "test/model"))
+
+        # 验证各 sink 接收到正确内容
+        assert "用户喜欢咖啡" in um.load(), "user items 应写入 user.md"
+        assert "Python 是解释型语言" in ltm.read_topic("knowledge.md"), "knowledge items 应写入 knowledge.md"
+        assert "项目 deadline 下周五" in ltm.read_topic("work.md"), "work items 应写入 work.md"
+        assert "去年去了日本" in ltm.read_topic("history.md"), "history items 应写入 history.md"
+        assert "容易焦虑" in sm.load_growth(), "soul items 应写入 soul.md"
+
+        # discard 不写入任何 sink，但 dream 应成功完成
+        assert dm._state["total_dreams"] == 1, "混合场景应成功完成 dream"

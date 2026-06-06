@@ -543,13 +543,16 @@ class TestDreamDistillationEndToEnd:
                 session_id="sess-vim",
             )
 
-            # mock LLM 分类
+            # mock LLM 分类（6-key 五路径格式）
             mock_llm = AsyncMock()
             mock_llm.chat.return_value = MagicMock(
                 content=json.dumps(
                     {
-                        "core": ["用户喜欢手冲咖啡"],
-                        "topics": {"tools": ["用户常用 Vim 编辑器"]},
+                        "user": ["用户喜欢手冲咖啡"],
+                        "knowledge": ["用户常用 Vim 编辑器"],
+                        "work": [],
+                        "history": [],
+                        "soul": [],
                         "discard": [],
                     }
                 )
@@ -564,12 +567,12 @@ class TestDreamDistillationEndToEnd:
 
             asyncio.run(dm.run(mock_llm, "test/model"))
 
-            # 验证：core 写入 user.md
+            # 验证：user 写入 user.md
             user_content = um.load()
             assert "用户喜欢手冲咖啡" in user_content
 
-            # 验证：topics 写入长期记忆
-            topic_content = ltm.read_topic("tools.md")
+            # 验证：knowledge 写入 knowledge.md
+            topic_content = ltm.read_topic("knowledge.md")
             assert "用户常用 Vim 编辑器" in topic_content
 
             # 验证：搜索可命中
