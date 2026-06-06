@@ -15,10 +15,11 @@ def _find_header_line(lines: list[str], header: str) -> int:
     """在行列表中查找精确匹配 header 的行索引（行锚定匹配）。
 
     只匹配独立成行的标题，不匹配正文中的子串。
+    兼容 CRLF 行尾（rstrip("\\r\\n")）。
     返回行索引，未找到返回 -1。
     """
     for i, line in enumerate(lines):
-        if line.rstrip("\n") == header:
+        if line.rstrip("\r\n") == header:
             return i
     return -1
 
@@ -104,6 +105,7 @@ class SoulManager:
         - 若 soul.md 无成长部分，追加成长内容
         - growth_content 缺少成长标题时自动补齐（CQR Finding 3）
         - 全程持有 flock 互斥锁（CQR Finding 1）
+        - 使用严格读取，读取失败时 abort 并 re-raise（CQR Finding 2）
         """
         # 确保 growth_content 包含成长标题
         growth_content = _ensure_growth_header(growth_content)
@@ -119,7 +121,8 @@ class SoulManager:
                 self.save(growth_content)
                 return
 
-            content = self.load()
+            # 严格读取：失败时直接 raise，不走 tolerant load() 的 "" 降级
+            content = self._path.read_text(encoding="utf-8")
             lines = content.split("\n")
             growth_idx = _find_header_line(lines, _GROWTH_HEADER)
             if growth_idx != -1:

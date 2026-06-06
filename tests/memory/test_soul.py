@@ -413,3 +413,117 @@ def test_save_growth_auto_prepends_header_on_update():
         assert "新经验" in growth
         assert "学到新东西" in growth
         assert "旧成长内容" not in growth
+
+
+# ============================================================
+# 8. CQR Finding 2: save_growth 不应在 read 失败后覆盖文件
+# ============================================================
+
+def test_save_growth_aborts_on_read_failure():
+    """save_growth 中若 load() 因 OSError 返回空字符串，不应覆盖已有文件内容。
+
+    回归测试：tolerant load() 在文件存在但读取失败时返回 ""，
+    save_growth 应使用 strict read，读取失败时 abort 并 re-raise。
+    """
+    from memory.soul import SoulManager
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        original = (
+            "# Soul — 固定部分\n"
+            "我是用户的助手。\n"
+            "\n"
+            "# Soul — 成长部分\n"
+            "## 情绪基线\n"
+            "平静\n"
+        )
+        sm.save(original)
+
+        # 模拟 read_text 抛出 OSError（瞬时读取失败）
+        original_read_text = Path.read_text
+
+        def failing_read_text(self_path, *args, **kwargs):
+            if str(self_path).endswith("soul.md") and "lock" not in str(self_path):
+                raise OSError("瞬时读取失败")
+            return original_read_text(self_path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", failing_read_text):
+            with pytest.raises(OSError, match="瞬时读取失败"):
+                sm.save_growth("# Soul — 成长部分\n## 情绪基线\n积极\n")
+
+        # 文件内容应保持不变（未被覆盖）
+        content = sm.load()
+        assert "平静" in content, f"文件不应被覆盖: {content!r}"
+        assert "我是用户的助手" in content, f"固定部分应保留: {content!r}"
+
+
+# ============================================================
+# 9. CQR Finding 3: CRLF 行尾不应破坏 header 匹配
+# ============================================================
+
+def test_find_header_line_with_crlf():
+    """_find_header_line 应正确处理 CRLF 行尾的文件。
+
+    回归测试：CRLF 文件 split 后行尾保留 \\r，导致 header 匹配失败。
+    """
+    from memory.soul import _find_header_line, _GROWTH_HEADER
+    # 模拟 CRLF 文件 splitlines 保留 \r 的情况
+    lines = [
+        "# Soul — 固定部分\r",
+        "我是助手。\r",
+        "\r",
+        "# Soul — 成长部分\r",
+        "## 性格倾向\r",
+        "简洁\r",
+    ]
+    idx = _find_header_line(lines, _GROWTH_HEADER)
+    assert idx == 3, f"CRLF 行尾应匹配成长标题，实际索引: {idx}"
+
+
+def test_load_fixed_crlf_file():
+    """load_fixed 应正确处理 CRLF 行尾的 soul.md。
+
+    使用 newline='' 写入以保留 \\r\\n，验证 load_fixed 能正确解析。
+    """
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm._path.parent.mkdir(parents=True, exist_ok=True)
+        crlf_content = (
+            "# Soul — 固定部分\r\n"
+            "我是助手。\r\n"
+            "\r\n"
+            "# Soul — 成长部分\r\n"
+            "## 性格倾向\r\n"
+            "简洁\r\n"
+        )
+        # newline='' 禁止换行翻译，保留文件中的 \r\n
+        with open(str(sm._path), "w", encoding="utf-8", newline="") as f:
+            f.write(crlf_content)
+
+        fixed = sm.load_fixed()
+        assert "我是助手" in fixed, f"CRLF 文件应正确解析固定部分: {fixed!r}"
+        assert "性格倾向" not in fixed, f"成长部分不应出现在固定部分: {fixed!r}"
+
+
+def test_load_growth_crlf_file():
+    """load_growth 应正确处理 CRLF 行尾的 soul.md。"""
+    from memory.soul import SoulManager
+    with tempfile.TemporaryDirectory() as d:
+        sm = SoulManager(Path(d))
+        sm._path.parent.mkdir(parents=True, exist_ok=True)
+        crlf_content = (
+            "# Soul — 固定部分\r\n"
+            "我是助手。\r\n"
+            "\r\n"
+            "# Soul — 成长部分\r\n"
+            "## 性格倾向\r\n"
+            "简洁\r\n"
+        )
+        with open(str(sm._path), "w", encoding="utf-8", newline="") as f:
+            f.write(crlf_content)
+
+        growth = sm.load_growth()
+        assert "性格倾向" in growth, f"CRLF 文件应正确解析成长部分: {growth!r}"
+        assert "简洁" in growth
+        assert "我是助手" not in growth
