@@ -6,6 +6,7 @@
 3. LongTermMemory 分类文件 → 索引 → 搜索 → system prompt
 4. BrixMemoryProvider 完整链路（short_term_summary → system prompt）
 5. Dream 蒸馏 → 长期记忆 → 搜索
+6. 人格演化：emotion + reflection → Dream 分类 (soul) → 提炼 → soul.md growth → system prompt <soul> 注入
 """
 from __future__ import annotations
 
@@ -596,7 +597,110 @@ class TestDreamDistillationEndToEnd:
 
 
 # ============================================================
-# 6. 端到端：记忆写入 → system prompt → 上下文窗口
+# 6. 人格演化链路：emotion + reflection → soul growth → system prompt
+# ============================================================
+
+
+class TestPersonalityEvolutionEndToEnd:
+    """人格演化完整链路：emotion + reflection items → Dream 分类 (soul)
+    → _update_soul_growth() → soul.md growth section → build_system_prompt() <soul> 注入。"""
+
+    def test_personality_evolution_chain(self):
+        """emotion + reflection → soul 分类 → LLM 提炼 → soul.md growth → system prompt <soul> 标签。"""
+        import asyncio
+        from memory.dream import DreamManager
+        from memory.short_term import ShortTermMemory
+        from memory.long_term import LongTermMemory
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        from memory.strategy import MemoryStrategy
+
+        with tempfile.TemporaryDirectory() as d:
+            data_dir = Path(d)
+            stm = ShortTermMemory(data_dir)
+            ltm = LongTermMemory(data_dir)
+            um = UserMemoryManager(data_dir)
+            sm = SoulManager(data_dir)
+            dm = DreamManager(data_dir, stm, ltm, um, soul_manager=sm)
+
+            # 写入 soul.md 固定部分（模拟已有的人格定义）
+            sm.save("# Soul — 固定部分\n\n## Core Personality\n直率、温暖、幽默")
+
+            # 写入短期记忆：emotion + reflection 类型
+            stm.add_item(
+                "用户最近工作压力大，情绪低落",
+                "emotion_detection",
+                session_id="sess-emotion",
+                type="emotion",
+                category="情绪",
+            )
+            stm.add_item(
+                "在回复用户时犯了一个错误，用户纠正了我，以后要更仔细核实信息",
+                "reflection",
+                session_id="sess-reflection",
+                type="reflection",
+                category="自我反思",
+            )
+
+            # Mock LLM：第一次调用 = 分类，第二次调用 = 灵魂提炼
+            mock_llm = AsyncMock()
+            # 第一次返回分类结果：soul 路径
+            classification_response = MagicMock()
+            classification_response.content = json.dumps({
+                "user": [],
+                "knowledge": [],
+                "work": [],
+                "history": [],
+                "soul": [
+                    "用户最近工作压力大，情绪低落",
+                    "在回复用户时犯了一个错误，用户纠正了我，以后要更仔细核实信息",
+                ],
+                "discard": [],
+            })
+            # 第二次返回提炼后的成长内容
+            growth_response = MagicMock()
+            growth_response.content = (
+                "情绪基线：用户近期工作压力较大，需要更多耐心和关怀。"
+                "经验教训：被用户纠正后，认识到信息核实的重要性，"
+                "以后在给出关键信息前应先确认准确性。"
+            )
+            mock_llm.chat.side_effect = [classification_response, growth_response]
+
+            # 触发 dream（满足双门槛）
+            dm._state["last_dream_at"] = (
+                datetime.now(timezone.utc) - timedelta(hours=25)
+            ).isoformat()
+            dm._state["sessions_since_dream"] = 5
+            dm._save_state()
+
+            asyncio.run(dm.run(mock_llm, "test/model"))
+
+            # 验证 1：soul.md growth section 包含提炼内容
+            growth = sm.load_growth()
+            assert "情绪基线" in growth
+            assert "工作压力" in growth
+            assert "信息核实" in growth
+
+            # 验证 2：soul.md 固定部分未被修改
+            fixed = sm.load_fixed()
+            assert "直率、温暖、幽默" in fixed
+            assert "Core Personality" in fixed
+
+            # 验证 3：build_system_prompt() 的 <soul> 标签包含成长内容
+            strategy = MemoryStrategy(
+                soul_manager=sm, user_manager=um, max_tokens=8000
+            )
+            prompt = strategy.build_system_prompt()
+            assert "<soul>" in prompt
+            assert "</soul>" in prompt
+            assert "情绪基线" in prompt
+            assert "信息核实" in prompt
+            # 固定部分也在 <soul> 标签内
+            assert "直率、温暖、幽默" in prompt
+
+
+# ============================================================
+# 7. 端到端：记忆写入 → system prompt → 上下文窗口
 # ============================================================
 
 
