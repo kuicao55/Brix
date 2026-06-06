@@ -116,16 +116,18 @@ async def test_process_streaming_calls_history_search_and_on_user_message():
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
     mock_mgr.should_run_pref_detection = MagicMock(return_value=False)
+    mock_mgr.should_run_session_title = MagicMock(return_value=False)
     mock_mgr.get_side_model.return_value = "test/side-model"
     instance._side_manager = mock_mgr
 
     await instance._process_streaming("hello")
 
-    # 验证 history_search 被调用（不精确匹配 hooks，它在函数内部新建）
-    assert mock_mgr.run_task.call_count >= 1
-    first_call = mock_mgr.run_task.call_args_list[0]
-    assert first_call[0][0] == "history_search"
-    assert first_call[1]["user_input"] == "hello"
+    # 验证 history_search 被调用（memory_summary 已移至 system prompt 注入）
+    call_names = [c[0][0] for c in mock_mgr.run_task.call_args_list]
+    assert "history_search" in call_names
+    # 验证 history_search 传入了正确的 user_input
+    history_call = [c for c in mock_mgr.run_task.call_args_list if c[0][0] == "history_search"][0]
+    assert history_call[1]["user_input"] == "hello"
     # 验证 on_user_message 被调用
     mock_mgr.on_user_message.assert_called_once()
 
@@ -174,16 +176,17 @@ async def test_process_streaming_fires_tool_summary_on_tool_result():
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
     mock_mgr.should_run_pref_detection = MagicMock(return_value=False)
+    mock_mgr.should_run_session_title = MagicMock(return_value=False)
     instance._side_manager = mock_mgr
 
     await instance._process_streaming("run ls")
 
     # fire_and_forget 应被调用且参数包含 "tool_summary"
     mock_mgr.fire_and_forget.assert_called()
-    call_args = mock_mgr.fire_and_forget.call_args
-    assert call_args[0][0] == "tool_summary", (
-        f"fire_and_forget 第一个参数应为 'tool_summary'，实际为 {call_args[0][0]!r}"
-    )
+    # 查找 tool_summary 调用
+    tool_summary_calls = [c for c in mock_mgr.fire_and_forget.call_args_list if c[0][0] == "tool_summary"]
+    assert len(tool_summary_calls) > 0, "fire_and_forget 应被调用且包含 'tool_summary'"
+    call_args = tool_summary_calls[0]
     # 验证 tool event payload 已传入
     assert call_args[1]["tool_name"] == "bash"
     assert call_args[1]["tool_result"] == "ok"
@@ -331,6 +334,7 @@ async def test_process_streaming_fires_pref_detection_when_should_run_true():
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
     mock_mgr.should_run_pref_detection = MagicMock(return_value=True)
+    mock_mgr.should_run_session_title = MagicMock(return_value=False)
     instance._side_manager = mock_mgr
 
     await instance._process_streaming("hello")
@@ -341,6 +345,70 @@ async def test_process_streaming_fires_pref_detection_when_should_run_true():
     assert call_args[0][0] == "pref_detection", (
         f"fire_and_forget 第一个参数应为 'pref_detection'，实际为 {call_args[0][0]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 行为测试：should_run_session_title 返回 True 时触发 fire_and_forget("session_title")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_process_streaming_fires_session_title_with_on_result():
+    """当 should_run_session_title() 返回 True 时，
+    _process_streaming 应调用 fire_and_forget('session_title') 并传入 on_result 回调。"""
+    config = {
+        "routing": {"default_model": "test/model"},
+        "memory": {"data_dir": "/tmp/brix_test", "max_context_tokens": 1000},
+        "side": {"enabled": True, "model": "test/side-model"},
+    }
+
+    with (
+        patch("cli.app.ToolRunner"),
+        patch("cli.app.CommandRegistry") as mock_cmd_reg,
+        patch("cli.app.HookRegistry"),
+        patch("cli.app.StateMachineOrchestrator") as mock_orch_cls,
+        patch("cli.app.LLMClient"),
+        patch("cli.app.create_memory_provider"),
+        patch("cli.app.BrixCLI._init_voice"),
+        patch("cli.app.BrixCLI._register_tools"),
+        patch("cli.app.BrixCLI._register_commands"),
+        patch("cli.app.BrixCLI._register_skill_tool"),
+    ):
+        mock_cmd_reg.return_value.get_skill_listing_text.return_value = ""
+        mock_orch = mock_orch_cls.return_value
+
+        async def _empty_stream(*args, **kwargs):
+            return
+            yield
+
+        mock_orch.run_stream = _empty_stream
+
+        from cli.app import BrixCLI
+        instance = BrixCLI(config=config)
+
+    mock_mgr = MagicMock(spec=SideTaskManager)
+    mock_mgr.enabled = True
+    mock_mgr.run_task = AsyncMock(return_value=None)
+    mock_mgr.on_user_message = MagicMock()
+    mock_mgr.fire_and_forget = MagicMock()
+    mock_mgr.should_run_pref_detection = MagicMock(return_value=False)
+    mock_mgr.should_run_session_title = MagicMock(return_value=True)
+    instance._side_manager = mock_mgr
+
+    # 设置 mock memory 的 current_session_id
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = "test-sess-id"
+    instance._memory = mock_memory
+
+    await instance._process_streaming("hello")
+
+    # fire_and_forget 应被调用且第一个参数为 "session_title"
+    mock_mgr.fire_and_forget.assert_called()
+    call_args = mock_mgr.fire_and_forget.call_args
+    assert call_args[0][0] == "session_title", (
+        f"fire_and_forget 第一个参数应为 'session_title'，实际为 {call_args[0][0]!r}"
+    )
+    # on_result 回调应存在
+    assert "on_result" in call_args[1], "fire_and_forget 应传入 on_result 回调"
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +573,7 @@ class TestMemorySearchToolRegistered:
             ltm.write_topic("food.md", "## 食物偏好\n- 喜欢辣的食物",
                             {"name": "食物偏好", "description": "用户的食物偏好", "type": "user"})
             ltm.update_index()
-            stm.add_item("test-sess", "用户喜欢吃火锅", "pref_detection")
+            stm.add_item("用户喜欢吃火锅", "pref_detection", session_id="test-sess")
 
             runner = ToolRunner()
             searcher = KeywordMemorySearcher(long_term=ltm, short_term=stm)
@@ -578,7 +646,7 @@ class TestBrixMemoryProviderComponents:
         with tempfile.TemporaryDirectory() as d:
             provider = BrixMemoryProvider(data_dir=Path(d))
             # 通过 provider 的 short_term 写入数据
-            provider.short_term.add_item("test-sess", "用户喜欢咖啡", "pref_detection")
+            provider.short_term.add_item("用户喜欢咖啡", "pref_detection", session_id="test-sess")
             # 通过 provider 的 searcher 搜索
             results = provider.searcher.search("咖啡")
             assert len(results) > 0

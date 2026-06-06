@@ -1015,6 +1015,7 @@ async def test_pref_detection_writes_to_short_term_memory():
     mock_stm = MagicMock()
     mock_memory = MagicMock()
     mock_memory.short_term = mock_stm
+    mock_memory.current_session_id = "test-sess-1"
     ctx = _make_ctx(
         llm_response='[{"preference": "用户喜欢辣的食物", "context": "用户说要吃爆炒腊肉"}]',
         session_messages=[
@@ -1022,7 +1023,6 @@ async def test_pref_detection_writes_to_short_term_memory():
             {"role": "assistant", "content": "好的，很下饭！"},
             {"role": "user", "content": "我喜欢辣的"},
         ],
-        config={"session_id": "test-sess-1"},
     )
     import types
     fields = {k: getattr(ctx, k) for k in ctx.__dataclass_fields__}
@@ -1030,9 +1030,9 @@ async def test_pref_detection_writes_to_short_term_memory():
     ctx = types.SimpleNamespace(**fields)
     await task.execute(ctx)
     mock_stm.add_item.assert_called_once_with(
-        session_id="test-sess-1",
         content="用户喜欢辣的食物",
         source="pref_detection",
+        session_id="test-sess-1",
         context="用户说要吃爆炒腊肉",
     )
 

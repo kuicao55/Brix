@@ -10,21 +10,22 @@ from side.base import SideTask, SideTaskContext
 logger = logging.getLogger(__name__)
 
 PROMPT = """\
-分析以下对话，判断用户是否表达了偏好、纠正或习惯性要求。
+分析以下对话，提取值得长期记住的用户信息。
 
-寻找：
-- 纠正："不要这样做"、"应该用..."、"下次记得..."
-- 偏好："我喜欢..."、"我希望..."、"请总是..."
-- 流程偏好："先...再..."、"帮我记住..."
+判断标准：这条信息在未来对话中是否有用？
+- 用户明确表达的偏好、习惯、做事方式
+- 用户主动告知或纠正的关于自身的重要事实（身份、职业、生活环境等）
+- 助手未来应该记住或注意的事情
 
-忽略：
-- 一次性的普通对话
-- 已经在执行的操作
+不要提取：
+- 一次性的闲聊、玩笑、情绪表达
+- 因信息不对等产生的正常对话中的临时纠正
+- 没有长期记忆价值的细节
 
-如果有发现，返回 JSON 数组，每项格式：
-{"preference": "偏好描述", "context": "对话中的依据"}
+用整体语境判断，不要逐句模式匹配。
 
-如果没有发现，返回空数组：[]"""
+返回 JSON 数组，每项格式：{"preference": "信息描述", "context": "对话中的依据"}
+无发现返回空数组：[]"""
 
 
 def _extract_json_array(text: str) -> list | None:
@@ -119,15 +120,20 @@ class PrefDetectionTask(SideTask):
                 return
             if not (hasattr(ctx.memory, "short_term") and ctx.memory.short_term is not None):
                 return
-            # 从 config 获取 session_id，若无则用 "current"
-            session_id = ctx.config.get("session_id", "current")
+            # 从 _side_task_args 获取 session_id，若无则从 memory 获取
+            task_args = ctx.config.get("_side_task_args", {})
+            session_id = task_args.get("session_id", "")
+            if not session_id and hasattr(ctx.memory, "current_session_id"):
+                session_id = ctx.memory.current_session_id or ""
+            if not session_id:
+                session_id = "current"
             for pref in preferences:
                 text = pref.get("preference", "")
                 if text:
                     ctx.memory.short_term.add_item(
-                        session_id=session_id,
                         content=text,
                         source="pref_detection",
+                        session_id=session_id,
                         context=pref.get("context", ""),
                     )
         except Exception:

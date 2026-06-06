@@ -64,7 +64,7 @@ def test_run_updates_state():
         dm = DreamManager(Path(d), stm, ltm, um)
 
         # 添加一些短期记忆
-        stm.add_item("sess-1", "用户喜欢辣的食物", "pref_detection")
+        stm.add_item("用户喜欢辣的食物", "pref_detection", session_id="sess-1")
 
         # mock LLM 返回合法分类 JSON
         mock_llm = AsyncMock()
@@ -100,8 +100,8 @@ def test_malformed_llm_response_does_not_cleanup_sessions():
         dm = DreamManager(Path(d), stm, ltm, um)
 
         # 添加短期记忆
-        stm.add_item("sess-1", "用户喜欢咖啡", "pref_detection")
-        stm.add_item("sess-2", "用户喜欢茶", "pref_detection")
+        stm.add_item("用户喜欢咖啡", "pref_detection", session_id="sess-1")
+        stm.add_item("用户喜欢茶", "pref_detection", session_id="sess-2")
 
         # mock get_recent 返回带 session_id 的 items（使 cleanup_sessions 能提取到 session）
         original_get_recent = stm.get_recent
@@ -142,7 +142,7 @@ def test_invalid_classification_schema_handled():
         um = UserMemoryManager(Path(d))
         dm = DreamManager(Path(d), stm, ltm, um)
 
-        stm.add_item("sess-1", "用户喜欢咖啡", "pref_detection")
+        stm.add_item("用户喜欢咖啡", "pref_detection", session_id="sess-1")
 
         # mock LLM 返回类型错误的 JSON：core 含非字符串，topics 含非字符串列表
         mock_llm = AsyncMock()
@@ -198,7 +198,7 @@ def test_non_ascii_topic_names_sanitized():
         um = UserMemoryManager(Path(d))
         dm = DreamManager(Path(d), stm, ltm, um)
 
-        stm.add_item("sess-1", "用户喜欢 C++ 编程", "pref_detection")
+        stm.add_item("用户喜欢 C++ 编程", "pref_detection", session_id="sess-1")
 
         # mock LLM 返回含非 ASCII 主题名的分类结果
         mock_llm = AsyncMock()
@@ -239,7 +239,7 @@ def test_classification_failure_preserves_state():
         um = UserMemoryManager(Path(d))
         dm = DreamManager(Path(d), stm, ltm, um)
 
-        stm.add_item("sess-1", "用户喜欢咖啡", "pref_detection")
+        stm.add_item("用户喜欢咖啡", "pref_detection", session_id="sess-1")
 
         # mock LLM 抛出异常（模拟网络错误等）
         mock_llm = AsyncMock()
@@ -273,7 +273,7 @@ def test_write_failure_skips_cleanup_and_state_advance():
         um = UserMemoryManager(Path(d))
         dm = DreamManager(Path(d), stm, ltm, um)
 
-        stm.add_item("sess-1", "用户喜欢咖啡", "pref_detection")
+        stm.add_item("用户喜欢咖啡", "pref_detection", session_id="sess-1")
 
         # mock LLM 返回分类结果，含 topics
         mock_llm = AsyncMock()
@@ -309,7 +309,7 @@ def test_get_recent_includes_session_id():
 
     with tempfile.TemporaryDirectory() as d:
         stm = ShortTermMemory(Path(d))
-        stm.add_item("sess-abc", "测试内容", "pref_detection")
+        stm.add_item("测试内容", "pref_detection", session_id="sess-abc")
 
         items = stm.get_recent(limit=10)
         assert len(items) == 1
@@ -358,7 +358,7 @@ def test_dream_cleanup_only_removes_processed_items():
         # 在同一个 session 中添加多个 items
         # get_recent(limit=200) 会返回这些
         for i in range(5):
-            stm.add_item("sess-many", f"item-{i}", "pref_detection")
+            stm.add_item(f"item-{i}", "pref_detection", session_id="sess-many")
 
         # mock LLM 分类
         mock_llm = AsyncMock()
@@ -374,13 +374,13 @@ def test_dream_cleanup_only_removes_processed_items():
 
         asyncio.run(dm.run(mock_llm, "test/model"))
 
-        # 关键断言：所有被采样到的 items 应被清理（通过 remove_items 而非 cleanup_sessions）
+        # 关键断言：所有被采样到的 items 应被清理（通过 remove_items 而非删除整个文件）
         remaining = stm.get_by_session("sess-many")
         assert len(remaining) == 0, \
             f"所有被采样的 items 应被清理，实际剩余 {len(remaining)} 个"
-        # session 文件本身不应被删除（cleanup_sessions 已移除）
-        session_file = Path(d) / "short-term" / "sess-many.json"
-        assert session_file.exists(), "session 文件不应被整个删除，应通过 item 级删除"
+        # 日期文件本身不应被删除（应通过 item 级删除）
+        date_files = list((Path(d) / "short-term").glob("*.json"))
+        assert len(date_files) >= 1, "日期文件不应被整个删除，应通过 item 级删除"
 
 
 def test_dream_cleanup_preserves_unprocessed_items_in_session():
@@ -398,7 +398,7 @@ def test_dream_cleanup_preserves_unprocessed_items_in_session():
 
         # 在同一个 session 中添加多个 items
         for i in range(10):
-            stm.add_item("sess-big", f"item-{i}", "pref_detection")
+            stm.add_item(f"item-{i}", "pref_detection", session_id="sess-big")
 
         # 保存所有 item IDs
         all_items = stm.get_by_session("sess-big")
@@ -451,7 +451,7 @@ def test_degraded_long_term_none_prevents_cleanup():
         # _long_term = None
         dm = DreamManager(Path(d), stm, long_term=None, user_manager=um)
 
-        stm.add_item("sess-1", "有价值的知识", "pref_detection")
+        stm.add_item("有价值的知识", "pref_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
@@ -487,7 +487,7 @@ def test_degraded_user_manager_none_prevents_cleanup():
         # _user_manager = None
         dm = DreamManager(Path(d), stm, long_term=ltm, user_manager=None)
 
-        stm.add_item("sess-1", "核心记忆", "pref_detection")
+        stm.add_item("核心记忆", "pref_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
@@ -519,7 +519,7 @@ def test_degraded_both_sinks_none_prevents_cleanup():
         # 两个 sink 都为 None
         dm = DreamManager(Path(d), stm, long_term=None, user_manager=None)
 
-        stm.add_item("sess-1", "一些内容", "pref_detection")
+        stm.add_item("一些内容", "pref_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
@@ -547,7 +547,7 @@ def test_all_discard_with_no_sinks_still_cleans():
         stm = ShortTermMemory(Path(d))
         dm = DreamManager(Path(d), stm, long_term=None, user_manager=None)
 
-        stm.add_item("sess-1", "垃圾信息", "pref_detection")
+        stm.add_item("垃圾信息", "pref_detection", session_id="sess-1")
 
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content=json.dumps({
