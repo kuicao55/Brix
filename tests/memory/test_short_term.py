@@ -502,3 +502,230 @@ def test_format_ts_invalid_format():
     result = ShortTermMemory._format_ts("not-a-timestamp")
     # 应不崩溃，返回降级字符串或空
     assert isinstance(result, str)
+
+
+# ============================================================
+# 14. CQR Issue 2: 跨日期覆盖 — data["date"] 与文件名不匹配
+# ============================================================
+
+def test_remove_items_quarantines_date_mismatch():
+    """remove_items 遇到 date/filename 不匹配时应隔离文件，不写入其他日期。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        # 文件名 2026-06-06.json，但 data["date"]="2026-06-05"
+        mismatched_data = {
+            "date": "2026-06-05",
+            "items": [
+                {"id": "item-1", "content": "test", "session_id": "s1",
+                 "created": "2026-06-06T10:00:00+00:00", "type": "note",
+                 "source": "test", "category": "", "context": ""},
+                {"id": "item-2", "content": "keep", "session_id": "s2",
+                 "created": "2026-06-06T11:00:00+00:00", "type": "note",
+                 "source": "test", "category": "", "context": ""},
+            ]
+        }
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(mismatched_data, ensure_ascii=False), encoding="utf-8"
+        )
+        stm.remove_items(["item-1"])
+        # 不匹配的文件应被隔离
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+        # 原始文件应已移除
+        assert not (date_dir / "2026-06-06.json").exists()
+        # 不应创建 2026-06-05.json（错误的 data["date"] 目标）
+        assert not (date_dir / "2026-06-05.json").exists()
+
+
+def test_cleanup_sessions_quarantines_date_mismatch():
+    """cleanup_sessions 遇到 date/filename 不匹配时应隔离文件，不写入其他日期。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        mismatched_data = {
+            "date": "2026-06-05",
+            "items": [
+                {"id": "item-1", "content": "remove", "session_id": "old-sess",
+                 "created": "2026-06-06T10:00:00+00:00", "type": "note",
+                 "source": "test", "category": "", "context": ""},
+                {"id": "item-2", "content": "keep", "session_id": "other-sess",
+                 "created": "2026-06-06T11:00:00+00:00", "type": "note",
+                 "source": "test", "category": "", "context": ""},
+            ]
+        }
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(mismatched_data, ensure_ascii=False), encoding="utf-8"
+        )
+        stm.cleanup_sessions(["old-sess"])
+        # 不匹配的文件应被隔离
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+        assert not (date_dir / "2026-06-06.json").exists()
+        # 不应创建 2026-06-05.json
+        assert not (date_dir / "2026-06-05.json").exists()
+
+
+def test_date_filename_mismatch_is_quarantined():
+    """data['date'] 与文件名不匹配时应隔离文件。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        # 文件名 2026-06-06.json，data["date"]="2026-06-05"
+        mismatched = {"date": "2026-06-05", "items": []}
+        (date_dir / "2026-06-06.json").write_text(
+            json.dumps(mismatched), encoding="utf-8"
+        )
+        # get_by_date 应隔离不匹配的文件并返回空
+        items = stm.get_by_date("2026-06-06")
+        assert items == []
+        quarantined = date_dir / "2026-06-06.json.corrupt"
+        assert quarantined.exists()
+
+
+# ============================================================
+# 15. CQR Issue 3: 错误结构的 JSON 文件处理
+# ============================================================
+
+def test_get_by_session_handles_list_instead_of_dict():
+    """get_by_session 遇到 JSON 是列表而非字典时应隔离文件，不崩溃。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # 文件内容是列表，不是字典
+        (date_dir / "2026-06-06.json").write_text(
+            '[{"id": "1"}]', encoding="utf-8"
+        )
+        items = stm.get_by_session("any-session")
+        assert items == []
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+def test_get_by_session_handles_dict_missing_items_key():
+    """get_by_session 遇到缺少 items 键的字典时应隔离。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        (date_dir / "2026-06-06.json").write_text(
+            '{"date": "2026-06-06"}', encoding="utf-8"
+        )
+        items = stm.get_by_session("any-session")
+        assert items == []
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+def test_get_by_session_handles_items_not_a_list():
+    """get_by_session 遇到 items 不是列表时应隔离。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        (date_dir / "2026-06-06.json").write_text(
+            '{"date": "2026-06-06", "items": "not a list"}', encoding="utf-8"
+        )
+        items = stm.get_by_session("any-session")
+        assert items == []
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+def test_remove_items_handles_wrong_shape_json():
+    """remove_items 遇到错误结构的 JSON 时应隔离，不崩溃。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # 列表而非字典
+        (date_dir / "2026-06-06.json").write_text(
+            '["not", "a", "dict"]', encoding="utf-8"
+        )
+        # 不应崩溃
+        stm.remove_items(["any-id"])
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+def test_cleanup_sessions_handles_wrong_shape_json():
+    """cleanup_sessions 遇到错误结构的 JSON 时应隔离，不崩溃。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # 缺少 items 键
+        (date_dir / "2026-06-06.json").write_text(
+            '{"unexpected": true}', encoding="utf-8"
+        )
+        stm.cleanup_sessions(["any-session"])
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+def test_get_by_date_handles_items_with_non_dict_elements():
+    """get_by_date 遇到 items 包含非 dict 元素时应隔离。"""
+    from memory.short_term import ShortTermMemory
+    with tempfile.TemporaryDirectory() as d:
+        stm = ShortTermMemory(Path(d))
+        date_dir = Path(d) / "short-term"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        # items 包含非 dict 元素（原始值）
+        (date_dir / "2026-06-06.json").write_text(
+            '{"date": "2026-06-06", "items": [1, 2, 3]}', encoding="utf-8"
+        )
+        items = stm.get_by_date("2026-06-06")
+        # 应隔离错误结构的文件并返回空
+        assert items == []
+        assert (date_dir / "2026-06-06.json.corrupt").exists()
+
+
+# ============================================================
+# 16. CQR Issue 1: 跨进程文件锁
+# ============================================================
+
+def _worker_add_items(data_dir: str, num_items: int, worker_id: int) -> None:
+    """子进程 worker：向同一日期文件写入 items。"""
+    # 需要在子进程中重新 import
+    import sys
+    sys.path.insert(0, str(Path(data_dir).parent))
+    from memory.short_term import ShortTermMemory
+    stm = ShortTermMemory(Path(data_dir))
+    for i in range(num_items):
+        stm.add_item(f"item-w{worker_id}-{i}", "test", date="2026-06-06",
+                      session_id=f"sess-w{worker_id}")
+
+
+def test_multiprocess_add_item_no_lost_items():
+    """多个进程并发 add_item 不应丢失任何 item（跨进程文件锁）。"""
+    import multiprocessing
+    with tempfile.TemporaryDirectory() as d:
+        data_dir = str(Path(d))
+        num_workers = 4
+        items_per_worker = 20
+
+        procs = []
+        for w in range(num_workers):
+            p = multiprocessing.Process(
+                target=_worker_add_items,
+                args=(data_dir, items_per_worker, w)
+            )
+            procs.append(p)
+
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=30)
+
+        # 确认所有进程正常退出
+        for p in procs:
+            assert p.exitcode == 0, f"进程退出码: {p.exitcode}"
+
+        from memory.short_term import ShortTermMemory
+        stm = ShortTermMemory(Path(data_dir))
+        items = stm.get_by_date("2026-06-06")
+        expected = num_workers * items_per_worker
+        assert len(items) == expected, \
+            f"跨进程写入应有 {expected} 个 items，实际只有 {len(items)} 个"

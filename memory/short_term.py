@@ -1,6 +1,7 @@
 """短期记忆管理 — 按日期文件结构。"""
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import re
 import tempfile
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,37 @@ class ShortTermMemory:
         except ValueError:
             raise ValueError(f"非法日期: {date!r}，不是有效日期")
 
+    @contextmanager
+    def _file_lock(self, path: Path, exclusive: bool = True):
+        """跨进程文件锁：围绕 load+modify+save 的原子操作。"""
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        lock_path.touch(exist_ok=True)
+        fd = os.open(str(lock_path), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    @staticmethod
+    def _validate_file_shape(path: Path, data: Any) -> bool:
+        """集中校验文件结构：dict + date 字符串 + items 为 dict 列表。
+        date 必须匹配文件名 stem，否则隔离。
+        校验通过返回 True；隔离后返回 False。
+        """
+        stem = path.stem  # "YYYY-MM-DD"
+        ok = (
+            isinstance(data, dict)
+            and isinstance(data.get("date"), str)
+            and isinstance(data.get("items"), list)
+            and data["date"] == stem
+            and all(isinstance(i, dict) for i in data["items"])
+        )
+        if not ok:
+            ShortTermMemory._quarantine_file(path)
+        return ok
+
     def _date_path(self, date: str) -> Path:
         """返回日期文件路径，校验日期格式防止路径遍历。"""
         self._validate_date(date)
@@ -50,7 +83,7 @@ class ShortTermMemory:
         return {"date": date, "items": []}
 
     def _load_date_file(self, date: str) -> dict:
-        """加载指定日期的数据文件，损坏文件会被隔离。"""
+        """加载指定日期的数据文件，使用集中校验，损坏文件会被隔离。"""
         path = self._date_path(date)
         if not path.exists():
             return self._empty_date_file(date)
@@ -59,9 +92,19 @@ class ShortTermMemory:
         except (json.JSONDecodeError, OSError):
             self._quarantine_file(path)
             return self._empty_date_file(date)
-        if not isinstance(data, dict) or "items" not in data:
-            self._quarantine_file(path)
+        if not self._validate_file_shape(path, data):
             return self._empty_date_file(date)
+        return data
+
+    def _read_and_validate(self, path: Path) -> dict | None:
+        """从指定路径读取并集中校验，校验失败返回 None（已隔离）。"""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            self._quarantine_file(path)
+            return None
+        if not self._validate_file_shape(path, data):
+            return None
         return data
 
     @staticmethod
@@ -77,6 +120,14 @@ class ShortTermMemory:
     def _save_date_file(self, data: dict) -> None:
         """原子写入：先写临时文件，再 rename，防止中断导致数据损坏。"""
         path = self._date_path(data["date"])
+        self._atomic_write(path, data)
+
+    def _save_to_path(self, data: dict, path: Path) -> None:
+        """原子写入到指定路径（用于 remove_items/cleanup_sessions 避免跨日期覆盖）。"""
+        self._atomic_write(path, data)
+
+    def _atomic_write(self, path: Path, data: dict) -> None:
+        """原子写入核心：先写临时文件，再 os.replace。"""
         content = json.dumps(data, ensure_ascii=False, indent=2)
         fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
         try:
@@ -106,7 +157,8 @@ class ShortTermMemory:
         """添加一条短期记忆。date 默认为今天（UTC）。"""
         if not date:
             date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        with self._lock:
+        path = self._date_path(date)
+        with self._file_lock(path), self._lock:
             data = self._load_date_file(date)
             now = datetime.now(timezone.utc).isoformat()
             data["items"].append({
@@ -130,16 +182,11 @@ class ShortTermMemory:
         """跨日期文件聚合最近的 items，按 mtime 倒序扫描文件。"""
         all_items: list[dict[str, Any]] = []
         for p in sorted(self._dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                if not isinstance(data, dict) or "items" not in data:
-                    self._quarantine_file(p)
-                    continue
-                for item in data.get("items", []):
-                    all_items.append(item)
-            except (json.JSONDecodeError, OSError):
-                self._quarantine_file(p)
+            data = self._read_and_validate(p)
+            if data is None:
                 continue
+            for item in data.get("items", []):
+                all_items.append(item)
         all_items.sort(key=lambda x: x.get("created", ""), reverse=True)
         return all_items[:limit]
 
@@ -147,13 +194,12 @@ class ShortTermMemory:
         """跨日期文件扫描指定 session 的 items。"""
         all_items: list[dict[str, Any]] = []
         for p in sorted(self._dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                for item in data.get("items", []):
-                    if item.get("session_id") == session_id:
-                        all_items.append(item)
-            except (json.JSONDecodeError, OSError):
+            data = self._read_and_validate(p)
+            if data is None:
                 continue
+            for item in data.get("items", []):
+                if item.get("session_id") == session_id:
+                    all_items.append(item)
         all_items.sort(key=lambda x: x.get("created", ""), reverse=True)
         return all_items
 
@@ -193,27 +239,25 @@ class ShortTermMemory:
         """跨日期文件删除指定 id 的 items。"""
         ids = set(item_ids)
         for p in self._dir.glob("*.json"):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                original_len = len(data.get("items", []))
-                data["items"] = [i for i in data.get("items", []) if i.get("id") not in ids]
-                if len(data["items"]) != original_len:
-                    self._save_date_file(data)
-            except (json.JSONDecodeError, OSError):
+            data = self._read_and_validate(p)
+            if data is None:
                 continue
+            original_len = len(data["items"])
+            data["items"] = [i for i in data["items"] if i.get("id") not in ids]
+            if len(data["items"]) != original_len:
+                self._save_to_path(data, p)
 
     def cleanup_sessions(self, session_ids: list[str]) -> None:
         """删除指定 session 的所有 items（跨日期文件扫描）。"""
         sids = set(session_ids)
         for p in self._dir.glob("*.json"):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                original_len = len(data.get("items", []))
-                data["items"] = [i for i in data.get("items", []) if i.get("session_id") not in sids]
-                if len(data["items"]) != original_len:
-                    self._save_date_file(data)
-            except (json.JSONDecodeError, OSError):
+            data = self._read_and_validate(p)
+            if data is None:
                 continue
+            original_len = len(data["items"])
+            data["items"] = [i for i in data["items"] if i.get("session_id") not in sids]
+            if len(data["items"]) != original_len:
+                self._save_to_path(data, p)
 
     def cleanup_old(self, keep_days: int = 14, today: str = "") -> None:
         """清理超过 keep_days 天的日期文件。today 参数仅供测试使用。"""
