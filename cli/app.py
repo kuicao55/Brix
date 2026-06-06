@@ -30,6 +30,7 @@ from capability.tools.file_write import FileWriteTool
 from capability.tools.skill_tool import SkillTool
 from capability.tools.weather import WeatherTool
 from capability.tools.memory_search import MemorySearchTool
+from capability.tools.save_memory import SaveMemoryTool
 from memory.long_term import LongTermMemory
 from memory.searcher import KeywordMemorySearcher
 from memory.short_term import ShortTermMemory
@@ -594,6 +595,11 @@ class BrixCLI:
             short_term=ShortTermMemory(data_root),
         )
         self._tool_runner.register(MemorySearchTool(searcher))
+        # 主模型主动写入记忆
+        if self._memory:
+            short_term = getattr(self._memory, "short_term", None)
+            if short_term:
+                self._tool_runner.register(SaveMemoryTool(short_term, self._memory))
 
     def _init_voice(self) -> None:
         """初始化语音模块（如果配置启用）。"""
