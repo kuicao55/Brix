@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _short_error
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,8 @@ class MemorySummaryTask(SideTask):
 
         try:
             recent_items = ctx.memory.short_term.get_recent(limit=10)
-        except Exception:
-            logger.warning("MemorySummaryTask: 获取短期记忆失败", exc_info=True)
+        except Exception as e:
+            logger.warning("MemorySummaryTask: %s", _short_error(e))
             return None
 
         if not recent_items:

@@ -6,7 +6,7 @@ import logging
 import re
 
 from side.base import SideTask, SideTaskContext
-from side.tasks._util import _strip_control_chars
+from side.tasks._util import _short_error, _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,6 @@ class SessionTitleTask(SideTask):
                     return title
             # 解析失败或 title 无效 → 回退
             return _fallback_title(user_msgs)
-        except Exception:
-            logger.warning("SessionTitleTask 执行失败", exc_info=True)
+        except Exception as e:
+            logger.warning("SessionTitleTask: %s", _short_error(e))
             return _fallback_title(user_msgs)

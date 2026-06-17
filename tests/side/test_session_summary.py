@@ -241,6 +241,9 @@ async def test_manager_generate_session_summary_calls_task():
     mock_memory.load_session = MagicMock(return_value=[
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "hi there"},
+        {"role": "user", "content": "how are you"},
+        {"role": "assistant", "content": "doing well"},
+        {"role": "user", "content": "tell me a joke"},
     ])
     mock_memory.short_term = MagicMock()
     mock_memory.short_term.get_by_session = MagicMock(return_value=[])

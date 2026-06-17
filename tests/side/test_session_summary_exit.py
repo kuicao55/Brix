@@ -41,9 +41,8 @@ def _make_brix_cli_mock():
     return config, mock_memory, mock_llm
 
 
-@pytest.mark.asyncio
-async def test_save_session_summary_calls_manager():
-    """_save_session_summary 调用 side_manager.generate_session_summary()。"""
+def test_save_session_summary_calls_manager():
+    """_save_session_summary 调用 side_manager.fire_and_forget_session_summary()。"""
     with (
         patch("cli.app.ToolRunner"),
         patch("cli.app.CommandRegistry"),
@@ -63,16 +62,15 @@ async def test_save_session_summary_calls_manager():
     # 替换 side_manager 为 mock
     mock_mgr = MagicMock(spec=SideTaskManager)
     mock_mgr.enabled = True
-    mock_mgr.generate_session_summary = AsyncMock(return_value="摘要内容")
+    mock_mgr.fire_and_forget_session_summary = MagicMock()
     instance._side_manager = mock_mgr
     instance._memory = mock_memory
 
-    await instance._save_session_summary()
-    mock_mgr.generate_session_summary.assert_called_once()
+    instance._save_session_summary()
+    mock_mgr.fire_and_forget_session_summary.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_save_session_summary_no_manager():
+def test_save_session_summary_no_manager():
     """无 side_manager 时 _save_session_summary 不崩溃。"""
     with (
         patch("cli.app.ToolRunner"),
@@ -92,11 +90,10 @@ async def test_save_session_summary_no_manager():
 
     instance._side_manager = None
     # 不应崩溃
-    await instance._save_session_summary()
+    instance._save_session_summary()
 
 
-@pytest.mark.asyncio
-async def test_save_session_summary_side_disabled():
+def test_save_session_summary_side_disabled():
     """side 层未启用时 _save_session_summary 不调用 manager。"""
     with (
         patch("cli.app.ToolRunner"),
@@ -116,11 +113,11 @@ async def test_save_session_summary_side_disabled():
 
     mock_mgr = MagicMock(spec=SideTaskManager)
     mock_mgr.enabled = False
-    mock_mgr.generate_session_summary = AsyncMock(return_value="摘要")
+    mock_mgr.fire_and_forget_session_summary = MagicMock()
     instance._side_manager = mock_mgr
 
-    await instance._save_session_summary()
-    mock_mgr.generate_session_summary.assert_not_called()
+    instance._save_session_summary()
+    mock_mgr.fire_and_forget_session_summary.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -144,7 +141,7 @@ async def test_handle_command_triggers_summary_for_clear():
         instance = BrixCLI(config=config)
 
     # mock _save_session_summary
-    instance._save_session_summary = AsyncMock()
+    instance._save_session_summary = MagicMock()
 
     # mock clear command
     mock_cmd = MagicMock()
@@ -179,7 +176,7 @@ async def test_handle_command_triggers_summary_for_quit():
         instance = BrixCLI(config=config)
 
     # mock _save_session_summary
-    instance._save_session_summary = AsyncMock()
+    instance._save_session_summary = MagicMock()
 
     # mock quit command
     mock_cmd = MagicMock()
@@ -214,7 +211,7 @@ async def test_handle_command_no_summary_for_other_commands():
         instance = BrixCLI(config=config)
 
     # mock _save_session_summary
-    instance._save_session_summary = AsyncMock()
+    instance._save_session_summary = MagicMock()
 
     # mock help command
     mock_cmd = MagicMock()
@@ -242,6 +239,10 @@ async def test_manager_check_previous_session_summary():
     mock_memory.short_term.get_by_session = MagicMock(return_value=[])
     mock_memory.load_session = MagicMock(return_value=[
         {"role": "user", "content": "之前的对话"},
+        {"role": "assistant", "content": "回复1"},
+        {"role": "user", "content": "继续聊"},
+        {"role": "assistant", "content": "回复2"},
+        {"role": "user", "content": "再问一个"},
     ])
 
     mock_llm = MagicMock()
@@ -317,7 +318,7 @@ async def test_keyboard_interrupt_during_streaming_saves_summary():
         instance = BrixCLI(config=config)
 
     instance._memory = mock_memory
-    instance._save_session_summary = AsyncMock()
+    instance._save_session_summary = MagicMock()
     instance._process_streaming = AsyncMock(side_effect=KeyboardInterrupt)
     # _llm_client.close() 在 finally 中被 await，需 mock
     instance._llm_client.close = AsyncMock()
@@ -364,6 +365,10 @@ async def test_manager_check_previous_session_summary_no_current_session():
     mock_memory.short_term.get_by_session = MagicMock(return_value=[])
     mock_memory.load_session = MagicMock(return_value=[
         {"role": "user", "content": "之前的对话"},
+        {"role": "assistant", "content": "回复1"},
+        {"role": "user", "content": "继续聊"},
+        {"role": "assistant", "content": "回复2"},
+        {"role": "user", "content": "再问一个"},
     ])
 
     mock_llm = MagicMock()

@@ -239,6 +239,7 @@ side:
     session_summary:
       enabled: true
       idle_threshold_minutes: 5
+      min_messages: 3
     memory_summary:
       enabled: true
     dream:

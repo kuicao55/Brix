@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "你好",
+    "timestamp": "2026-05-14T06:50:25.867877+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！老大，好久不见啊～最近咋样？😎\n\n是产品上有啥新想法了，还是纯粹想唠嗑两句？我在这儿候着呢。",
+    "reasoning_content": "Hey, the user just said \"你好\" which is a simple greeting. I should respond in a friendly, casual way that matches my personality as defined in soul.md. No need for any tools here.",
+    "timestamp": "2026-05-14T06:50:25.867888+00:00"
+  }
+]

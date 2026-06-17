@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from side.base import SideTask, SideTaskContext
-from side.tasks._util import _strip_control_chars
+from side.tasks._util import _short_error, _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,6 @@ class ContextCompressTask(SideTask):
                 )
                 result = result[:_MAX_OUTPUT_CHARS]
             return result
-        except Exception:
-            logger.warning("ContextCompressTask 执行失败", exc_info=True)
+        except Exception as e:
+            logger.warning("ContextCompressTask: %s", _short_error(e))
             return None

@@ -122,6 +122,11 @@ class BrixMemoryProvider:
         """当前活跃 session 的 UUID，无活跃 session 时为 None。"""
         return self._current_session_id
 
+    @current_session_id.setter
+    def current_session_id(self, value: str | None) -> None:
+        """允许临时切换 session ID（供 SideManager 加载历史 session 用）。"""
+        self._current_session_id = value
+
     def _cleanup_empty_session(self) -> None:
         """如果当前 session 从未添加过消息，从索引中移除。"""
         if self._current_session_id and not self._has_messages:

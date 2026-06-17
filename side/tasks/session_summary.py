@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 
 from side.base import SideTask, SideTaskContext
-from side.tasks._util import _strip_control_chars
+from side.tasks._util import _short_error, _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +67,8 @@ class SessionSummaryTask(SideTask):
                 model=ctx.side_model,
             )
             summary = _strip_control_chars(response.content).strip() if response.content else None
-        except Exception:
-            logger.warning("SessionSummaryTask 执行失败", exc_info=True)
+        except Exception as e:
+            logger.warning("SessionSummaryTask: %s", _short_error(e))
             return None
 
         if not summary:
@@ -106,5 +106,5 @@ class SessionSummaryTask(SideTask):
                     if created and len(created) >= 10:
                         return created[:10]  # "YYYY-MM-DD"
         except Exception:
-            logger.debug("SessionSummaryTask: 获取 session 日期失败", exc_info=True)
+            logger.debug("SessionSummaryTask: 获取 session 日期失败: %s", e)
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")

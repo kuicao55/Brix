@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Callable
 from typing import Any
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _short_error
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,9 @@ class SideTaskManager:
         self._llm_client: Any = None
         self._memory: Any = None
         self._user_message_count: int = 0
+        # 生命周期回调（可选，供状态栏插件等使用）
+        self._on_task_start: Callable[[str], None] | None = None
+        self._on_task_end: Callable[[str, str, float], None] | None = None
 
     def configure(
         self,
@@ -95,10 +101,27 @@ class SideTaskManager:
         task = self._tasks.get(task_name)
         if not task or not self._is_task_enabled(task):
             return None
+        start_time = time.monotonic()
+        if self._on_task_start:
+            try:
+                self._on_task_start(task_name)
+            except Exception:
+                pass
         try:
             ctx = self._build_context(**kwargs)
-            return await task.execute(ctx)
+            result = await task.execute(ctx)
+            if self._on_task_end:
+                try:
+                    self._on_task_end(task_name, "completed", time.monotonic() - start_time)
+                except Exception:
+                    pass
+            return result
         except Exception as e:
+            if self._on_task_end:
+                try:
+                    self._on_task_end(task_name, "error", time.monotonic() - start_time)
+                except Exception:
+                    pass
             logger.warning("Side task '%s' failed: %s", task_name, e)
             return None
 
@@ -114,8 +137,8 @@ class SideTaskManager:
             if result is not None and on_result is not None:
                 try:
                     await on_result(result)
-                except Exception:
-                    logger.warning("fire_and_forget on_result 回调异常", exc_info=True)
+                except Exception as e:
+                    logger.warning("fire_and_forget on_result: %s", _short_error(e))
 
         try:
             asyncio.create_task(_run())
@@ -134,6 +157,19 @@ class SideTaskManager:
     def get_side_model(self) -> str:
         """返回 side 模型 ID。"""
         return self._side_model
+
+    def fire_and_forget_session_summary(self) -> None:
+        """fire-and-forget 版本的 generate_session_summary，不阻塞退出。"""
+        async def _run() -> None:
+            try:
+                await self.generate_session_summary()
+            except Exception as e:
+                logger.warning("session_summary: %s", _short_error(e))
+
+        try:
+            asyncio.create_task(_run())
+        except RuntimeError:
+            logger.warning("fire_and_forget_session_summary: 没有运行中的 event loop")
 
     async def generate_session_summary(self, session_id: str | None = None) -> str | None:
         """生成会话事件摘要并写入短期记忆。
@@ -159,6 +195,13 @@ class SideTaskManager:
             self._memory.current_session_id = original_id
             return None
         if not messages:
+            self._memory.current_session_id = original_id
+            return None
+        # 消息数阈值检查：user 消息不足时跳过 summary
+        min_messages = self._config.get("side", {}).get("tasks", {}).get("session_summary", {}).get("min_messages", 3)
+        user_msg_count = sum(1 for m in messages if m.get("role") == "user")
+        if user_msg_count < min_messages:
+            logger.debug("SessionSummary: 用户消息数 %d < 阈值 %d，跳过", user_msg_count, min_messages)
             self._memory.current_session_id = original_id
             return None
         result = await self.run_task(

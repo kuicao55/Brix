@@ -6,6 +6,7 @@ import logging
 import re
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _short_error
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +118,8 @@ class HistorySearchTask(SideTask):
             return None
         try:
             sessions = ctx.memory.list_sessions()
-        except Exception:
-            logger.warning("HistorySearchTask: 获取会话列表失败", exc_info=True)
+        except Exception as e:
+            logger.warning("HistorySearchTask: %s", _short_error(e))
             return None
         if not sessions:
             return None
@@ -148,6 +149,6 @@ class HistorySearchTask(SideTask):
                 if 0 <= i < len(candidate_sessions):
                     results.append(candidate_sessions[i])
             return results
-        except Exception:
-            logger.warning("HistorySearchTask 执行失败", exc_info=True)
+        except Exception as e:
+            logger.warning("HistorySearchTask: %s", _short_error(e))
             return None

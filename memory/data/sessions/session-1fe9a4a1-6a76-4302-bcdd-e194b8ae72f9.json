@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "content": "帮我搜一下spacex什么时候上市",
+    "timestamp": "2026-05-13T00:43:42.345428+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "<think>用户想搜索 SpaceX 什么时候上市。这是一个需要实时信息的问题，我需要使用 web search 来获取最新信息。\n</think>\n\n\nError during planning: data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"message\":\"unknown error (1000)\",\"http_code\":\"500\"},\"request_id\":\"0652fc3d780965e538827ee15e7c8443\"}",
+    "timestamp": "2026-05-13T00:43:42.345440+00:00"
+  }
+]

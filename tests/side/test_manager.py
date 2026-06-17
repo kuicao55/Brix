@@ -430,3 +430,156 @@ def test_import_all_tasks():
 
     assert isinstance(ALL_TASKS, list)
     assert len(ALL_TASKS) == 7
+
+
+# ------------------------------------------------------------------
+# Session Summary 阈值测试
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_session_summary_below_threshold():
+    """user 消息数 < 阈值时跳过 summary。"""
+    mgr = SideTaskManager()
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = "sess-1"
+    mock_memory.load_session = MagicMock(return_value=[
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+    ])
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "m",
+                         "tasks": {"session_summary": {"enabled": True, "min_messages": 3}}}},
+        llm_client=MagicMock(),
+        memory=mock_memory,
+    )
+    from side.tasks.session_summary import SessionSummaryTask
+    mgr.register(SessionSummaryTask())
+    result = await mgr.generate_session_summary()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_generate_session_summary_at_threshold():
+    """user 消息数 == 阈值时正常执行。"""
+    mgr = SideTaskManager()
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = "sess-1"
+    mock_memory.load_session = MagicMock(return_value=[
+        {"role": "user", "content": "a"},
+        {"role": "assistant", "content": "b"},
+        {"role": "user", "content": "c"},
+        {"role": "assistant", "content": "d"},
+        {"role": "user", "content": "e"},
+    ])
+    mock_memory.short_term = MagicMock()
+    mock_memory.short_term.get_by_session = MagicMock(return_value=[])
+    mock_memory.list_sessions = MagicMock(return_value=[
+        {"id": "sess-1", "created": "2025-06-05T10:00:00+00:00"},
+    ])
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = "摘要"
+    mock_llm.chat = AsyncMock(return_value=mock_response)
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "m",
+                         "tasks": {"session_summary": {"enabled": True, "min_messages": 3}}}},
+        llm_client=mock_llm,
+        memory=mock_memory,
+    )
+    from side.tasks.session_summary import SessionSummaryTask
+    mgr.register(SessionSummaryTask())
+    result = await mgr.generate_session_summary()
+    # 3 user messages == threshold 3, 应该执行
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_session_summary_default_threshold():
+    """未配置 min_messages 时默认为 3。"""
+    mgr = SideTaskManager()
+    mock_memory = MagicMock()
+    mock_memory.current_session_id = "sess-1"
+    mock_memory.load_session = MagicMock(return_value=[
+        {"role": "user", "content": "hello"},
+    ])
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "m",
+                         "tasks": {"session_summary": {"enabled": True}}}},
+        llm_client=MagicMock(),
+        memory=mock_memory,
+    )
+    from side.tasks.session_summary import SessionSummaryTask
+    mgr.register(SessionSummaryTask())
+    result = await mgr.generate_session_summary()
+    # 1 user message < default 3, 应该跳过
+    assert result is None
+
+
+# ------------------------------------------------------------------
+# 回调测试
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_task_fires_callbacks():
+    """run_task 在任务执行前后触发回调。"""
+    mgr = SideTaskManager()
+    start_calls = []
+    end_calls = []
+    mgr._on_task_start = lambda name: start_calls.append(name)
+    mgr._on_task_end = lambda name, status, elapsed: end_calls.append((name, status, elapsed))
+    task = MockTask("test-task", "result")
+    mgr.register(task)
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "m",
+                         "tasks": {"test-task": {"enabled": True}}}},
+        llm_client=MagicMock(),
+        memory=MagicMock(),
+    )
+    result = await mgr.run_task("test-task")
+    assert result == "result"
+    assert start_calls == ["test-task"]
+    assert len(end_calls) == 1
+    assert end_calls[0][0] == "test-task"
+    assert end_calls[0][1] == "completed"
+    assert end_calls[0][2] > 0  # elapsed > 0
+
+
+@pytest.mark.asyncio
+async def test_run_task_fires_error_callback():
+    """任务失败时触发 error 回调。"""
+    mgr = SideTaskManager()
+    end_calls = []
+    mgr._on_task_end = lambda name, status, elapsed: end_calls.append((name, status))
+    mgr.register(FailingTask())
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "m",
+                         "tasks": {"failing": {"enabled": True}}}},
+        llm_client=MagicMock(),
+        memory=MagicMock(),
+    )
+    result = await mgr.run_task("failing")
+    assert result is None
+    assert ("failing", "error") in end_calls
+
+
+@pytest.mark.asyncio
+async def test_run_task_callback_error_does_not_affect_task():
+    """回调异常不影响任务执行。"""
+    mgr = SideTaskManager()
+
+    def bad_callback(name):
+        raise RuntimeError("callback boom")
+
+    mgr._on_task_start = bad_callback
+    task = MockTask("test", "ok")
+    mgr.register(task)
+    mgr.configure(
+        config={"side": {"enabled": True, "model": "m",
+                         "tasks": {"test": {"enabled": True}}}},
+        llm_client=MagicMock(),
+        memory=MagicMock(),
+    )
+    result = await mgr.run_task("test")
+    assert result == "ok"

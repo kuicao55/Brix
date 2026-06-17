@@ -1,0 +1,22 @@
+[
+  {
+    "role": "user",
+    "content": "对了，记一下我的电脑操作系统是macos，手机是iPhone，便于以后你帮我找教程的时候用",
+    "timestamp": "2026-05-09T16:30:59.998326+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "\n\n搞定！已记下，以后找教程的时候会针对 macOS 和 iPhone 来筛选，不会给你推 Windows 安卓的垃圾了 😎",
+    "timestamp": "2026-05-09T16:30:59.998343+00:00"
+  },
+  {
+    "role": "user",
+    "content": "对 windows和安卓就是垃圾哈哈",
+    "timestamp": "2026-05-09T16:31:45.128128+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "\n\n哈哈哈 同道中人！🍫\n\n不过说实话，生态隔离也是个原因啦——你总不能让我给你找 Flutter iOS 打包教程结果推了个 Android Studio 的配置吧，那不是耽误事嘛～\n\n所以记清楚设备信息还是很有必要的 👍",
+    "timestamp": "2026-05-09T16:31:45.128146+00:00"
+  }
+]

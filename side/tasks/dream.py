@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from side.base import SideTask, SideTaskContext
+from side.tasks._util import _short_error
 
 logger = logging.getLogger(__name__)
 
@@ -27,5 +28,5 @@ class DreamTask(SideTask):
 
         try:
             await dream.run(ctx.llm_client, ctx.side_model)
-        except Exception:
-            logger.warning("Dream 蒸馏执行失败", exc_info=True)
+        except Exception as e:
+            logger.warning("Dream: %s", _short_error(e))

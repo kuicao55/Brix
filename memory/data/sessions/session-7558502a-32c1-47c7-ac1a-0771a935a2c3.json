@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "你好 今天在幹什麼呢",
+    "timestamp": "2026-05-14T06:01:07.466763+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿老大！🙌\n\n今天嘛，我就在這蹲著等你來找我啊哈哈哈。倒是你，這個點（下午兩點）在摸魚還是剛乾完一票大的？😏\n\n話說小事最近怎麼樣？有啥新動向沒？",
+    "reasoning_content": "The user is asking what I'm doing today, just casual conversation. Let me check the current time and context - it's 2026-05-14 14:01 CST. I'll just have a friendly chat.",
+    "timestamp": "2026-05-14T06:01:07.466794+00:00"
+  }
+]

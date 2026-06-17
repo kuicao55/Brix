@@ -39,6 +39,12 @@ from cli.completer import SlashCommandCompleter
 from cli.display import render_history
 from cli.paginated_selector import PaginatedSelector
 from cli.stage_indicator import StageIndicator
+from cli.ansi_status_bar import (
+    paint_status_bar,
+    setup_scroll_region,
+    teardown_scroll_region,
+)
+from cli.status_bar import StatusBarRenderer
 from cli.stream_renderer import StreamRenderer
 from cli.thinking_renderer import ThinkingRenderer
 from cli.theme import BRIX_THEME
@@ -50,6 +56,7 @@ from infra.llm_client import LLMClient
 from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
 from orchestrator.state_machine import StateMachineOrchestrator
+from plugins.status_bar.plugin import StatusBarPlugin
 from side.manager import SideTaskManager
 from side.tasks import ALL_TASKS
 
@@ -80,6 +87,11 @@ class BrixCLI:
         )
         for task in ALL_TASKS:
             self._side_manager.register(task)
+        # 状态栏插件 + 渲染器
+        self._status_bar_plugin = StatusBarPlugin(side_model=self._side_manager.get_side_model())
+        self._status_bar_renderer = StatusBarRenderer(self._status_bar_plugin)
+        self._side_manager._on_task_start = self._status_bar_plugin.on_task_start
+        self._side_manager._on_task_end = self._status_bar_plugin.on_task_end
         # 语音模块（可选，需在注册命令前初始化）
         self._voice = None
         self._voice_display = None
@@ -92,18 +104,14 @@ class BrixCLI:
     # 内部辅助
     # ------------------------------------------------------------------
 
-    async def _save_session_summary(self) -> None:
-        """保存当前会话摘要到短期记忆（退出前调用）。
-
-        覆盖所有退出路径：/clear、/quit、Ctrl+C、compact、兜底。
-        失败不影响主流程。
-        """
+    def _save_session_summary(self) -> None:
+        """fire-and-forget：不阻塞退出。兜底检查在下次启动时补全。"""
         if not self._side_manager or not self._side_manager.enabled:
             return
         try:
-            await self._side_manager.generate_session_summary()
+            self._side_manager.fire_and_forget_session_summary()
         except Exception:
-            pass  # 摘要保存失败不影响退出
+            pass
 
     def _resolve_model(self) -> str:
         """解析主模型：default_model → fallback_model → 空字符串。"""
@@ -116,6 +124,18 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
+        # 让 prompt_toolkit 认为终端少 1 行，为状态栏留出空间。
+        # 必须在 PromptSession 创建前 patch，否则 toolbar 会渲染到最后一行覆盖状态栏。
+        from prompt_toolkit.output.vt100 import Vt100_Output
+        _original_get_size = Vt100_Output.get_size
+
+        def _patched_get_size(self):
+            size = _original_get_size(self)
+            from prompt_toolkit.datastructures import Size
+            return Size(rows=max(size.rows - 1, 2), columns=size.columns)
+
+        Vt100_Output.get_size = _patched_get_size  # type: ignore[assignment]
+
         completer = FuzzyCompleter(SlashCommandCompleter(self._command_registry))
         # 补全菜单样式：纯文字，无背景无边框
         completion_style = Style.from_dict({
@@ -138,6 +158,19 @@ class BrixCLI:
             style=completion_style,
         )
         default_model = self._config.get("routing", {}).get("default_model", "unknown")
+
+        # Scroll region 状态栏：保留底部 1 行，定期刷新
+        setup_scroll_region()
+        paint_status_bar(self._status_bar_renderer)
+
+        async def _refresh_status_bar() -> None:
+            """每 0.5s 刷新状态栏。"""
+            while True:
+                await asyncio.sleep(0.5)
+                paint_status_bar(self._status_bar_renderer)
+
+        refresh_task = asyncio.create_task(_refresh_status_bar())
+
         show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
         first_turn = True
@@ -161,7 +194,7 @@ class BrixCLI:
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     keyboard_task.cancel()
                     voice_task.cancel()
-                    await self._save_session_summary()
+                    self._save_session_summary()
                     break
 
                 for task in pending:
@@ -177,7 +210,7 @@ class BrixCLI:
                     try:
                         text = keyboard_task.result()
                     except (EOFError, KeyboardInterrupt):
-                        await self._save_session_summary()
+                        self._save_session_summary()
                         self._memory.save_session()
                         self._console.print("\n[dim]Goodbye.[/]")
                         break
@@ -199,13 +232,19 @@ class BrixCLI:
                 try:
                     await self._process_streaming(text)
                 except KeyboardInterrupt:
-                    await self._save_session_summary()
+                    self._save_session_summary()
                     self._memory.save_session()
                     self._console.print("\n[dim]Goodbye.[/]")
                     break
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
         finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            teardown_scroll_region()
             if self._voice and self._voice.is_running:
                 await self._voice.stop()
             await self._llm_client.close()
@@ -240,7 +279,7 @@ class BrixCLI:
 
         # /clear 和 /quit 退出前保存会话摘要
         if cmd_name in ("clear", "quit"):
-            await self._save_session_summary()
+            self._save_session_summary()
 
         result = await command.execute(args, ctx)
 
@@ -511,7 +550,10 @@ class BrixCLI:
                 renderer.flush()
                 renderer = None
             log.set_error(str(exc))
-            self._console.print("[red]Error:[/] {}".format(exc))
+            err_text = str(exc).split("\n")[0].strip()
+            if len(err_text) > 200:
+                err_text = err_text[:199] + "\u2026"
+            self._console.print("[red]Error:[/] {}".format(err_text))
 
         finally:
             tool_display.cleanup()  # 确保异常时 spinner 被清理

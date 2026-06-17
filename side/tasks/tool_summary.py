@@ -7,7 +7,7 @@ import logging
 import re
 
 from side.base import SideTask, SideTaskContext
-from side.tasks._util import _strip_control_chars
+from side.tasks._util import _short_error, _strip_control_chars
 
 logger = logging.getLogger(__name__)
 
@@ -221,8 +221,8 @@ class ToolSummaryTask(SideTask):
                 try:
                     ctx.hooks.fire("tool_summary", text=result)
                 except Exception:
-                    logger.debug("tool_summary hook 发射失败", exc_info=True)
+                    logger.debug("tool_summary hook: %s", e)
             return result
-        except Exception:
-            logger.warning("ToolSummaryTask 执行失败", exc_info=True)
+        except Exception as e:
+            logger.warning("ToolSummaryTask: %s", _short_error(e))
             return None

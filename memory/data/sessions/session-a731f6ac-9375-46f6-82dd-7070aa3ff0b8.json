@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "你好",
+    "timestamp": "2026-05-14T05:13:05.512106+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！老大，好久不见啊 😎\n\n最近忙啥呢？小事那边咋样了？",
+    "reasoning_content": "Hey! The user just said \"你好\" (Hello). Let me start with a friendly, casual greeting that matches my personality —轻松随性, like talking to a friend.",
+    "timestamp": "2026-05-14T05:13:05.512120+00:00"
+  }
+]
