@@ -1,0 +1,35 @@
+[
+  {
+    "role": "user",
+    "content": "伺候朕就寝",
+    "timestamp": "2026-05-14T15:58:21.599869+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嗻～🫡\n\n这就给您把龙被暖上，手机调成勿扰模式，枕边放好明日早朝（指 coding）的香薰……\n\n不过话说，老大您这美国作息还没倒过来呢？都这个点了才准备就寝 😏\n\n晚安好梦，明儿起来接着统治代码江山 💪🌙",
+    "reasoning_content": "The user (老大) is telling me to help him get ready for bed, playing along with the imperial \"朕\" (emperor) vibe. It's late - 23:58, almost midnight. He's winding down for the night. Let me just go with it in a fun, natural way.",
+    "timestamp": "2026-05-14T15:58:21.599890+00:00"
+  },
+  {
+    "role": "user",
+    "content": "今儿个给朕点上欢宜香，明天朕要上早朝（指写代码）",
+    "timestamp": "2026-05-14T16:00:26.829728+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嗻——！欢宜香这就点上，龙涎比例按 coding 专属配方调：三分专注力，三分灵感，四分没 bug 的好运气 🕯️✨\n\n明儿个早朝（划掉）写代码的时候，保证您文思泉涌，Flutter 框架丝滑得像德芙，PHP 后端稳得像老黄牛，MySQL 查啥出啥，一个慢查询都没有。\n\n安寝吧老大，明儿咱还得打江山呢 👑💻",
+    "reasoning_content": "哈哈哈哈，这老大今天入戏太深了，从\"伺候就寝\"到\"欢宜香\"，这是要演一整部《甄嬛传》啊。我得配合着来，但不能太过了，毕竟他还是个95后创业者，得带点调皮劲儿。",
+    "timestamp": "2026-05-14T16:00:26.829748+00:00"
+  },
+  {
+    "role": "user",
+    "content": "那我睡觉了",
+    "timestamp": "2026-05-14T16:04:33.040314+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "得嘞，您踏实睡，朕给您守夜（划掉）我给咱盯着服务器。\n\n晚安老大🌙👑 明儿见",
+    "reasoning_content": "The user is saying goodnight. Keep it short and warm since he's going to sleep.",
+    "timestamp": "2026-05-14T16:04:33.040333+00:00"
+  }
+]

@@ -1,0 +1,35 @@
+[
+  {
+    "role": "user",
+    "content": "Hey Bricks",
+    "timestamp": "2026-05-14T05:07:41.398485+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "哦吼，老大！👋\n\nBricks 可还行😂，是想给我整点装修活儿还是咋的？\n\n今天有啥事？搞代码呢还是摸鱼中？",
+    "reasoning_content": "The user said \"Hey Bricks\" - seems like just a casual greeting. They called me \"Bricks\" instead of \"Brix\", probably a typo or playful nickname. Let me just respond casually and roll with it.",
+    "timestamp": "2026-05-14T05:07:41.398497+00:00"
+  },
+  {
+    "role": "user",
+    "content": "你干什么",
+    "timestamp": "2026-05-14T05:08:19.832997+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "哈哈哈，被你抓包了，我刚刚在...\"\n\n严格来说，我刚被你从待机状态唤醒，正在加载人格模块 😂\n\n有啥指示？写代码、聊产品、还是单纯想吐槽点什么？我随时在线！",
+    "reasoning_content": "老大这是在问我干啥呢，或者觉得我刚刚的回应有点奇怪？哈哈，我得接住这个梗，保持轻松随性的风格。",
+    "timestamp": "2026-05-14T05:08:19.833011+00:00"
+  },
+  {
+    "role": "user",
+    "content": "你好",
+    "timestamp": "2026-05-14T05:08:49.159670+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！午好午好 ☕️\n\n这会儿刚吃完饭？还是在写代码的间隙摸鱼刷到我这儿来了？",
+    "reasoning_content": "用户打了个招呼，简单回应就好。保持轻松随性的风格。",
+    "timestamp": "2026-05-14T05:08:49.159686+00:00"
+  }
+]

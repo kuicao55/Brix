@@ -1,0 +1,24 @@
+[
+  {
+    "role": "user",
+    "content": "你好呀,你在干什么呢?",
+    "timestamp": "2026-05-14T08:47:22.618935+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！老大！😄\n\n我刚在这儿待着刷动态呢，就看到你来找我唠嗑了。日子还挺闲，没啥紧急 bug 要修，也没啥架构要重构的，正发愁要不要摸会儿鱼呢哈哈。\n\n你呢？这个点儿找我是有啥事还是就随便扯扯？",
+    "reasoning_content": "The user is greeting me casually. Let me respond in a friendly, relaxed way as per my personality definition. They're asking what I'm doing - I'm just hanging out in my environment. Let me check what's around me to give a natural answer.\n\nI'm in their working directory /Users/kuicao/Applications/Brix on macOS. Let me just have a casual chat.",
+    "timestamp": "2026-05-14T08:47:22.618969+00:00"
+  },
+  {
+    "role": "user",
+    "content": "我要准备去吃饭了 拜拜",
+    "timestamp": "2026-05-14T08:47:58.582286+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "哦吼，那赶紧去！别饿着了 🍽️\n\n我也该消化消化刚才那些代码了（虽然我没胃🤣）\n\n去吧去吧，拜拜老大～吃好喝好！回头有啥事随时找我唠～👋",
+    "reasoning_content": "老大要吃饭去了，道别一下就好，保持轻松自然的风格。",
+    "timestamp": "2026-05-14T08:47:58.582300+00:00"
+  }
+]

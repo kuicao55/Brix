@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "你好呀 你吃了吗",
+    "timestamp": "2026-05-14T07:00:25.725695+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！还没吃呢，等着你给我点个虚拟巧克力 🍫\n\n不过说真的，我倒是挺好奇老大你最近在忙啥？小事那边有啥新动向没？",
+    "reasoning_content": "The user is greeting me casually, asking if I've eaten. This is a common Chinese greeting. I'll respond in a friendly, casual manner matching my personality definition.",
+    "timestamp": "2026-05-14T07:00:25.725714+00:00"
+  }
+]

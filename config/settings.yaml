@@ -87,23 +87,6 @@ models:
     cost_tier: "low"
 
   # ============================================================
-  # DeepSeek 官方
-  # ============================================================
-  - id: "deepseek/deepseek-v4-flash"
-    provider: "deepseek"
-    purpose: ["fast_chat", "simple_qa"]
-    capabilities: ["tool_calling", "low_latency", "low_cost"]
-    max_context: 64000
-    cost_tier: "low"
-
-  - id: "deepseek/deepseek-v4-pro"
-    provider: "deepseek"
-    purpose: ["coding", "reasoning", "planning"]
-    capabilities: ["tool_calling", "strong_reasoning"]
-    max_context: 128000
-    cost_tier: "low"
-
-  # ============================================================
   # ZenMux — 编程
   # ============================================================
   - id: "zenmux-openai/moonshotai/kimi-k2.6"
@@ -138,23 +121,20 @@ models:
     cost_tier: "high"
 
   # ============================================================
-  # 阿里云 — Qwen (intent 分类等轻量任务)
-  # ============================================================
-  - id: "ali/qwen3.6-flash"
-    provider: "ali"
-    purpose: ["fast_chat", "simple_qa"]
-    capabilities: ["low_latency", "low_cost"]
-    max_context: 64000
-    cost_tier: "low"
-
-  # ============================================================
-  # ZenMux — Qwen (intent 分类等轻量任务)
+  # ZenMux — intent (intent 分类等轻量任务)
   # ============================================================
   - id: "zenmux-openai/qwen/qwen3.5-flash"
     provider: "zenmux-openai"
     purpose: ["fast_chat", "simple_qa"]
     capabilities: ["low_latency", "low_cost"]
-    max_context: 64000
+    max_context: 1020000
+    cost_tier: "low"
+
+  - id: "zenmux-openai/openai/gpt-5-nano"
+    provider: "zenmux-openai"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["low_latency", "low_cost"]
+    max_context: 128000
     cost_tier: "low"
 
   # ============================================================
@@ -188,6 +168,33 @@ models:
     max_context: 200000
     cost_tier: "high"
 
+  # ============================================================
+  # DeepSeek 官方
+  # ============================================================
+  - id: "deepseek/deepseek-v4-flash"
+    provider: "deepseek"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["tool_calling", "low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
+  - id: "deepseek/deepseek-v4-pro"
+    provider: "deepseek"
+    purpose: ["coding", "reasoning", "planning"]
+    capabilities: ["tool_calling", "strong_reasoning"]
+    max_context: 128000
+    cost_tier: "low"
+
+  # ============================================================
+  # 阿里云 — Qwen (intent 分类等轻量任务)
+  # ============================================================
+  - id: "ali/qwen3.6-flash"
+    provider: "ali"
+    purpose: ["fast_chat", "simple_qa"]
+    capabilities: ["low_latency", "low_cost"]
+    max_context: 64000
+    cost_tier: "low"
+
   # 添加新 model 模板:
   # - id: "provider-name/model-name"
   #   provider: "provider-name"
@@ -199,7 +206,7 @@ models:
 engine: "state_machine"
 
 routing:
-  default_model: "minimax/MiniMax-M2.7"
+  default_model: "zenmux-openai/deepseek/deepseek-v4-flash"
   fallback_model: "minimax/MiniMax-M2.7"
 
 # ============================================================
@@ -207,16 +214,13 @@ routing:
 # ============================================================
 side:
   enabled: true
-  model: "ali/qwen3.6-flash"           # side 任务专用小模型
+  model: "zenmux-openai/qwen/qwen3.5-flash"           # side 任务专用小模型
 
   tasks:
     session_title:
       enabled: true
     tool_summary:
       enabled: true
-    pref_detection:
-      enabled: true
-      interval: 5                       # 每 N 轮用户消息检测一次
     history_search:
       enabled: true
       top_k: 3
@@ -229,14 +233,29 @@ side:
         - "previously"
         - "last time"
         - "remember"
-    voice_cleanup:
-      enabled: true
     context_compress:
       enabled: true
       message_threshold: 50
     session_summary:
       enabled: true
       idle_threshold_minutes: 5
+      min_messages: 3
+    memory_summary:
+      enabled: true
+    dream:
+      enabled: true
+
+# ============================================================
+# 状态栏配置 — slot 可插拔
+# ============================================================
+status_bar:
+  enabled: false               # false = 完全不显示状态栏（不占终端底部行）
+  renderer: "default"          # 渲染器名称（预留，当前只有 default）
+  slots:
+    model:
+      enabled: true            # 显示 side model 名称
+    task:
+      enabled: true            # 显示 side task 运行状态
 
 retry:
   max_retries: 3
@@ -285,3 +304,9 @@ voice:
 
   # 连续对话
   continuous_idle_timeout: 10  # 秒
+
+  # LLM 文本清理（原 VoiceCleanupTask 逻辑迁移为可插拔 LLMCleanupProcessor）
+  cleanup_enabled: false
+  cleanup_model: ""
+  cleanup_timeout: 0.8
+  cleanup_min_length: 10

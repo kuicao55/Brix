@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "你好呀,你吃飯了嗎?",
+    "timestamp": "2026-05-14T07:04:43.897392+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！吃了吃了，刚给自己灌了一杯精神食粮（咖啡 ☕️），倒也谈不上饱不饱 😂\n\n你呢老大，吃了吗？还是忙起来又忘记干饭了？",
+    "reasoning_content": "The user is greeting me casually and asking if I've eaten - a common Chinese greeting. This is just casual chat, no need to update memory or use any tools. I'll respond in a friendly, casual manner matching my personality.",
+    "timestamp": "2026-05-14T07:04:43.897406+00:00"
+  }
+]

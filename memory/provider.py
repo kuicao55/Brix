@@ -1,6 +1,7 @@
 """BrixMemoryProvider — MemoryProvider Protocol 的具体实现。"""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,12 @@ from memory.soul import SoulManager
 from memory.user import UserMemoryManager
 from memory.storage import MemoryStorage
 from memory.strategy import MemoryStrategy
+from memory.short_term import ShortTermMemory
+from memory.long_term import LongTermMemory
+from memory.searcher import KeywordMemorySearcher
+from memory.dream import DreamManager
+
+logger = logging.getLogger(__name__)
 
 
 class BrixMemoryProvider:
@@ -32,6 +39,40 @@ class BrixMemoryProvider:
             user_manager=self._user,
             max_tokens=max_context_tokens,
         )
+        # 记忆系统组件 — 防御性初始化，文件系统异常时优雅降级
+        self._short_term: ShortTermMemory | None = None
+        self._long_term: LongTermMemory | None = None
+        self._searcher: KeywordMemorySearcher | None = None
+
+        try:
+            self._short_term = ShortTermMemory(data_dir)
+        except OSError:
+            logger.warning("ShortTermMemory 初始化失败，短期记忆功能不可用", exc_info=True)
+
+        try:
+            self._long_term = LongTermMemory(data_dir)
+        except OSError:
+            logger.warning("LongTermMemory 初始化失败，长期记忆功能不可用", exc_info=True)
+
+        try:
+            self._searcher = KeywordMemorySearcher(
+                long_term=self._long_term,
+                short_term=self._short_term,
+            )
+        except OSError:
+            logger.warning("KeywordMemorySearcher 初始化失败，记忆搜索功能不可用", exc_info=True)
+
+        self._dream: DreamManager | None = None
+        try:
+            self._dream = DreamManager(
+                data_dir,
+                short_term=self._short_term,
+                long_term=self._long_term,
+                user_manager=self._user,
+                soul_manager=self._soul,
+            )
+        except OSError:
+            logger.warning("DreamManager 初始化失败", exc_info=True)
 
     def _ensure_session(self) -> None:
         """确保当前有活跃 session；没有则懒创建。"""
@@ -56,6 +97,36 @@ class BrixMemoryProvider:
         """user.md 是否存在且非空。"""
         return self._user.exists()
 
+    @property
+    def short_term(self) -> ShortTermMemory | None:
+        """短期记忆管理器，初始化失败时为 None。"""
+        return self._short_term
+
+    @property
+    def long_term(self) -> LongTermMemory | None:
+        """长期记忆管理器，初始化失败时为 None。"""
+        return self._long_term
+
+    @property
+    def searcher(self) -> KeywordMemorySearcher | None:
+        """记忆搜索器，初始化失败时为 None。"""
+        return self._searcher
+
+    @property
+    def dream(self) -> DreamManager | None:
+        """Dream 蒸馏管理器，初始化失败时为 None。"""
+        return self._dream
+
+    @property
+    def current_session_id(self) -> str | None:
+        """当前活跃 session 的 UUID，无活跃 session 时为 None。"""
+        return self._current_session_id
+
+    @current_session_id.setter
+    def current_session_id(self, value: str | None) -> None:
+        """允许临时切换 session ID（供 SideManager 加载历史 session 用）。"""
+        self._current_session_id = value
+
     def _cleanup_empty_session(self) -> None:
         """如果当前 session 从未添加过消息，从索引中移除。"""
         if self._current_session_id and not self._has_messages:
@@ -69,6 +140,8 @@ class BrixMemoryProvider:
         self._current_session_id = self._session_mgr.create_session()
         self._storage = MemoryStorage(self._session_mgr, self._current_session_id)
         self._has_messages = False
+        if self._dream is not None:
+            self._dream.on_session_created()
         return self._current_session_id
 
     def clear_session(self) -> None:
@@ -136,6 +209,16 @@ class BrixMemoryProvider:
         """返回所有会话索引（最新在前）。"""
         return self._session_mgr.list_sessions()
 
+    def update_session_title(self, session_id: str, title: str) -> None:
+        """更新指定 session 的标题。"""
+        self._session_mgr.update_session_title(session_id, title)
+
+    def get_short_term_summary(self, limit: int = 10) -> str | None:
+        """返回短期记忆摘要。无内容返回 None。"""
+        if self._short_term is None:
+            return None
+        return self._short_term.get_summary(limit=limit)
+
     def get_context_messages(self, system_prompt: str) -> list[dict[str, Any]]:
         """构建上下文消息列表：system prompt + 策略裁剪后的历史。"""
         system_msg = {"role": "system", "content": system_prompt}
@@ -146,9 +229,11 @@ class BrixMemoryProvider:
         self,
         session_context: str = "",
         dynamic_context: str = "",
+        short_term_summary: str = "",
     ) -> str:
         """构建完整的 system prompt。"""
         return self._strategy.build_system_prompt(
             session_context=session_context,
             dynamic_context=dynamic_context,
+            short_term_summary=short_term_summary,
         )

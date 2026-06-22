@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "你好呀,你吃飯了嗎?",
+    "timestamp": "2026-05-14T07:07:16.538481+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿！还没吃呢，等着你给我点个外卖 😂\n\n开个玩笑～ 我不用吃饭，靠电和代码活着就够啦。不过你吃了吗？要是还没吃，别饿着，赶紧去整点啥。",
+    "reasoning_content": "The user is greeting me and asking if I've eaten. This is a casual, friendly conversation starter. Let me respond in a relaxed, natural way that matches my personality.",
+    "timestamp": "2026-05-14T07:07:16.538497+00:00"
+  }
+]

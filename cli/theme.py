@@ -25,4 +25,9 @@ BRIX_THEME = Theme({
     "stage.name": Style(dim=True, color="white"),
     "stage.time": Style(dim=True, color="cyan"),
     "stage.detail": Style(dim=True, color="grey50"),
+    "status_bar.model": Style(dim=True, color="white"),
+    "status_bar.running": Style(color="cyan"),
+    "status_bar.completed": Style(color="green"),
+    "status_bar.error": Style(color="red"),
+    "status_bar.idle": Style(dim=True, color="grey50"),
 })

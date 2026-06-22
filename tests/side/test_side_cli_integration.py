@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 
@@ -113,7 +115,6 @@ async def test_process_streaming_calls_history_search_and_on_user_message():
     mock_mgr.run_task = AsyncMock(return_value=None)
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
-    mock_mgr.should_run_pref_detection = MagicMock(return_value=False)
     mock_mgr.get_side_model.return_value = "test/side-model"
     instance._side_manager = mock_mgr
 
@@ -171,7 +172,7 @@ async def test_process_streaming_fires_tool_summary_on_tool_result():
     mock_mgr.run_task = AsyncMock(return_value=None)
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
-    mock_mgr.should_run_pref_detection = MagicMock(return_value=False)
+    mock_mgr.should_run_session_title = MagicMock(return_value=False)
     instance._side_manager = mock_mgr
 
     await instance._process_streaming("run ls")
@@ -285,7 +286,7 @@ def test_init_voice_passes_side_model_to_cleanup():
 
 
 # ---------------------------------------------------------------------------
-# 行为测试：should_run_pref_detection 返回 True 时触发 fire_and_forget("pref_detection")
+# 行为测试：验证 pref_detection 已被移除（fire_and_forget 不再调用 pref_detection）
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -328,17 +329,15 @@ async def test_process_streaming_fires_pref_detection_when_should_run_true():
     mock_mgr.run_task = AsyncMock(return_value=None)
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
-    mock_mgr.should_run_pref_detection = MagicMock(return_value=True)
     instance._side_manager = mock_mgr
 
     await instance._process_streaming("hello")
 
-    # fire_and_forget 应被调用且第一个参数为 "pref_detection"
-    mock_mgr.fire_and_forget.assert_called()
-    call_args = mock_mgr.fire_and_forget.call_args
-    assert call_args[0][0] == "pref_detection", (
-        f"fire_and_forget 第一个参数应为 'pref_detection'，实际为 {call_args[0][0]!r}"
-    )
+    # pref_detection 已移除，验证 fire_and_forget 不再以 "pref_detection" 被调用
+    for call in mock_mgr.fire_and_forget.call_args_list:
+        assert call[0][0] != "pref_detection", (
+            "fire_and_forget 不应再调用 'pref_detection'"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -448,3 +447,247 @@ def test_no_router_imports():
         content = f.read()
     assert "from router" not in content
     assert "import router" not in content
+
+
+# ===========================================================================
+# Task 4: 完整记忆系统集成测试
+# ===========================================================================
+
+
+class TestMemorySearchToolRegistered:
+    """验证 MemorySearchTool 已注册到 ToolRunner。"""
+
+    def test_register_tools_registers_memory_search(self):
+        """_register_tools() 应将 MemorySearchTool 注册到 tool_runner。
+        使用真实组件 + 临时目录。"""
+        from capability.runner import ToolRunner
+        from capability.tools.memory_search import MemorySearchTool
+        from memory.long_term import LongTermMemory
+        from memory.short_term import ShortTermMemory
+        from memory.searcher import KeywordMemorySearcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            data_root = Path(d)
+            # 模拟 _register_tools() 的逻辑
+            runner = ToolRunner()
+            searcher = KeywordMemorySearcher(
+                long_term=LongTermMemory(data_root),
+                short_term=ShortTermMemory(data_root),
+            )
+            runner.register(MemorySearchTool(searcher))
+
+            # 验证 memory_search 已注册
+            schemas = runner.get_tool_schemas()
+            tool_names = [s["function"]["name"] for s in schemas]
+            assert "memory_search" in tool_names, (
+                f"MemorySearchTool 未注册，已注册: {tool_names}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_registered_memory_search_tool_executable(self):
+        """注册后的 MemorySearchTool 可通过 ToolRunner.run() 执行。"""
+        from capability.runner import ToolRunner
+        from capability.tools.memory_search import MemorySearchTool
+        from memory.long_term import LongTermMemory
+        from memory.short_term import ShortTermMemory
+        from memory.searcher import KeywordMemorySearcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            data_root = Path(d)
+            ltm = LongTermMemory(data_root)
+            stm = ShortTermMemory(data_root)
+            # 写入测试数据（使用 CATEGORY_FILES 中的文件）
+            ltm.write_topic("user.md", "## 食物偏好\n- 喜欢辣的食物",
+                            {"name": "用户画像", "description": "用户的食物偏好", "type": "long_term"})
+            ltm.update_index()
+            stm.add_item("用户喜欢吃火锅", "pref_detection", session_id="test-sess")
+
+            runner = ToolRunner()
+            searcher = KeywordMemorySearcher(long_term=ltm, short_term=stm)
+            runner.register(MemorySearchTool(searcher))
+
+            # 通过 runner 执行搜索
+            result = await runner.run("memory_search", {"query": "辣的食物"})
+            assert isinstance(result, str)
+            assert "辣" in result
+
+
+class TestMemorySummaryTaskInAllTasks:
+    """验证 MemorySummaryTask 已注册到 ALL_TASKS。"""
+
+    def test_memory_summary_in_all_tasks(self):
+        """ALL_TASKS 应包含 MemorySummaryTask。"""
+        from side.tasks import ALL_TASKS
+        names = [t.name for t in ALL_TASKS]
+        assert "memory_summary" in names, (
+            f"MemorySummaryTask 未在 ALL_TASKS 中，已注册: {names}"
+        )
+
+    def test_all_seven_tasks_registered(self):
+        """ALL_TASKS 应恰好包含 7 个 task（pref_detection 已移除）。"""
+        from side.tasks import ALL_TASKS
+        assert len(ALL_TASKS) == 7, f"期望 7 个 task，实际 {len(ALL_TASKS)}"
+
+
+class TestBrixMemoryProviderComponents:
+    """验证 BrixMemoryProvider 暴露 short_term、long_term、searcher。"""
+
+    def test_provider_exposes_short_term(self):
+        """BrixMemoryProvider.short_term 应返回 ShortTermMemory 实例。"""
+        from memory.provider import BrixMemoryProvider
+        from memory.short_term import ShortTermMemory
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            assert provider.short_term is not None
+            assert isinstance(provider.short_term, ShortTermMemory)
+
+    def test_provider_exposes_long_term(self):
+        """BrixMemoryProvider.long_term 应返回 LongTermMemory 实例。"""
+        from memory.provider import BrixMemoryProvider
+        from memory.long_term import LongTermMemory
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            assert provider.long_term is not None
+            assert isinstance(provider.long_term, LongTermMemory)
+
+    def test_provider_exposes_searcher(self):
+        """BrixMemoryProvider.searcher 应返回 KeywordMemorySearcher 实例。"""
+        from memory.provider import BrixMemoryProvider
+        from memory.searcher import KeywordMemorySearcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            assert provider.searcher is not None
+            assert isinstance(provider.searcher, KeywordMemorySearcher)
+
+    def test_provider_searcher_uses_provider_components(self):
+        """BrixMemoryProvider.searcher 应使用 provider 自身的 long_term/short_term。"""
+        from memory.provider import BrixMemoryProvider
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            # 通过 provider 的 short_term 写入数据
+            provider.short_term.add_item("用户喜欢咖啡", "pref_detection", session_id="test-sess")
+            # 通过 provider 的 searcher 搜索
+            results = provider.searcher.search("咖啡")
+            assert len(results) > 0
+            assert "咖啡" in results[0].content
+
+
+class TestSaveMemoryToolRegistered:
+    """验证 SaveMemoryTool 已注册到 ToolRunner。"""
+
+    def test_save_memory_tool_in_registered_tools(self):
+        """_register_tools() 应将 SaveMemoryTool 注册到 tool_runner。
+        通过 BrixCLI 初始化验证 save_memory 出现在工具 schema 列表中。"""
+        config = {
+            "routing": {"default_model": "test/model"},
+            "memory": {"data_dir": "/tmp/brix_test", "max_context_tokens": 1000},
+            "side": {"enabled": True, "model": "test/side-model"},
+        }
+
+        with (
+            patch("cli.app.CommandRegistry"),
+            patch("cli.app.HookRegistry"),
+            patch("cli.app.StateMachineOrchestrator"),
+            patch("cli.app.LLMClient"),
+            patch("cli.app.BrixCLI._init_voice"),
+            patch("cli.app.BrixCLI._register_commands"),
+            patch("cli.app.BrixCLI._register_skill_tool"),
+        ):
+            from cli.app import BrixCLI
+            instance = BrixCLI(config=config)
+
+        schemas = instance._tool_runner.get_tool_schemas()
+        tool_names = [s["function"]["name"] for s in schemas]
+        assert "save_memory" in tool_names, (
+            f"SaveMemoryTool 未注册，已注册: {tool_names}"
+        )
+
+
+class TestSystemPromptSaveMemoryGuidance:
+    """验证 system prompt 包含 save_memory 触发指引。"""
+
+    def test_system_prompt_contains_save_memory_guidance(self):
+        """build_system_prompt() 输出应包含 save_memory 使用指引。
+        需要 soul.md 和 user.md 存在，否则会走 onboarding 模板。"""
+        from memory.strategy import MemoryStrategy
+        from memory.soul import SoulManager
+        from memory.user import UserMemoryManager
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            data_root = Path(d)
+            soul = SoulManager(data_root)
+            user = UserMemoryManager(data_root)
+            # 创建 soul.md 和 user.md 以跳过 onboarding 模板
+            soul.save("# Soul\nTest personality")
+            user.save("# User\nTest user info")
+            strategy = MemoryStrategy(soul_manager=soul, user_manager=user)
+            prompt = strategy.build_system_prompt()
+            assert "save_memory" in prompt, (
+                "system prompt 中未找到 save_memory 指引"
+            )
+
+
+class TestPrefDetectionRemoved:
+    """验证 PrefDetectionTask 已被完全移除。"""
+
+    def test_pref_detection_not_in_all_tasks(self):
+        """ALL_TASKS 中不应包含 pref_detection。"""
+        from side.tasks import ALL_TASKS
+        names = [t.name for t in ALL_TASKS]
+        assert "pref_detection" not in names, (
+            f"pref_detection 仍在 ALL_TASKS 中: {names}"
+        )
+
+    def test_pref_detection_file_deleted(self):
+        """side/tasks/pref_detection.py 文件应已删除。"""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "side", "tasks", "pref_detection.py")
+        assert not os.path.exists(path), (
+            f"pref_detection.py 仍存在: {path}"
+        )
+
+    def test_should_run_pref_detection_removed(self):
+        """SideTaskManager 不应再有 should_run_pref_detection 方法。"""
+        from side.manager import SideTaskManager
+        mgr = SideTaskManager()
+        assert not hasattr(mgr, "should_run_pref_detection"), (
+            "SideTaskManager 仍有 should_run_pref_detection 方法"
+        )
+
+
+class TestSideManagerPassesMemory:
+    """验证 SideTaskManager 将 memory 传递给 SideTaskContext。"""
+
+    def test_build_context_includes_memory(self):
+        """SideTaskManager._build_context() 应将 memory 传入 SideTaskContext。"""
+        from side.manager import SideTaskManager
+        from memory.provider import BrixMemoryProvider
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = BrixMemoryProvider(data_dir=Path(d))
+            mgr = SideTaskManager()
+            mgr.configure(
+                config={"side": {"enabled": True, "model": "test"}},
+                llm_client=MagicMock(),
+                memory=provider,
+            )
+            ctx = mgr._build_context(
+                session_messages=[{"role": "user", "content": "hi"}],
+                user_input="hi",
+            )
+            assert ctx.memory is provider
+            assert ctx.memory.short_term is not None
+            assert ctx.memory.long_term is not None
+            assert ctx.memory.searcher is not None

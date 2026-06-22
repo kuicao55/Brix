@@ -129,6 +129,7 @@ class SessionManager:
                 "updated": mtime.isoformat(),
                 "message_count": len(messages),
                 "preview": preview,
+                "title": "",
             })
         # 按修改时间倒序
         index.sort(key=lambda e: e["updated"], reverse=True)
@@ -173,6 +174,7 @@ class SessionManager:
                 "updated": now,
                 "message_count": 0,
                 "preview": "",
+                "title": "",
             })
             self._save_index(index)
             return sid
@@ -194,6 +196,18 @@ class SessionManager:
             if len(cleaned) != len(index):
                 self._save_index(cleaned)
         return self._with_index_lock(_do_cleanup)
+
+    def update_session_title(self, session_id: str, title: str) -> None:
+        """更新指定 session 的标题。在文件锁保护下执行。"""
+        _validate_session_id(session_id)
+        def _do_update() -> None:
+            index = self._load_index()
+            for entry in index:
+                if entry["id"] == session_id:
+                    entry["title"] = title
+                    break
+            self._save_index(index)
+        self._with_index_lock(_do_update)
 
     def save_session(
         self,
@@ -290,6 +304,7 @@ class SessionManager:
                     "updated": now,
                     "message_count": len(final_messages),
                     "preview": preview,
+                    "title": "",
                 })
             index.sort(key=lambda e: e.get("updated", ""), reverse=True)
             self._save_index(index)

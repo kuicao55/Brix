@@ -29,11 +29,18 @@ from capability.tools.file_read import FileReadTool
 from capability.tools.file_write import FileWriteTool
 from capability.tools.skill_tool import SkillTool
 from capability.tools.weather import WeatherTool
+from capability.tools.memory_search import MemorySearchTool
+from capability.tools.save_memory import SaveMemoryTool
+from memory.long_term import LongTermMemory
+from memory.searcher import KeywordMemorySearcher
+from memory.short_term import ShortTermMemory
 from cli.banner import show_banner
 from cli.completer import SlashCommandCompleter
 from cli.display import render_history
 from cli.paginated_selector import PaginatedSelector
 from cli.stage_indicator import StageIndicator
+from cli.ansi_status_bar import paint_status_bar, setup_scroll_region, teardown_scroll_region
+from cli.status_bar import StatusBarRenderer
 from cli.stream_renderer import StreamRenderer
 from cli.thinking_renderer import ThinkingRenderer
 from cli.theme import BRIX_THEME
@@ -45,6 +52,8 @@ from infra.llm_client import LLMClient
 from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
 from orchestrator.state_machine import StateMachineOrchestrator
+from plugins.status_bar.plugin import StatusBarPlugin
+from plugins.status_bar.slots import load_enabled_slots
 from side.manager import SideTaskManager
 from side.tasks import ALL_TASKS
 
@@ -75,6 +84,21 @@ class BrixCLI:
         )
         for task in ALL_TASKS:
             self._side_manager.register(task)
+        # 状态栏（可选，通过 status_bar.enabled 控制）
+        self._status_bar_enabled = self._config.get("status_bar", {}).get("enabled", True)
+        if self._status_bar_enabled:
+            self._status_bar_plugin = StatusBarPlugin(side_model=self._side_manager.get_side_model())
+            self._status_bar_renderer = StatusBarRenderer(self._status_bar_plugin)
+            # 根据配置注册已启用的 slot
+            for slot in load_enabled_slots(self._config):
+                self._status_bar_renderer.add_slot(slot)
+            self._side_manager._on_task_start = self._status_bar_plugin.on_task_start
+            self._side_manager._on_task_end = self._status_bar_plugin.on_task_end
+            # 状态变化时重绘 ANSI 状态栏
+            self._status_bar_plugin.set_on_change(self._repaint_status_bar)
+        else:
+            self._status_bar_plugin = None
+            self._status_bar_renderer = None
         # 语音模块（可选，需在注册命令前初始化）
         self._voice = None
         self._voice_display = None
@@ -87,6 +111,24 @@ class BrixCLI:
     # 内部辅助
     # ------------------------------------------------------------------
 
+    def _save_session_summary(self) -> None:
+        """fire-and-forget：不阻塞退出。兜底检查在下次启动时补全。"""
+        if not self._side_manager or not self._side_manager.enabled:
+            return
+        try:
+            self._side_manager.fire_and_forget_session_summary()
+        except Exception:
+            pass
+
+    def _repaint_status_bar(self) -> None:
+        """重绘 ANSI 状态栏（固定在终端最后一行）。"""
+        if not self._status_bar_enabled or not self._status_bar_renderer:
+            return
+        try:
+            paint_status_bar(self._status_bar_renderer)
+        except Exception:
+            pass
+
     def _resolve_model(self) -> str:
         """解析主模型：default_model → fallback_model → 空字符串。"""
         routing = self._config.get("routing", {})
@@ -98,6 +140,19 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
+        # 状态栏启用时：让 prompt_toolkit 认为终端少 1 行，为状态栏留出空间。
+        # 必须在 PromptSession 创建前 patch，否则 toolbar 会渲染到最后一行覆盖状态栏。
+        if self._status_bar_enabled:
+            from prompt_toolkit.output.vt100 import Vt100_Output
+            _original_get_size = Vt100_Output.get_size
+
+            def _patched_get_size(self):
+                size = _original_get_size(self)
+                from prompt_toolkit.data_structures import Size
+                return Size(rows=max(size.rows - 1, 2), columns=size.columns)
+
+            Vt100_Output.get_size = _patched_get_size  # type: ignore[assignment]
+
         completer = FuzzyCompleter(SlashCommandCompleter(self._command_registry))
         # 补全菜单样式：纯文字，无背景无边框
         completion_style = Style.from_dict({
@@ -120,6 +175,12 @@ class BrixCLI:
             style=completion_style,
         )
         default_model = self._config.get("routing", {}).get("default_model", "unknown")
+
+        # 状态栏：设置 ANSI 滚动区域，保留底部 1 行给状态栏
+        if self._status_bar_enabled:
+            setup_scroll_region(status_lines=1)
+            paint_status_bar(self._status_bar_renderer)
+
         show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
 
         first_turn = True
@@ -143,6 +204,7 @@ class BrixCLI:
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     keyboard_task.cancel()
                     voice_task.cancel()
+                    self._save_session_summary()
                     break
 
                 for task in pending:
@@ -158,6 +220,7 @@ class BrixCLI:
                     try:
                         text = keyboard_task.result()
                     except (EOFError, KeyboardInterrupt):
+                        self._save_session_summary()
                         self._memory.save_session()
                         self._console.print("\n[dim]Goodbye.[/]")
                         break
@@ -178,12 +241,19 @@ class BrixCLI:
                 self._console.print()  # ❯ 和 ⏺ 之间的间隔
                 try:
                     await self._process_streaming(text)
+                except KeyboardInterrupt:
+                    self._save_session_summary()
+                    self._memory.save_session()
+                    self._console.print("\n[dim]Goodbye.[/]")
+                    break
                 except Exception as exc:
                     self._console.print("[red]Error:[/] {}".format(exc))
         finally:
             if self._voice and self._voice.is_running:
                 await self._voice.stop()
             await self._llm_client.close()
+            if self._status_bar_enabled:
+                teardown_scroll_region()
 
     # ------------------------------------------------------------------
     # Command handling
@@ -212,6 +282,10 @@ class BrixCLI:
             memory=self._memory,
             llm_client=self._llm_client,
         )
+
+        # /clear 和 /quit 退出前保存会话摘要
+        if cmd_name in ("clear", "quit"):
+            self._save_session_summary()
 
         result = await command.execute(args, ctx)
 
@@ -305,6 +379,10 @@ class BrixCLI:
 
     async def _process_streaming(self, user_input: str) -> None:
         """Stream orchestrator output with unified spinner and markdown rendering."""
+        # 兜底检查：即将创建新 session 时，检查上一个 session 是否有摘要
+        if self._memory.current_session_id is None and self._side_manager:
+            await self._side_manager.check_previous_session_summary()
+
         import time as _time
         _t_start = _time.monotonic()
         _timing = []  # (label, elapsed_ms)
@@ -329,6 +407,15 @@ class BrixCLI:
         hooks.fire("memory", msgs=len(context_messages),
                    chars=sum(len(m.get("content", "")) for m in context_messages))
         _tick("memory")
+
+        # Dream 蒸馏（fire-and-forget，不影响主流程）
+        if self._side_manager and self._side_manager.enabled:
+            self._side_manager.fire_and_forget(
+                "dream",
+                session_messages=context_messages,
+                user_input=user_input,
+                hooks=hooks,
+            )
 
         # Side 层：历史搜索（如果触发）
         if self._side_manager and self._side_manager.enabled:
@@ -469,11 +556,15 @@ class BrixCLI:
                 renderer.flush()
                 renderer = None
             log.set_error(str(exc))
-            self._console.print("[red]Error:[/] {}".format(exc))
+            err_text = str(exc).split("\n")[0].strip()
+            if len(err_text) > 200:
+                err_text = err_text[:199] + "\u2026"
+            self._console.print("[red]Error:[/] {}".format(err_text))
 
         finally:
             tool_display.cleanup()  # 确保异常时 spinner 被清理
             indicator.finish()
+            self._repaint_status_bar()  # streaming 结束后重绘状态栏
 
         # Flush any remaining content
         if thinking_renderer is not None:
@@ -519,16 +610,19 @@ class BrixCLI:
         self._memory.save_session()
         hooks.fire("persist", saved=2 if not has_error else 1)
 
-        # 偏好检测（按间隔触发）
-        # NOTE: fire-and-forget 任务的返回值当前被丢弃。
-        # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
+        # 会话标题生成（第 1、3 条消息时触发）
         if (self._side_manager and self._side_manager.enabled
-                and self._side_manager.should_run_pref_detection()):
+                and self._side_manager.should_run_session_title()):
+            async def _save_title(title: str) -> None:
+                sid = getattr(self._memory, "current_session_id", None)
+                if sid and title:
+                    self._memory.update_session_title(sid, title)
             self._side_manager.fire_and_forget(
-                "pref_detection",
+                "session_title",
                 session_messages=context_messages,
                 user_input=user_input,
                 hooks=hooks,
+                on_result=_save_title,
             )
 
         try:
@@ -549,6 +643,17 @@ class BrixCLI:
         self._tool_runner.register(FileReadTool())
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))
+        # 记忆搜索工具
+        searcher = KeywordMemorySearcher(
+            long_term=LongTermMemory(data_root),
+            short_term=ShortTermMemory(data_root),
+        )
+        self._tool_runner.register(MemorySearchTool(searcher))
+        # 主模型主动写入记忆
+        if self._memory:
+            short_term = getattr(self._memory, "short_term", None)
+            if short_term:
+                self._tool_runner.register(SaveMemoryTool(short_term, self._memory))
 
     def _init_voice(self) -> None:
         """初始化语音模块（如果配置启用）。"""

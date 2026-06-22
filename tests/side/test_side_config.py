@@ -29,9 +29,7 @@ def test_config_side_tasks_structure():
     expected_tasks = [
         "session_title",
         "tool_summary",
-        "pref_detection",
         "history_search",
-        "voice_cleanup",
         "context_compress",
         "session_summary",
     ]
