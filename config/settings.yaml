@@ -245,6 +245,18 @@ side:
     dream:
       enabled: true
 
+# ============================================================
+# 状态栏配置 — slot 可插拔
+# ============================================================
+status_bar:
+  enabled: false               # false = 完全不显示状态栏（不占终端底部行）
+  renderer: "default"          # 渲染器名称（预留，当前只有 default）
+  slots:
+    model:
+      enabled: true            # 显示 side model 名称
+    task:
+      enabled: true            # 显示 side task 运行状态
+
 retry:
   max_retries: 3
   base_delay: 1.0

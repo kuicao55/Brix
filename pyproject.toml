@@ -30,6 +30,10 @@ dev = [
     "pytest-asyncio>=0.24",
 ]
 
+[tool.setuptools.packages.find]
+include = ["cli*", "config*", "hooks*", "infra*", "log*", "memory*", "orchestrator*", "plugins*", "side*", "capability*"]
+exclude = ["tests*", "dev_doc*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -1,0 +1,13 @@
+[
+  {
+    "role": "user",
+    "content": "hi",
+    "timestamp": "2026-06-17T16:13:00.448180+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "嘿，老大！晚上好啊～🌙\n\n这么晚了还在搞事情？还是单纯想找个人唠唠嗑？😏",
+    "reasoning_content": "The user is saying \"hi\" — a casual greeting. Let me respond in a friendly, relaxed way matching my soul definition.",
+    "timestamp": "2026-06-17T16:13:00.448185+00:00"
+  }
+]
