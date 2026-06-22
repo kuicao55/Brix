@@ -57,7 +57,7 @@ class CommandContext:
 
     session_id: str = ""
     data_dir: str = ""
-    console: Any = None  # Rich Console 实例
+    ui: Any = None  # UIAdapter 实例（通过 Protocol 接口操作 UI）
     config: dict = field(default_factory=dict)
     memory: Any = None  # MemoryProvider 实例
     llm_client: Any = None  # LLMClient 实例

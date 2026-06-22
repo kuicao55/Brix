@@ -140,8 +140,11 @@ async def test_handle_command_triggers_summary_for_clear():
         config, mock_memory, mock_llm = _make_brix_cli_mock()
         instance = BrixCLI(config=config)
 
-    # mock _save_session_summary
-    instance._save_session_summary = MagicMock()
+    # mock side_manager
+    mock_side = MagicMock()
+    mock_side.enabled = True
+    mock_side.fire_and_forget_session_summary = MagicMock()
+    instance._runner._side_manager = mock_side
 
     # mock clear command
     mock_cmd = MagicMock()
@@ -149,10 +152,10 @@ async def test_handle_command_triggers_summary_for_clear():
     mock_cmd_reg.return_value.get.return_value = mock_cmd
 
     instance._memory = mock_memory
-    result = await instance._handle_command("/clear")
+    result = await instance._runner.handle_command("/clear", instance._ui)
 
-    # _save_session_summary 应被调用
-    instance._save_session_summary.assert_called_once()
+    # fire_and_forget_session_summary 应被调用
+    mock_side.fire_and_forget_session_summary.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -175,8 +178,11 @@ async def test_handle_command_triggers_summary_for_quit():
         config, mock_memory, mock_llm = _make_brix_cli_mock()
         instance = BrixCLI(config=config)
 
-    # mock _save_session_summary
-    instance._save_session_summary = MagicMock()
+    # mock side_manager
+    mock_side = MagicMock()
+    mock_side.enabled = True
+    mock_side.fire_and_forget_session_summary = MagicMock()
+    instance._runner._side_manager = mock_side
 
     # mock quit command
     mock_cmd = MagicMock()
@@ -184,10 +190,10 @@ async def test_handle_command_triggers_summary_for_quit():
     mock_cmd_reg.return_value.get.return_value = mock_cmd
 
     instance._memory = mock_memory
-    result = await instance._handle_command("/quit")
+    result = await instance._runner.handle_command("/quit", instance._ui)
 
-    # _save_session_summary 应被调用
-    instance._save_session_summary.assert_called_once()
+    # fire_and_forget_session_summary 应被调用
+    mock_side.fire_and_forget_session_summary.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -219,7 +225,7 @@ async def test_handle_command_no_summary_for_other_commands():
     mock_cmd_reg.return_value.get.return_value = mock_cmd
 
     instance._memory = mock_memory
-    result = await instance._handle_command("/help")
+    result = await instance._runner.handle_command("/help", instance._ui)
 
     # _save_session_summary 不应被调用
     instance._save_session_summary.assert_not_called()
@@ -311,7 +317,6 @@ async def test_keyboard_interrupt_during_streaming_saves_summary():
         patch("cli.app.BrixCLI._register_tools"),
         patch("cli.app.BrixCLI._register_commands"),
         patch("cli.app.BrixCLI._register_skill_tool"),
-        patch("cli.app.show_banner"),
     ):
         from cli.app import BrixCLI
         config, mock_memory, mock_llm = _make_brix_cli_mock()
@@ -319,9 +324,13 @@ async def test_keyboard_interrupt_during_streaming_saves_summary():
 
     instance._memory = mock_memory
     instance._save_session_summary = MagicMock()
-    instance._process_streaming = AsyncMock(side_effect=KeyboardInterrupt)
+    instance._runner.process_streaming = AsyncMock(side_effect=KeyboardInterrupt)
     # _llm_client.close() 在 finally 中被 await，需 mock
     instance._llm_client.close = AsyncMock()
+    # Mock ui.setup/teardown
+    instance._ui.setup = MagicMock()
+    instance._ui.teardown = MagicMock()
+    instance._ui.print = MagicMock()
 
     # Mock prompt_async to return a message once, then block forever
     call_count = 0
@@ -333,17 +342,12 @@ async def test_keyboard_interrupt_during_streaming_saves_summary():
         # Block forever — should never reach here
         await asyncio.Event().wait()
 
-    mock_session = MagicMock()
-    mock_session.prompt_async = fake_prompt
+    instance._ui.prompt_async = fake_prompt
 
-    # Patch PromptSession to return our mock
-    with patch("cli.app.PromptSession", return_value=mock_session):
-        with patch("cli.app.FuzzyCompleter"):
-            with patch("cli.app.InMemoryHistory"):
-                try:
-                    await instance.run()
-                except KeyboardInterrupt:
-                    pass  # 修复前会传播到这里；修复后不会
+    try:
+        await instance.run()
+    except KeyboardInterrupt:
+        pass  # 修复前会传播到这里；修复后不会
 
     # KeyboardInterrupt during streaming should trigger summary save
     instance._save_session_summary.assert_called()

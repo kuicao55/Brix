@@ -11,6 +11,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
+from capability.command.base import CommandResultType
 from cli.display import format_response
 
 
@@ -338,24 +339,33 @@ async def test_spinner_stops_on_tool_only_stream():
         yield {"type": "tool_call", "name": "calculator"}
         yield {"type": "tool_result", "name": "calculator", "ms": 42}
 
-    mock_indicator = MagicMock(spec=StageIndicator)
     mock_mem = _make_mock_memory()
 
-    with patch("cli.app.StageIndicator", return_value=mock_indicator), \
-         patch("cli.app.load_config", return_value={
+    with patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
          patch("cli.app.create_memory_provider", return_value=mock_mem):
 
         cli = BrixCLI()
-        cli._orchestrator = MagicMock()
-        cli._orchestrator.run_stream = MagicMock(return_value=tool_only_stream())
+        cli._runner._orchestrator = MagicMock()
+        cli._runner._orchestrator.run_stream = MagicMock(return_value=tool_only_stream())
 
-        await cli._process_streaming("calculate something")
+        # Mock the UI to capture stop_stage calls
+        mock_ui = MagicMock()
+        mock_ui.update_stage = MagicMock()
+        mock_ui.stop_stage = MagicMock()
+        mock_ui.flush_thinking = MagicMock()
+        mock_ui.flush_streaming = MagicMock()
+        mock_ui.show_tool_start = MagicMock()
+        mock_ui.show_tool_result = MagicMock()
+        mock_ui.print = MagicMock()
+        mock_ui.repaint_status_bar = MagicMock()
 
-        # StageIndicator.finish() must have been called (not left running)
-        mock_indicator.finish.assert_called()
+        await cli._runner.process_streaming("calculate something", mock_ui)
+
+        # stop_stage must have been called (not left running)
+        mock_ui.stop_stage.assert_called()
 
 
 @pytest.mark.asyncio
@@ -373,24 +383,30 @@ async def test_spinner_stops_on_empty_stream():
         return
         yield  # make it an async generator
 
-    mock_indicator = MagicMock(spec=StageIndicator)
     mock_mem = _make_mock_memory()
 
-    with patch("cli.app.StageIndicator", return_value=mock_indicator), \
-         patch("cli.app.load_config", return_value={
+    with patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
          patch("cli.app.create_memory_provider", return_value=mock_mem):
 
         cli = BrixCLI()
-        cli._orchestrator = MagicMock()
-        cli._orchestrator.run_stream = MagicMock(return_value=empty_stream())
+        cli._runner._orchestrator = MagicMock()
+        cli._runner._orchestrator.run_stream = MagicMock(return_value=empty_stream())
 
-        await cli._process_streaming("hello")
+        mock_ui = MagicMock()
+        mock_ui.update_stage = MagicMock()
+        mock_ui.stop_stage = MagicMock()
+        mock_ui.flush_thinking = MagicMock()
+        mock_ui.flush_streaming = MagicMock()
+        mock_ui.print = MagicMock()
+        mock_ui.repaint_status_bar = MagicMock()
 
-        # StageIndicator.finish() must have been called
-        mock_indicator.finish.assert_called()
+        await cli._runner.process_streaming("hello", mock_ui)
+
+        # stop_stage must have been called
+        mock_ui.stop_stage.assert_called()
 
 
 # ------------------------------------------------------------------
@@ -415,7 +431,7 @@ async def test_styled_prompt_used():
     session = MagicMock()
     session.prompt_async = AsyncMock(side_effect=EOFError)
 
-    with patch("cli.app.PromptSession", return_value=session):
+    with patch("cli.tui_adapter.PromptSession", return_value=session):
         try:
             await cli.run()
         except (SystemExit, EOFError):
@@ -436,24 +452,31 @@ async def test_stage_indicator_called_during_streaming():
     async def fake_stream():
         yield {"type": "text_delta", "text": "Hi"}
 
-    mock_indicator = MagicMock(spec=StageIndicator)
     mock_mem = _make_mock_memory()
 
-    with patch("cli.app.StageIndicator", return_value=mock_indicator), \
-         patch("cli.app.load_config", return_value={
+    with patch("cli.app.load_config", return_value={
              "routing": {"default_model": "test-model"},
              "memory": {"max_context_tokens": 8000},
          }), \
          patch("cli.app.create_memory_provider", return_value=mock_mem):
 
         cli = BrixCLI()
-        cli._orchestrator = MagicMock()
-        cli._orchestrator.run_stream = MagicMock(return_value=fake_stream())
+        cli._runner._orchestrator = MagicMock()
+        cli._runner._orchestrator.run_stream = MagicMock(return_value=fake_stream())
 
-        await cli._process_streaming("hello")
+        mock_ui = MagicMock()
+        mock_ui.update_stage = MagicMock()
+        mock_ui.stop_stage = MagicMock()
+        mock_ui.push_text_delta = MagicMock()
+        mock_ui.flush_thinking = MagicMock()
+        mock_ui.flush_streaming = MagicMock()
+        mock_ui.print = MagicMock()
+        mock_ui.repaint_status_bar = MagicMock()
 
-    # update() should have been called for Planning stage
-    update_calls = [c[0][0] for c in mock_indicator.update.call_args_list]
+        await cli._runner.process_streaming("hello", mock_ui)
+
+    # update_stage should have been called for Planning
+    update_calls = [c[0][0] for c in mock_ui.update_stage.call_args_list]
     assert "Planning" in update_calls
 
 
@@ -496,9 +519,9 @@ async def test_resume_no_sessions():
         cli = BrixCLI()
 
     with patch("builtins.print") as mock_print:
-        result = await cli._handle_command("/resume")
+        result = await cli._runner.handle_command("/resume", cli._ui)
 
-    assert result is True
+    assert result.type != CommandResultType.QUIT
     mock_print.assert_any_call("No sessions yet.")
 
 
@@ -520,9 +543,9 @@ async def test_resume_direct_id_match():
         cli = BrixCLI()
 
     with patch("capability.command.builtin.session.ResumeCommand._resume_and_render") as mock_render:
-        result = await cli._handle_command("/resume abc")
+        result = await cli._runner.handle_command("/resume abc", cli._ui)
 
-    assert result is True
+    assert result.type != CommandResultType.QUIT
     mock_render.assert_called_once()
     ctx_arg, sid_arg = mock_render.call_args[0]
     assert ctx_arg.memory is mock_mem
@@ -545,13 +568,11 @@ async def test_resume_interactive_select():
          patch("cli.app.create_memory_provider", return_value=mock_mem):
         cli = BrixCLI()
 
-    with patch("cli.paginated_selector.PaginatedSelector") as MockSelector:
-        instance = MockSelector.return_value
-        instance.prompt_async = AsyncMock(return_value=session_data)
+    with patch.object(cli._ui, "select_paginated", new_callable=AsyncMock, return_value=session_data):
         with patch("capability.command.builtin.session.ResumeCommand._resume_and_render") as mock_render:
-            result = await cli._handle_command("/resume")
+            result = await cli._runner.handle_command("/resume", cli._ui)
 
-    assert result is True
+    assert result.type != CommandResultType.QUIT
     mock_render.assert_called_once()
     ctx_arg, sid_arg = mock_render.call_args[0]
     assert ctx_arg.memory is mock_mem
@@ -577,15 +598,13 @@ async def test_resume_lists_sessions():
          patch("cli.app.create_memory_provider", return_value=mock_mem):
         cli = BrixCLI()
 
-    with patch("cli.paginated_selector.PaginatedSelector") as MockSelector:
-        instance = MockSelector.return_value
-        instance.prompt_async = AsyncMock(return_value=None)  # 用户取消
-        result = await cli._handle_command("/resume")
+    with patch.object(cli._ui, "select_paginated", new_callable=AsyncMock, return_value=None) as mock_select:
+        result = await cli._runner.handle_command("/resume", cli._ui)
 
-    assert result is True
-    # 验证 PaginatedSelector 收到了正确的 sessions 列表
-    call_kwargs = MockSelector.call_args
-    assert call_kwargs.kwargs["items"] == sessions
+    assert result.type != CommandResultType.QUIT
+    # 验证 select_paginated 收到了正确的 sessions 列表
+    mock_select.assert_called_once()
+    assert mock_select.call_args.kwargs["items"] == sessions
 
 
 @pytest.mark.asyncio
@@ -603,9 +622,9 @@ async def test_help_shows_resume_no_sessions():
         cli = BrixCLI()
 
     with patch("builtins.print") as mock_print:
-        result = await cli._handle_command("/help")
+        result = await cli._runner.handle_command("/help", cli._ui)
 
-    assert result is True
+    assert result.type != CommandResultType.QUIT
     # 收集所有打印内容
     printed = " ".join(str(c) for call in mock_print.call_args_list for c in call[0])
     assert "/resume" in printed

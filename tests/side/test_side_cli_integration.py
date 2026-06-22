@@ -117,8 +117,9 @@ async def test_process_streaming_calls_history_search_and_on_user_message():
     mock_mgr.fire_and_forget = MagicMock()
     mock_mgr.get_side_model.return_value = "test/side-model"
     instance._side_manager = mock_mgr
+    instance._runner._side_manager = mock_mgr
 
-    await instance._process_streaming("hello")
+    await instance._runner.process_streaming("hello", instance._ui)
 
     # 验证 history_search 被调用（不精确匹配 hooks，它在函数内部新建）
     assert mock_mgr.run_task.call_count >= 1
@@ -174,8 +175,9 @@ async def test_process_streaming_fires_tool_summary_on_tool_result():
     mock_mgr.fire_and_forget = MagicMock()
     mock_mgr.should_run_session_title = MagicMock(return_value=False)
     instance._side_manager = mock_mgr
+    instance._runner._side_manager = mock_mgr
 
-    await instance._process_streaming("run ls")
+    await instance._runner.process_streaming("run ls", instance._ui)
 
     # fire_and_forget 应被调用且参数包含 "tool_summary"
     mock_mgr.fire_and_forget.assert_called()
@@ -330,8 +332,9 @@ async def test_process_streaming_fires_pref_detection_when_should_run_true():
     mock_mgr.on_user_message = MagicMock()
     mock_mgr.fire_and_forget = MagicMock()
     instance._side_manager = mock_mgr
+    instance._runner._side_manager = mock_mgr
 
-    await instance._process_streaming("hello")
+    await instance._runner.process_streaming("hello", instance._ui)
 
     # pref_detection 已移除，验证 fire_and_forget 不再以 "pref_detection" 被调用
     for call in mock_mgr.fire_and_forget.call_args_list:
@@ -357,21 +360,18 @@ def test_model_command_displays_models():
         ],
     }
     cmd = ModelCommand(config)
-    ctx = CommandContext()
+    mock_ui = MagicMock()
+    mock_ui.select_paginated = AsyncMock(return_value={"id": "ali/qwen3.6-flash", "cost_tier": "low"})
+    ctx = CommandContext(ui=mock_ui)
 
-    # Mock PaginatedSelector 返回第二个模型
-    with patch("cli.paginated_selector.PaginatedSelector") as MockSelector:
-        mock_instance = MockSelector.return_value
-        mock_instance.prompt_async = AsyncMock(return_value={"id": "ali/qwen3.6-flash", "cost_tier": "low"})
-
-        import asyncio
-        import io
-        import sys
-        old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
-        asyncio.run(cmd.execute("", ctx))
-        output = sys.stdout.getvalue()
-        sys.stdout = old_stdout
+    import asyncio
+    import io
+    import sys
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    asyncio.run(cmd.execute("", ctx))
+    output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
 
     assert "已切换到" in output
     assert "ali/qwen3.6-flash" in output

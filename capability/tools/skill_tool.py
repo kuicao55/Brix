@@ -24,7 +24,7 @@ class SkillTool(Tool):
         registry: CommandRegistry,
         session_id: str = "",
         data_dir: str = "",
-        console: Any = None,
+        ui: Any = None,
         config: dict | None = None,
         memory: Any = None,
         llm_client: Any = None,
@@ -32,7 +32,7 @@ class SkillTool(Tool):
         self._registry = registry
         self._session_id = session_id
         self._data_dir = data_dir
-        self._console = console
+        self._ui = ui
         self._config = config or {}
         self._memory = memory
         self._llm_client = llm_client
@@ -73,7 +73,7 @@ class SkillTool(Tool):
         ctx = CommandContext(
             session_id=self._session_id,
             data_dir=self._data_dir,
-            console=self._console,
+            ui=self._ui,
             config=self._config,
             memory=self._memory,
             llm_client=self._llm_client,

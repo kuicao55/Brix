@@ -29,7 +29,10 @@ class VoiceCommand(Command):
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         if self._voice_runtime is None:
-            context.console.print("[yellow]语音模块未启用。请在配置中设置 voice.enabled = true[/]")
+            if context.ui:
+                context.ui.print("语音模块未启用。请在配置中设置 voice.enabled = true", style="warning")
+            else:
+                print("语音模块未启用。请在配置中设置 voice.enabled = true")
             return CommandResult(type=CommandResultType.NONE)
 
         # 解析参数
@@ -39,13 +42,19 @@ class VoiceCommand(Command):
 
         # 互斥校验
         if input_only and output_only:
-            context.console.print("[yellow]--input-only 和 --output-only 不能同时使用[/]")
+            if context.ui:
+                context.ui.print("--input-only 和 --output-only 不能同时使用", style="warning")
+            else:
+                print("--input-only 和 --output-only 不能同时使用")
             return CommandResult(type=CommandResultType.NONE)
 
         try:
             if self._voice_runtime.is_running:
                 await self._voice_runtime.stop()
-                context.console.print("[dim]语音模式已关闭[/]")
+                if context.ui:
+                    context.ui.print("语音模式已关闭", style="muted")
+                else:
+                    print("语音模式已关闭")
             else:
                 # 根据标志决定启用模式
                 if input_only:
@@ -62,20 +71,32 @@ class VoiceCommand(Command):
                     self._voice_runtime.output_enabled,
                     continuous,
                 )
-                context.console.print(f"[green]语音模式已开启 ({mode_desc})[/]")
+                if context.ui:
+                    context.ui.print(f"语音模式已开启 ({mode_desc})", style="success")
+                else:
+                    print(f"语音模式已开启 ({mode_desc})")
 
                 # TTS 状态提示
                 if self._voice_runtime.output_enabled:
                     playback_mode = getattr(self._voice_runtime, "tts_playback_mode", "unknown")
                     tts_ready = getattr(self._voice_runtime, "tts_available", False)
-                    context.console.print(f"[dim]TTS 状态: ready={tts_ready}, playback={playback_mode}[/]")
-                    if playback_mode == "none":
-                        context.console.print("[yellow]TTS 播放不可用：未检测到可用 TTS client 或音频后端[/]")
+                    if context.ui:
+                        context.ui.print(f"TTS 状态: ready={tts_ready}, playback={playback_mode}", style="muted")
+                        if playback_mode == "none":
+                            context.ui.print("TTS 播放不可用：未检测到可用 TTS client 或音频后端", style="warning")
+                    else:
+                        print(f"TTS 状态: ready={tts_ready}, playback={playback_mode}")
                 else:
-                    context.console.print("[dim]TTS 已禁用（仅语音输入模式）[/]")
+                    if context.ui:
+                        context.ui.print("TTS 已禁用（仅语音输入模式）", style="muted")
+                    else:
+                        print("TTS 已禁用（仅语音输入模式）")
 
         except Exception as exc:
-            context.console.print(f"[red]语音操作失败: {exc}[/]")
+            if context.ui:
+                context.ui.print(f"语音操作失败: {exc}", style="error")
+            else:
+                print(f"语音操作失败: {exc}")
 
         return CommandResult(type=CommandResultType.NONE)
 

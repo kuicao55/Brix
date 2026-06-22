@@ -66,7 +66,7 @@ def test_command_context_fields():
     ctx = CommandContext()
     assert ctx.session_id == ""
     assert ctx.data_dir == ""
-    assert ctx.console is None
+    assert ctx.ui is None
     assert ctx.config is not None
 
 

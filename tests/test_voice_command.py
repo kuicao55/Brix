@@ -54,8 +54,8 @@ async def test_voice_command_no_runtime():
     result = await cmd.execute("", ctx)
 
     assert result.type == CommandResultType.NONE
-    ctx.console.print.assert_called_once()
-    assert "未启用" in str(ctx.console.print.call_args)
+    ctx.ui.print.assert_called_once()
+    assert "未启用" in str(ctx.ui.print.call_args)
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_voice_command_prints_playback_mode_warning():
     ctx = MagicMock()
     await cmd.execute("", ctx)
 
-    warning_calls = [c for c in ctx.console.print.call_args_list if "播放不可用" in str(c)]
+    warning_calls = [c for c in ctx.ui.print.call_args_list if "播放不可用" in str(c)]
     assert len(warning_calls) == 1
 
 
@@ -102,7 +102,7 @@ async def test_voice_command_start_error():
     result = await cmd.execute("", ctx)
 
     assert result.type == CommandResultType.NONE
-    error_calls = [c for c in ctx.console.print.call_args_list if "失败" in str(c)]
+    error_calls = [c for c in ctx.ui.print.call_args_list if "失败" in str(c)]
     assert len(error_calls) > 0
 
 
@@ -118,7 +118,7 @@ async def test_voice_command_stop_error():
     result = await cmd.execute("", ctx)
 
     assert result.type == CommandResultType.NONE
-    error_calls = [c for c in ctx.console.print.call_args_list if "失败" in str(c)]
+    error_calls = [c for c in ctx.ui.print.call_args_list if "失败" in str(c)]
     assert len(error_calls) > 0
 
 
@@ -175,7 +175,7 @@ async def test_voice_command_input_output_mutual_exclusivity():
     # 不应调用 start
     mock_runtime.start.assert_not_called()
     # 应打印互斥错误
-    warning_calls = [c for c in ctx.console.print.call_args_list if "不能同时" in str(c)]
+    warning_calls = [c for c in ctx.ui.print.call_args_list if "不能同时" in str(c)]
     assert len(warning_calls) == 1
     assert result.type == CommandResultType.NONE
 

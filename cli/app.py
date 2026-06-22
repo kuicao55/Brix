@@ -1,4 +1,13 @@
-"""Interactive REPL for Brix."""
+"""BrixCLI — Composition root，接线所有模块并启动应用。
+
+职责：
+1. 初始化核心模块（memory、llm、tools、commands、orchestrator、side tasks）
+2. 创建 UI 适配器（TuiAdapter）
+3. 创建业务编排器（ConversationRunner）
+4. 运行 REPL 循环
+
+不包含任何渲染逻辑或业务编排逻辑——这些分别由 TuiAdapter 和 ConversationRunner 处理。
+"""
 
 from __future__ import annotations
 
@@ -7,21 +16,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from prompt_toolkit import HTML, PromptSession
-from prompt_toolkit.completion import FuzzyCompleter
-from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.styles import Style
-from prompt_toolkit.shortcuts.choice_input import ChoiceInput
 from rich.console import Console
 
 from capability.runner import ToolRunner
-from capability.basics.sessions import list_sessions, get_session_by_prefix, resume_session
-from capability.basics.memory_files import load_soul, load_user
-from capability.basics.logs import get_recent_logs, get_log_detail
-from capability.basics.commands import get_command_list
-from capability.command.base import CommandContext, CommandResultType
+from capability.command.base import CommandResultType
 from capability.command.registry import CommandRegistry
-from hooks.registry import HookRegistry
 from capability.tools.bash import BashTool
 from capability.tools.calculator import CalculatorTool
 from capability.tools.file_edit import FileEditTool
@@ -31,40 +30,34 @@ from capability.tools.skill_tool import SkillTool
 from capability.tools.weather import WeatherTool
 from capability.tools.memory_search import MemorySearchTool
 from capability.tools.save_memory import SaveMemoryTool
+from cli.tui_adapter import TuiAdapter
+from cli.theme import BRIX_THEME
+from config.loader import load_config
+from hooks.registry import HookRegistry
+from infra.llm_client import LLMClient
+from memory import MemoryProvider, create_memory_provider
 from memory.long_term import LongTermMemory
 from memory.searcher import KeywordMemorySearcher
 from memory.short_term import ShortTermMemory
-from cli.banner import show_banner
-from cli.completer import SlashCommandCompleter
-from cli.display import render_history
-from cli.paginated_selector import PaginatedSelector
-from cli.stage_indicator import StageIndicator
-from cli.ansi_status_bar import paint_status_bar, setup_scroll_region, teardown_scroll_region
-from cli.status_bar import StatusBarRenderer
-from cli.stream_renderer import StreamRenderer
-from cli.thinking_renderer import ThinkingRenderer
-from cli.theme import BRIX_THEME
-from cli.tool_display import ToolDisplay
-from config.loader import load_config
-from log.flow import FlowLog
-from log.writer import flush_log
-from infra.llm_client import LLMClient
-from memory import MemoryProvider, create_memory_provider
 from orchestrator.engine import OrchestratorContext
+from orchestrator.runner import ConversationRunner
 from orchestrator.state_machine import StateMachineOrchestrator
 from plugins.status_bar.plugin import StatusBarPlugin
 from plugins.status_bar.slots import load_enabled_slots
+from cli.status_bar import StatusBarRenderer
 from side.manager import SideTaskManager
 from side.tasks import ALL_TASKS
 
 
 class BrixCLI:
-    """REPL interface that wires memory, routing, orchestrator, and tools."""
+    """Composition root — 接线所有模块，启动应用。"""
 
     def __init__(self, config: dict | None = None) -> None:
         self._config = config if config is not None else load_config()
         self._data_dir = self._config.get("memory", {}).get("data_dir", "memory/data")
         max_tokens = self._config.get("memory", {}).get("max_context_tokens", 8000)
+
+        # 核心模块
         self._memory: MemoryProvider = create_memory_provider(
             data_dir=self._data_dir,
             max_context_tokens=max_tokens,
@@ -74,8 +67,8 @@ class BrixCLI:
         self._register_tools()
         self._command_registry = CommandRegistry()
         self._orchestrator = self._build_orchestrator()
-        self._console = Console(theme=BRIX_THEME)
-        # SideTaskManager 初始化（需在 _init_voice 前，voice cleanup 依赖 get_side_model）
+
+        # SideTaskManager
         self._side_manager = SideTaskManager()
         self._side_manager.configure(
             config=self._config,
@@ -84,55 +77,50 @@ class BrixCLI:
         )
         for task in ALL_TASKS:
             self._side_manager.register(task)
-        # 状态栏（可选，通过 status_bar.enabled 控制）
+
+        # 状态栏（可选）
+        self._status_bar_renderer: StatusBarRenderer | None = None
+        self._status_bar_plugin: StatusBarPlugin | None = None
         self._status_bar_enabled = self._config.get("status_bar", {}).get("enabled", True)
         if self._status_bar_enabled:
             self._status_bar_plugin = StatusBarPlugin(side_model=self._side_manager.get_side_model())
             self._status_bar_renderer = StatusBarRenderer(self._status_bar_plugin)
-            # 根据配置注册已启用的 slot
             for slot in load_enabled_slots(self._config):
                 self._status_bar_renderer.add_slot(slot)
             self._side_manager._on_task_start = self._status_bar_plugin.on_task_start
             self._side_manager._on_task_end = self._status_bar_plugin.on_task_end
-            # 状态变化时重绘 ANSI 状态栏
-            self._status_bar_plugin.set_on_change(self._repaint_status_bar)
-        else:
-            self._status_bar_plugin = None
-            self._status_bar_renderer = None
-        # 语音模块（可选，需在注册命令前初始化）
+
+        # UI 适配器
+        self._ui = TuiAdapter(
+            console=Console(theme=BRIX_THEME),
+            config=self._config,
+            command_registry=self._command_registry,
+            status_bar_renderer=self._status_bar_renderer,
+        )
+
+        # 状态栏变化时重绘
+        if self._status_bar_plugin:
+            self._status_bar_plugin.set_on_change(self._ui.repaint_status_bar)
+
+        # 语音模块（可选）
         self._voice = None
-        self._voice_display = None
         self._voice_input_queue: asyncio.Queue[str] = asyncio.Queue()
         self._init_voice()
+
+        # 注册命令和 SkillTool
         self._register_commands()
         self._register_skill_tool()
 
-    # ------------------------------------------------------------------
-    # 内部辅助
-    # ------------------------------------------------------------------
-
-    def _save_session_summary(self) -> None:
-        """fire-and-forget：不阻塞退出。兜底检查在下次启动时补全。"""
-        if not self._side_manager or not self._side_manager.enabled:
-            return
-        try:
-            self._side_manager.fire_and_forget_session_summary()
-        except Exception:
-            pass
-
-    def _repaint_status_bar(self) -> None:
-        """重绘 ANSI 状态栏（固定在终端最后一行）。"""
-        if not self._status_bar_enabled or not self._status_bar_renderer:
-            return
-        try:
-            paint_status_bar(self._status_bar_renderer)
-        except Exception:
-            pass
-
-    def _resolve_model(self) -> str:
-        """解析主模型：default_model → fallback_model → 空字符串。"""
-        routing = self._config.get("routing", {})
-        return routing.get("default_model", "") or routing.get("fallback_model", "")
+        # 业务编排器
+        self._runner = ConversationRunner(
+            memory=self._memory,
+            llm_client=self._llm_client,
+            tool_runner=self._tool_runner,
+            orchestrator=self._orchestrator,
+            side_manager=self._side_manager,
+            command_registry=self._command_registry,
+            config=self._config,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -140,59 +128,18 @@ class BrixCLI:
 
     async def run(self) -> None:
         """Start the REPL loop."""
-        # 状态栏启用时：让 prompt_toolkit 认为终端少 1 行，为状态栏留出空间。
-        # 必须在 PromptSession 创建前 patch，否则 toolbar 会渲染到最后一行覆盖状态栏。
-        if self._status_bar_enabled:
-            from prompt_toolkit.output.vt100 import Vt100_Output
-            _original_get_size = Vt100_Output.get_size
-
-            def _patched_get_size(self):
-                size = _original_get_size(self)
-                from prompt_toolkit.data_structures import Size
-                return Size(rows=max(size.rows - 1, 2), columns=size.columns)
-
-            Vt100_Output.get_size = _patched_get_size  # type: ignore[assignment]
-
-        completer = FuzzyCompleter(SlashCommandCompleter(self._command_registry))
-        # 补全菜单样式：纯文字，无背景无边框
-        completion_style = Style.from_dict({
-            "completion-menu": "bg:",
-            "completion-menu.completion": "fg:#888888 bg:",
-            "completion-menu.completion.current": "fg:#000000 bg:",
-            "completion-menu.meta.completion": "fg:#666666 bg:",
-            "completion-menu.meta.completion.current": "fg:#333333 bg:",
-            "completion-menu.multi-column-meta": "bg:",
-            "completion-menu.completion fuzzymatch.inside": "bg:",
-            "completion-menu.completion fuzzymatch.inside.character": "bg:",
-            "completion-menu.completion fuzzymatch.outside": "fg:#666666 bg:",
-            "scrollbar": "bg:",
-            "scrollbar.button": "bg:",
-        })
-        session = PromptSession(
-            history=InMemoryHistory(),
-            completer=completer,
-            complete_while_typing=True,
-            style=completion_style,
-        )
-        default_model = self._config.get("routing", {}).get("default_model", "unknown")
-
-        # 状态栏：设置 ANSI 滚动区域，保留底部 1 行给状态栏
-        if self._status_bar_enabled:
-            setup_scroll_region(status_lines=1)
-            paint_status_bar(self._status_bar_renderer)
-
-        show_banner(console=self._console, model=default_model, version="0.1.0", cwd=str(Path.cwd()))
+        self._ui.setup()
 
         first_turn = True
         try:
             while True:
                 if not first_turn:
-                    self._console.print()
+                    self._ui.print("")
                 first_turn = False
 
                 # 并行等待键盘输入和语音输入
                 keyboard_task = asyncio.create_task(
-                    session.prompt_async(HTML('<ansicyan><b>❯ </b></ansicyan>'))
+                    self._ui.prompt_async(prefix="❯ ")
                 )
                 voice_task = asyncio.create_task(self._voice_input_queue.get())
 
@@ -222,7 +169,7 @@ class BrixCLI:
                     except (EOFError, KeyboardInterrupt):
                         self._save_session_summary()
                         self._memory.save_session()
-                        self._console.print("\n[dim]Goodbye.[/]")
+                        self._ui.print("Goodbye.", style="muted")
                         break
                 else:
                     continue
@@ -233,402 +180,59 @@ class BrixCLI:
 
                 # Slash commands
                 if text.startswith("/"):
-                    if await self._handle_command(text):
-                        continue
-                    # /quit returns True from _handle_command after printing
+                    result = await self._runner.handle_command(text, self._ui)
+                    if result.type == CommandResultType.QUIT:
+                        break
+                    continue
 
                 # Normal message — stream response
-                self._console.print()  # ❯ 和 ⏺ 之间的间隔
+                self._ui.print("")  # ❯ 和 ⏺ 之间的间隔
                 try:
-                    await self._process_streaming(text)
+                    response = await self._runner.process_streaming(text, self._ui)
+                    # 状态栏重绘（streaming 结束后恢复）
+                    self._ui.repaint_status_bar()
+                    # TTS 桥接：完整回复后一次性触发
+                    if (self._voice and self._voice.is_running
+                            and self._voice.output_enabled and response.strip()):
+                        self._ui.print(f"TTS trigger: chars={len(response)}", style="muted")
+                        self._voice.feed_response_text(response)
+                        self._voice.flush_tts()
                 except KeyboardInterrupt:
                     self._save_session_summary()
                     self._memory.save_session()
-                    self._console.print("\n[dim]Goodbye.[/]")
+                    self._ui.print("Goodbye.", style="muted")
                     break
                 except Exception as exc:
-                    self._console.print("[red]Error:[/] {}".format(exc))
+                    self._ui.print(f"Error: {exc}", style="error")
         finally:
             if self._voice and self._voice.is_running:
                 await self._voice.stop()
             await self._llm_client.close()
-            if self._status_bar_enabled:
-                teardown_scroll_region()
+            self._ui.teardown()
 
     # ------------------------------------------------------------------
-    # Command handling
+    # 内部辅助
     # ------------------------------------------------------------------
 
-    async def _handle_command(self, text: str) -> bool:
-        """Handle slash commands. Returns True to continue the loop."""
-        parts = text.split()
-        cmd_name = parts[0].lower().lstrip("/")
-        args = " ".join(parts[1:]) if len(parts) > 1 else ""
-
-        # 向后兼容：/exit 映射到 /quit
-        if cmd_name == "exit":
-            cmd_name = "quit"
-
-        command = self._command_registry.get(cmd_name)
-        if not command:
-            print(f"Unknown command: /{cmd_name}")
-            return True
-
-        ctx = CommandContext(
-            session_id="",
-            data_dir=self._data_dir,
-            console=self._console,
-            config=self._config,
-            memory=self._memory,
-            llm_client=self._llm_client,
-        )
-
-        # /clear 和 /quit 退出前保存会话摘要
-        if cmd_name in ("clear", "quit"):
-            self._save_session_summary()
-
-        result = await command.execute(args, ctx)
-
-        if result.type == CommandResultType.QUIT:
-            return False
-        elif result.type == CommandResultType.CLEAR:
+    def _save_session_summary(self) -> None:
+        """fire-and-forget：不阻塞退出。"""
+        if not self._side_manager or not self._side_manager.enabled:
+            return
+        try:
+            self._side_manager.fire_and_forget_session_summary()
+        except Exception:
             pass
-        elif result.type == CommandResultType.PROMPT:
-            self._console.print()
-            await self._process_streaming(result.prompt_text)
-        # NONE: 无后续操作
 
-        return True
-
-    def _print_resumed_messages(self, session_id: str) -> None:
-        """恢复 session 并用完整聊天 UI 渲染历史对话。"""
-        try:
-            msgs = resume_session(self._memory, session_id)
-            self._console.print(f"[dim]Resumed session {session_id[:8]}... ({len(msgs)} messages)[/]")
-            if msgs:
-                self._console.print()
-                render_history(self._console, msgs)
-        except FileNotFoundError:
-            print(f"Session not found: {session_id[:8]}...")
-
-    # ------------------------------------------------------------------
-    # Core processing pipeline
-    # ------------------------------------------------------------------
-
-    async def _process(self, user_input: str) -> str:
-        """Classify, route, run orchestrator, and persist."""
-        log = FlowLog(user_input)
-        hooks = HookRegistry()
-        hooks.bind_log(log)
-
-        dynamic_ctx = self._build_dynamic_context()
-        system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
-        # 注入 Skill 列表到 system prompt
-        skill_listing = self._command_registry.get_skill_listing_text()
-        if skill_listing:
-            system_prompt = system_prompt + "\n\n" + skill_listing
-        context_messages = self._memory.get_context_messages(system_prompt)
-
-        hooks.fire("memory", msgs=len(context_messages),
-                 chars=sum(len(m.get("content", "")) for m in context_messages))
-
-        # 直接使用 config 中的主模型（default_model → fallback_model）
-        model = self._resolve_model()
-        hooks.fire("router", model=model, reason="direct_config")
-        log.set_model(model)
-
-        context = OrchestratorContext(
-            history=list(context_messages),
-            tool_runner=self._tool_runner,
-            llm_client=self._llm_client,
-            model=model,
-            hooks=hooks,
-        )
-
-        # 记录 history 长度，用于提取本轮新增消息
-        original_history_count = len(context.history)
-
-        try:
-            response = await self._orchestrator.run(user_input, context)
-        except Exception as exc:
-            log.set_error(str(exc))
+    def _build_orchestrator(self):
+        """Build the orchestrator engine based on config."""
+        engine_name = self._config.get("engine", "state_machine")
+        if engine_name == "langgraph":
             try:
-                flush_log(log)
-            except Exception:
-                pass
-            raise
-
-        if response.startswith("Error"):
-            log.set_error(response)
-
-        # 持久化本轮新增的完整消息（包含 tool_calls、reasoning_content 等）
-        if not response.startswith("Error"):
-            new_messages = context.history[original_history_count:]
-            for msg in new_messages:
-                if msg.get("role") != "system":
-                    self._memory.add_full_message(msg)
-        self._memory.save_session()
-        hooks.fire("persist", saved=2 if not response.startswith("Error") else 1)
-
-        try:
-            flush_log(log)
-        except Exception:
-            pass
-
-        return response
-
-    async def _process_streaming(self, user_input: str) -> None:
-        """Stream orchestrator output with unified spinner and markdown rendering."""
-        # 兜底检查：即将创建新 session 时，检查上一个 session 是否有摘要
-        if self._memory.current_session_id is None and self._side_manager:
-            await self._side_manager.check_previous_session_summary()
-
-        import time as _time
-        _t_start = _time.monotonic()
-        _timing = []  # (label, elapsed_ms)
-
-        def _tick(label: str):
-            _timing.append((label, int((_time.monotonic() - _t_start) * 1000)))
-
-        indicator = StageIndicator(self._console)
-
-        log = FlowLog(user_input)
-        hooks = HookRegistry()
-        hooks.bind_log(log)
-
-        # Memory stage — build system prompt and context via MemoryProvider
-        dynamic_ctx = self._build_dynamic_context()
-        system_prompt = self._memory.build_system_prompt(dynamic_context=dynamic_ctx)
-        # 注入 Skill 列表到 system prompt
-        skill_listing = self._command_registry.get_skill_listing_text()
-        if skill_listing:
-            system_prompt = system_prompt + "\n\n" + skill_listing
-        context_messages = self._memory.get_context_messages(system_prompt)
-        hooks.fire("memory", msgs=len(context_messages),
-                   chars=sum(len(m.get("content", "")) for m in context_messages))
-        _tick("memory")
-
-        # Dream 蒸馏（fire-and-forget，不影响主流程）
-        if self._side_manager and self._side_manager.enabled:
-            self._side_manager.fire_and_forget(
-                "dream",
-                session_messages=context_messages,
-                user_input=user_input,
-                hooks=hooks,
-            )
-
-        # Side 层：历史搜索（如果触发）
-        if self._side_manager and self._side_manager.enabled:
-            indicator.update("Side", "history_search")
-            search_results = await self._side_manager.run_task(
-                "history_search",
-                session_messages=context_messages,
-                user_input=user_input,
-                hooks=hooks,
-            )
-            if search_results:
-                search_summary = "\n".join(
-                    f"- {s.get('title', '无标题')}: {s.get('summary', '')[:100]}"
-                    for s in search_results
-                )
-                context_messages.append({
-                    "role": "user",
-                    "content": f"[系统] 以下是你之前的对话，可能与当前问题相关：\n{search_summary}",
-                })
-            _tick("side:history_search")
-
-        # 直接使用 config 中的主模型（default_model → fallback_model）
-        model = self._resolve_model()
-        hooks.fire("router", model=model, reason="direct_config")
-        log.set_model(model)
-
-        # 用户消息计数（用于 pref_detection 间隔）
-        if self._side_manager:
-            self._side_manager.on_user_message()
-
-        context = OrchestratorContext(
-            history=list(context_messages),
-            tool_runner=self._tool_runner,
-            llm_client=self._llm_client,
-            model=model,
-            hooks=hooks,
-        )
-
-        # 记录 history 长度，用于提取本轮新增消息
-        original_history_count = len(context.history)
-
-        # Planning stage
-        indicator.update("Planning", model.split("/")[-1])
-
-        renderer = None
-        thinking_renderer = None
-        content_parts = []
-        has_error = False
-        tool_display = ToolDisplay(self._console)
-        _tool_input_cache: dict[str, dict] = {}  # tool_call_id → input，供 tool_result 关联
-
-        try:
-            async for event in self._orchestrator.run_stream(user_input, context):
-                event_type = event.get("type", "")
-
-                if event_type == "thinking_delta":
-                    text = event.get("text", "")
-                    if text:
-                        if thinking_renderer is None:
-                            tool_display.stop_thinking()
-                            indicator.stop_silent()
-                            thinking_renderer = ThinkingRenderer(self._console)
-                            thinking_renderer.start()
-                        thinking_renderer.push_delta(text)
-
-                elif event_type == "text_delta":
-                    text = event.get("text", "")
-                    if text:
-                        # thinking 结束，切换到正式文本渲染
-                        if thinking_renderer is not None:
-                            thinking_renderer.flush()
-                            thinking_renderer = None
-                        if renderer is None:
-                            _tick("first_token")
-                            tool_display.stop_thinking()
-                            indicator.stop_silent()
-                            from rich.text import Text
-                            renderer = StreamRenderer(
-                                self._console,
-                                marker=Text("⏺ ", style="green"),
-                            )
-                            renderer.start()
-                        renderer.push_delta(text)
-                        content_parts.append(text)
-
-                elif event_type == "tool_call":
-                    indicator.finish()
-                    if thinking_renderer is not None:
-                        thinking_renderer.flush()
-                        thinking_renderer = None
-                    if renderer is not None:
-                        renderer.flush()
-                        renderer = None
-                    self._console.print()  # 工具调用前的间隔
-                    tool_name = event.get("name", "unknown")
-                    _tc_id = event.get("id", "")
-                    if _tc_id:
-                        _tool_input_cache[_tc_id] = event.get("input", {})
-                    tool_display.show_tool_start(
-                        tool_name, event.get("input", {})
-                    )
-
-                elif event_type == "tool_result":
-                    tool_name = event.get("name", "unknown")
-                    elapsed_ms = event.get("ms", 0)
-                    is_err = event.get("is_error", False)
-                    tool_display.show_tool_result(
-                        tool_name,
-                        event.get("result", ""),
-                        elapsed_ms,
-                        is_error=is_err,
-                    )
-                    self._console.print()  # 工具结果后的间隔
-
-                # fire-and-forget 工具摘要
-                if (event_type == "tool_result"
-                        and self._side_manager and self._side_manager.enabled):
-                    # NOTE: fire-and-forget 任务的返回值当前被丢弃。
-                    # 后续版本需要添加 result sink（如回调或 dispatcher）来持久化任务输出。
-                    _tc_id = event.get("id", "")
-                    _tc_input = _tool_input_cache.pop(_tc_id, {})
-                    self._side_manager.fire_and_forget(
-                        "tool_summary",
-                        session_messages=context_messages,
-                        user_input=user_input,
-                        hooks=hooks,
-                        tool_name=tool_name,
-                        tool_input=_tc_input,
-                        tool_result=event.get("result", ""),
-                    )
-
-        except Exception as exc:
-            has_error = True
-            if thinking_renderer is not None:
-                thinking_renderer.flush()
-                thinking_renderer = None
-            if renderer is not None:
-                renderer.flush()
-                renderer = None
-            log.set_error(str(exc))
-            err_text = str(exc).split("\n")[0].strip()
-            if len(err_text) > 200:
-                err_text = err_text[:199] + "\u2026"
-            self._console.print("[red]Error:[/] {}".format(err_text))
-
-        finally:
-            tool_display.cleanup()  # 确保异常时 spinner 被清理
-            indicator.finish()
-            self._repaint_status_bar()  # streaming 结束后重绘状态栏
-
-        # Flush any remaining content
-        if thinking_renderer is not None:
-            thinking_renderer.flush()
-        if renderer is not None:
-            renderer.flush()
-        _tick("stream_end")
-
-        response = "".join(content_parts)
-
-        # TTS 桥接：统一在完整回复后一次性触发，避免流式碎片丢失触发
-        if (self._voice and self._voice.is_running
-                and self._voice.output_enabled and response.strip()):
-            self._console.print(f"[dim]TTS trigger: chars={len(response)}[/]")
-            self._voice.feed_response_text(response)
-            self._voice.flush_tts()
-
-        # Write timing data for analysis
-        try:
-            with open("/tmp/brix_timing.log", "a") as _f:
-                _f.write("input: {}\n".format(user_input[:60]))
-                for label, ms in _timing:
-                    prev = 0
-                    for _, p in _timing:
-                        if _ is label:
-                            break
-                        prev = p
-                    _f.write("  {:>12}: {:>5}ms  (+{}ms)\n".format(label, ms, ms - prev))
-                _f.write("\n")
-        except Exception:
-            pass
-
-        if response.startswith("Error"):
-            has_error = True
-            log.set_error(response)
-
-        # 持久化本轮新增的完整消息（包含 tool_calls、reasoning_content 等）
-        if not has_error:
-            new_messages = context.history[original_history_count:]
-            for msg in new_messages:
-                if msg.get("role") != "system":
-                    self._memory.add_full_message(msg)
-        self._memory.save_session()
-        hooks.fire("persist", saved=2 if not has_error else 1)
-
-        # 会话标题生成（第 1、3 条消息时触发）
-        if (self._side_manager and self._side_manager.enabled
-                and self._side_manager.should_run_session_title()):
-            async def _save_title(title: str) -> None:
-                sid = getattr(self._memory, "current_session_id", None)
-                if sid and title:
-                    self._memory.update_session_title(sid, title)
-            self._side_manager.fire_and_forget(
-                "session_title",
-                session_messages=context_messages,
-                user_input=user_input,
-                hooks=hooks,
-                on_result=_save_title,
-            )
-
-        try:
-            flush_log(log)
-        except Exception:
-            pass
+                from orchestrator.langgraph_engine import LangGraphOrchestrator
+                return LangGraphOrchestrator()
+            except ModuleNotFoundError:
+                print("Warning: langgraph not installed, falling back to state_machine engine")
+        return StateMachineOrchestrator()
 
     # ------------------------------------------------------------------
     # Tool registration
@@ -655,122 +259,9 @@ class BrixCLI:
             if short_term:
                 self._tool_runner.register(SaveMemoryTool(short_term, self._memory))
 
-    def _init_voice(self) -> None:
-        """初始化语音模块（如果配置启用）。"""
-        voice_cfg = self._config.get("voice", {})
-        if not voice_cfg.get("enabled", False):
-            return
-        try:
-            from capability.voice.config import VoiceConfig
-            from capability.voice.runtime import VoiceRuntimeImpl
-            from capability.voice.tts.cosyvoice_client import create_cosyvoice_client
-
-            cfg = VoiceConfig.from_dict(self._config)
-
-            # 创建 TTS 客户端（可选，API key 缺失时跳过）
-            tts_client = create_cosyvoice_client(self._config)
-
-            # 包装 LLM 调用：cleanup 用轻量模型，签名 (prompt) -> str
-            # 模型在调用时延迟解析，避免 _side_manager 未初始化时拿到默认值
-            # 回退顺序：voice.cleanup_model → side model → routing.default_model → 硬编码默认值
-            _CLEANUP_FALLBACK = "ali/qwen3.6-flash"
-            async def _cleanup_llm(prompt: str) -> str:
-                model = (
-                    voice_cfg.get("cleanup_model", "")
-                    or (self._side_manager.get_side_model() if self._side_manager else "")
-                    or self._config.get("routing", {}).get("default_model", "")
-                    or _CLEANUP_FALLBACK
-                )
-                resp = await self._llm_client.chat(
-                    messages=[{"role": "user", "content": prompt}],
-                    model=model,
-                )
-                return resp.content
-
-            self._voice = VoiceRuntimeImpl(
-                config=cfg,
-                hooks=HookRegistry(),
-                llm_fn=_cleanup_llm,
-                tts_client=tts_client,
-            )
-            self._voice.on_voice_input(self._handle_voice_input)
-
-            # 注册实时显示回调
-            from cli.voice_display import VoiceDisplay
-            self._voice_display = VoiceDisplay(self._console)
-            self._voice.on_state_change(self._handle_voice_state)
-            self._voice.on_interim_text(self._handle_interim_text)
-            # timing hook
-            self._voice._hooks.register("voice_timing", self._handle_voice_timing)
-            self._voice._hooks.register("voice_tts_queue", self._handle_voice_tts_queue)
-            self._voice._hooks.register("voice_tts_skip", self._handle_voice_tts_skip)
-            self._voice._hooks.register("voice_tts", self._handle_voice_tts)
-            self._voice._hooks.register("voice_tts_error", self._handle_voice_tts_error)
-        except Exception as exc:
-            self._console.print(f"[dim]语音模块加载失败: {exc}[/]")
-
-    def _handle_voice_input(self, text: str) -> None:
-        """语音输入回调 — 将文本注入 REPL 循环。
-
-        注意：此方法必须在 asyncio event loop 线程中调用。
-        如果从音频 I/O 工作线程调用，应使用 loop.call_soon_threadsafe()。
-        """
-        # 用 VoiceDisplay 显示最终转录结果
-        if self._voice_display:
-            self._voice_display.finish(text)
-        self._voice_input_queue.put_nowait(text)
-
-    def _handle_voice_state(self, state: str) -> None:
-        """语音状态变化回调 — 更新 VoiceDisplay。"""
-        if not self._voice_display:
-            return
-        if state == "listening":
-            self._voice_display.start_listening()
-        elif state in ("idle", "error"):
-            self._voice_display.stop()
-
-    def _handle_interim_text(self, text: str) -> None:
-        """Interim 转录回调 — 实时更新 VoiceDisplay。"""
-        if self._voice_display:
-            self._voice_display.update_interim(text)
-
-    def _handle_voice_timing(self, event) -> None:
-        """Voice timing hook — 更新 VoiceDisplay 的耗时显示。"""
-        if self._voice_display:
-            step = event.data.get("step", "")
-            ms = event.data.get("ms", 0)
-            self._voice_display.update_timing(step, ms)
-
-    def _handle_voice_tts(self, event) -> None:
-        """TTS 成功回调 — 输出简短诊断信息。"""
-        backend = event.data.get("backend", "unknown")
-        chunks = event.data.get("chunks", 0)
-        bytes_ = event.data.get("bytes", 0)
-        self._console.print(
-            f"[dim]TTS ok: backend={backend}, chunks={chunks}, bytes={bytes_}[/]"
-        )
-
-    def _handle_voice_tts_error(self, event) -> None:
-        """TTS 错误回调 — 输出可见错误。"""
-        error = event.data.get("error", "unknown")
-        backend = event.data.get("backend", "unknown")
-        self._console.print(
-            f"[yellow]TTS error: {error} (backend={backend})[/]"
-        )
-
-    def _handle_voice_tts_queue(self, event) -> None:
-        source = event.data.get("source", "unknown")
-        text = event.data.get("text", "")
-        self._console.print(
-            f"[dim]TTS queue: source={source}, text='{text}'[/]"
-        )
-
-    def _handle_voice_tts_skip(self, event) -> None:
-        source = event.data.get("source", "unknown")
-        text = event.data.get("text", "")
-        self._console.print(
-            f"[dim]TTS skip: source={source}, text='{text}'[/]"
-        )
+    # ------------------------------------------------------------------
+    # Command registration
+    # ------------------------------------------------------------------
 
     def _register_commands(self) -> None:
         """注册所有内置命令和 Skill 到 CommandRegistry。"""
@@ -792,9 +283,7 @@ class BrixCLI:
         self._command_registry.register(SoulCommand())
         self._command_registry.register(UserCommand())
         self._command_registry.register(LogCommand())
-        # HelpCommand 需要引用 registry
         self._command_registry.register(HelpCommand(self._command_registry))
-        # /voice 命令
         self._command_registry.register(VoiceCommand(voice_runtime=self._voice))
 
         # 内置 Skill
@@ -818,30 +307,67 @@ class BrixCLI:
             llm_client=self._llm_client,
         ))
 
-    def _build_orchestrator(self):
-        """Build the orchestrator engine based on config."""
-        engine_name = self._config.get("engine", "state_machine")
-        if engine_name == "langgraph":
-            try:
-                from orchestrator.langgraph_engine import LangGraphOrchestrator
-                return LangGraphOrchestrator()
-            except ModuleNotFoundError:
-                print("Warning: langgraph not installed, falling back to state_machine engine")
-        return StateMachineOrchestrator()
+    # ------------------------------------------------------------------
+    # Voice initialization
+    # ------------------------------------------------------------------
 
-    @staticmethod
-    def _build_dynamic_context() -> str:
-        """构建动态上下文 — 日期、平台等运行时信息。"""
-        import platform
-        from datetime import datetime, timezone
+    def _init_voice(self) -> None:
+        """初始化语音模块（如果配置启用）。"""
+        voice_cfg = self._config.get("voice", {})
+        if not voice_cfg.get("enabled", False):
+            return
+        try:
+            from capability.voice.config import VoiceConfig
+            from capability.voice.runtime import VoiceRuntimeImpl
+            from capability.voice.tts.cosyvoice_client import create_cosyvoice_client
 
-        now_utc = datetime.now(timezone.utc)
-        now_local = datetime.now().astimezone()
-        utc_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
-        local_str = now_local.strftime("%Y-%m-%d %H:%M %Z")
-        parts = [
-            f"Current date/time: {local_str} ({utc_str})",
-            f"Platform: {platform.system()} {platform.release()}",
-            f"Working directory: {Path.cwd()}",
-        ]
-        return "\n".join(parts)
+            cfg = VoiceConfig.from_dict(self._config)
+            tts_client = create_cosyvoice_client(self._config)
+
+            # LLM cleanup 包装
+            _CLEANUP_FALLBACK = "ali/qwen3.6-flash"
+
+            async def _cleanup_llm(prompt: str) -> str:
+                model = (
+                    voice_cfg.get("cleanup_model", "")
+                    or (self._side_manager.get_side_model() if self._side_manager else "")
+                    or self._config.get("routing", {}).get("default_model", "")
+                    or _CLEANUP_FALLBACK
+                )
+                resp = await self._llm_client.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model,
+                )
+                return resp.content
+
+            self._voice = VoiceRuntimeImpl(
+                config=cfg,
+                hooks=HookRegistry(),
+                llm_fn=_cleanup_llm,
+                tts_client=tts_client,
+            )
+
+            # 语音输入 → 注入 REPL 循环
+            self._voice.on_voice_input(self._handle_voice_input)
+
+            # 语音状态/转录 → 委托给 UIAdapter
+            self._voice.on_state_change(self._ui.on_voice_state_change)
+            self._voice.on_interim_text(self._ui.on_voice_interim_text)
+
+            # voice timing hook → UIAdapter
+            self._voice._hooks.register("voice_timing", self._handle_voice_timing)
+
+        except Exception as exc:
+            self._ui.print(f"语音模块加载失败: {exc}", style="muted")
+
+    def _handle_voice_input(self, text: str) -> None:
+        """语音输入回调 — 将文本注入 REPL 循环。"""
+        # 显示最终转录结果
+        self._ui.show_voice_final(text, {})
+        self._voice_input_queue.put_nowait(text)
+
+    def _handle_voice_timing(self, event: Any) -> None:
+        """Voice timing hook — 更新 UIAdapter 的耗时显示。"""
+        step = event.data.get("step", "")
+        ms = event.data.get("ms", 0)
+        self._ui.update_voice_timing(step, ms)

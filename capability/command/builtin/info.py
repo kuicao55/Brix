@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from capability.command.base import (
     Command,
@@ -72,7 +72,7 @@ class ModelCommand(Command):
             return self._switch_model(args.strip(), models)
 
         # 无参数：交互式选择器
-        return await self._interactive_select(models)
+        return await self._interactive_select(models, ui=context.ui)
 
     def _switch_model(self, model_id: str, models: list[dict]) -> CommandResult:
         """直接切换模型。"""
@@ -86,10 +86,8 @@ class ModelCommand(Command):
         print(f"\n  已切换到: {model_id}（本次会话有效）\n")
         return CommandResult(type=CommandResultType.NONE)
 
-    async def _interactive_select(self, models: list[dict]) -> CommandResult:
+    async def _interactive_select(self, models: list[dict], ui: Any = None) -> CommandResult:
         """交互式模型选择器（方向键选择，回车确认）。"""
-        from cli.paginated_selector import PaginatedSelector
-
         default_model = self._config.get("routing", {}).get("default_model", "")
 
         def _format(model: dict, idx: int) -> str:
@@ -98,13 +96,24 @@ class ModelCommand(Command):
             marker = " ← 当前" if model_id == default_model else ""
             return f"{model_id}  [{cost}]{marker}"
 
-        selector = PaginatedSelector(
-            items=models,
-            format_item=_format,
-            page_size=10,
-            title=f"切换主模型（当前: {default_model}）",
-        )
-        selected = await selector.prompt_async()
+        if ui:
+            selected = await ui.select_paginated(
+                items=models,
+                format_item=_format,
+                page_size=10,
+                title=f"切换主模型（当前: {default_model}）",
+            )
+        else:
+            # 降级：无 UI 时打印列表让用户手动输入
+            print(f"\n  当前模型: {default_model}")
+            for i, m in enumerate(models, 1):
+                mid = m.get("id", "")
+                cost = m.get("cost_tier", "?")
+                marker = " ← 当前" if mid == default_model else ""
+                print(f"    {i}. {mid}  [{cost}]{marker}")
+            print()
+            selected = None
+
         if selected is not None:
             model_id = selected.get("id", "")
             self._config.setdefault("routing", {})["default_model"] = model_id

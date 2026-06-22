@@ -77,9 +77,8 @@ class HistoryCommand(Command):
         if not msgs:
             print("No history yet.")
         else:
-            if context.console:
-                from cli.display import render_history
-                render_history(context.console, msgs)
+            if context.ui:
+                context.ui.render_history(msgs)
             else:
                 for m in msgs:
                     print(f"  {m.get('role', '?')}: {m.get('content', '')[:80]}")
@@ -130,15 +129,16 @@ class ResumeCommand(Command):
                 display = preview
             return f"{sid}  {count:>3} msgs  {updated}  {display}"
 
-        from cli.paginated_selector import PaginatedSelector
-
-        selector = PaginatedSelector(
-            items=sessions,
-            format_item=format_session,
-            page_size=10,
-            title="选择要恢复的会话",
-        )
-        selected = await selector.prompt_async()
+        if context.ui:
+            selected = await context.ui.select_paginated(
+                items=sessions,
+                format_item=format_session,
+                page_size=10,
+                title="选择要恢复的会话",
+            )
+        else:
+            # 降级：无 UI 时直接取第一个
+            selected = sessions[0] if sessions else None
         if selected is not None:
             self._resume_and_render(context, selected["id"])
 
@@ -157,15 +157,10 @@ class ResumeCommand(Command):
                         title = s.get("title", "")
                         break
             label = title if title else session_id[:8]
-            if context.console:
-                context.console.print(
-                    f"[dim]Resumed: {label} ({len(msgs)} messages)[/]"
-                )
+            if context.ui:
+                context.ui.print(f"Resumed: {label} ({len(msgs)} messages)", style="muted")
                 if msgs:
-                    from cli.display import render_history
-
-                    context.console.print()
-                    render_history(context.console, msgs)
+                    context.ui.render_history(msgs)
             else:
                 print(f"Resumed: {label} ({len(msgs)} messages)")
         except FileNotFoundError:
