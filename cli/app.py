@@ -27,7 +27,6 @@ from capability.tools.file_edit import FileEditTool
 from capability.tools.file_read import FileReadTool
 from capability.tools.file_write import FileWriteTool
 from capability.tools.skill_tool import SkillTool
-from capability.tools.weather import WeatherTool
 from capability.tools.memory_search import MemorySearchTool
 from capability.tools.save_memory import SaveMemoryTool
 from cli.tui_adapter import TuiAdapter
@@ -243,7 +242,6 @@ class BrixCLI:
         data_root = Path(self._data_dir)
         self._tool_runner.register(BashTool())
         self._tool_runner.register(CalculatorTool())
-        self._tool_runner.register(WeatherTool())
         self._tool_runner.register(FileReadTool())
         self._tool_runner.register(FileWriteTool(allowed_root=data_root))
         self._tool_runner.register(FileEditTool(allowed_root=data_root))

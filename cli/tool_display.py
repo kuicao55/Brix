@@ -22,7 +22,6 @@ class ToolDisplay:
         "file_edit": "\U0001f4dd",
         "web_search": "\U0001f50e",
         "calculator": "\U0001f9ee",
-        "weather": "\U0001f324\ufe0f",
     }
 
     def __init__(self, console: Console) -> None:
