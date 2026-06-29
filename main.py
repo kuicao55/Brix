@@ -118,7 +118,10 @@ def cmd_tui(remote: str | None = None) -> None:
     from cli.app import BrixTUIClient
 
     client = BrixTUIClient(remote=remote)
-    asyncio.run(client.run())
+    try:
+        asyncio.run(client.run())
+    except KeyboardInterrupt:
+        pass
 
 
 def main() -> None:
