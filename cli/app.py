@@ -78,6 +78,19 @@ class BrixTUIClient:
         except Exception:
             pass
 
+    @staticmethod
+    def _format_session_item(s: dict, idx: int) -> str:
+        """格式化 session 列表项：标题 + 最后消息预览。"""
+        title = s.get("title", "")
+        preview = s.get("preview", "")
+        count = s.get("message_count", 0)
+        updated = s.get("updated", "")[:10]  # YYYY-MM-DD
+        if title:
+            display = f"「{title}」  {preview}" if preview else f"「{title}」"
+        else:
+            display = preview
+        return f"{count:>3} msgs  {updated}  {display}"
+
     # ------------------------------------------------------------------
     # Voice 初始化（保留，语音硬件在客户端）
     # ------------------------------------------------------------------
@@ -390,7 +403,7 @@ class BrixTUIClient:
             # 用 PaginatedSelector 渲染 session 列表
             selector = PaginatedSelector(
                 items=sessions,
-                format_item=lambda s, idx: f"{s.get('title', 'Untitled')} ({s.get('message_count', 0)} msgs)",
+                format_item=lambda s, idx: self._format_session_item(s, idx),
                 title="选择一个会话",
             )
             selected = await selector.prompt_async()
@@ -436,6 +449,9 @@ class BrixTUIClient:
         thinking_renderer = None
         content_parts = []
         tool_display = ToolDisplay(self._console)
+        indicator = StageIndicator(self._console)
+        default_model = self._resolve_model()
+        indicator.update("Planning", default_model.split("/")[-1])
 
         try:
             async for event in self._transport.send_chat(content):
@@ -446,6 +462,7 @@ class BrixTUIClient:
                     if text:
                         if thinking_renderer is None:
                             tool_display.stop_thinking()
+                            indicator.stop_silent()
                             thinking_renderer = ThinkingRenderer(self._console)
                             thinking_renderer.start()
                         thinking_renderer.push_delta(text)
@@ -459,6 +476,7 @@ class BrixTUIClient:
                             thinking_renderer = None
                         if renderer is None:
                             tool_display.stop_thinking()
+                            indicator.stop_silent()
                             renderer = StreamRenderer(
                                 self._console,
                                 marker=Text("⏺ ", style="green"),
@@ -468,6 +486,7 @@ class BrixTUIClient:
                         content_parts.append(text)
 
                 elif event_type == "tool_call":
+                    indicator.finish()
                     if thinking_renderer is not None:
                         thinking_renderer.flush()
                         thinking_renderer = None
@@ -507,6 +526,7 @@ class BrixTUIClient:
             self._console.print("[red]Error:[/] {}".format(err_text))
 
         finally:
+            indicator.finish()
             tool_display.cleanup()
             self._repaint_status_bar()
 
