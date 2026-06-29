@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 from capability.command.base import (
@@ -91,6 +92,18 @@ class ModelCommand(Command):
         from cli.paginated_selector import PaginatedSelector
 
         default_model = self._config.get("routing", {}).get("default_model", "")
+
+        # Server 端没有终端，直接列出可用模型
+        if not sys.stdin.isatty():
+            print(f"\n  当前模型: {default_model}")
+            print(f"  可用模型：\n")
+            for m in models:
+                mid = m.get("id", "")
+                cost = m.get("cost_tier", "?")
+                marker = " ← 当前" if mid == default_model else ""
+                print(f"    {mid}  [{cost}]{marker}")
+            print(f"\n  使用 /model <model_id> 切换\n")
+            return CommandResult(type=CommandResultType.NONE)
 
         def _format(model: dict, idx: int) -> str:
             model_id = model.get("id", "")

@@ -21,9 +21,11 @@ voice = [
     "faster-whisper>=1.0",
     "openwakeword>=0.6",
     "pyaudio>=0.2.14",
-    "websockets>=12.0",
     "numpy>=1.24,<2",
     "scipy>=1.11",
+]
+server = [
+    "websockets>=12.0",
 ]
 dev = [
     "pytest>=8.0",
@@ -31,7 +33,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["cli*", "config*", "hooks*", "infra*", "log*", "memory*", "orchestrator*", "plugins*", "side*", "capability*"]
+include = ["cli*", "config*", "hooks*", "infra*", "log*", "memory*", "orchestrator*", "plugins*", "side*", "capability*", "protocol*", "server*"]
 exclude = ["tests*", "dev_doc*"]
 
 [tool.pytest.ini_options]

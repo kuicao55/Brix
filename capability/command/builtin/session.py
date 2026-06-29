@@ -117,6 +117,19 @@ class ResumeCommand(Command):
             if len(matches) > 1:
                 print(f"Ambiguous prefix, {len(matches)} matches. Opening selector...")
 
+        # Server 端没有终端，列出最近会话
+        if not sys.stdin.isatty():
+            print(f"\n  最近会话（共 {len(sessions)} 个）：\n")
+            for s in sessions[:10]:
+                sid = s.get("id", "?")[:8]
+                title = s.get("title", "")
+                count = s.get("message_count", 0)
+                updated = s.get("updated", "")[:10]
+                display = f"「{title}」" if title else ""
+                print(f"    {sid}  {count:>3} msgs  {updated}  {display}")
+            print(f"\n  使用 /resume <id> 恢复指定会话\n")
+            return CommandResult(type=CommandResultType.NONE)
+
         # 交互式分页选择器
         def format_session(s: dict, idx: int) -> str:
             sid = s.get("id", "?")[:8]

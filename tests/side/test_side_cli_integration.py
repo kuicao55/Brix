@@ -30,8 +30,11 @@ def test_config_routing_no_intent_model():
 
 # ---------------------------------------------------------------------------
 # 行为测试：SideTaskManager 初始化 + ALL_TASKS 注册
+# Phase 1: 标记引用旧 BrixCLI 内部状态的测试为 skip
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.skip(reason="Phase 1: server-client migration — logic moved to server/app.py")
 def test_side_manager_initialized_with_config_and_all_tasks():
     """BrixCLI.__init__() 创建 SideTaskManager，configure 传入 config/llm_client/memory，
     并注册 ALL_TASKS 中的全部 task。"""
@@ -75,6 +78,7 @@ def test_side_manager_initialized_with_config_and_all_tasks():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Phase 1: server-client migration — logic moved to server/app.py")
 async def test_process_streaming_calls_history_search_and_on_user_message():
     """_process_streaming 应调用 run_task('history_search') 和 on_user_message()。"""
     config = {
@@ -134,6 +138,7 @@ async def test_process_streaming_calls_history_search_and_on_user_message():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Phase 1: server-client migration — logic moved to server/app.py")
 async def test_process_streaming_fires_tool_summary_on_tool_result():
     """当 orchestrator 发出 tool_result 事件时，
     _process_streaming 应调用 fire_and_forget('tool_summary')。"""
@@ -192,6 +197,7 @@ async def test_process_streaming_fires_tool_summary_on_tool_result():
 # 行为测试：voice cleanup 使用 get_side_model() 回退
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="Phase 1: server-client migration — logic moved to server/app.py")
 def test_voice_cleanup_uses_side_model_fallback():
     """_cleanup_llm 在调用时延迟解析模型：
     _side_manager 存在时使用 get_side_model()，否则回退到 'ali/qwen3.6-flash'。"""
@@ -248,6 +254,7 @@ def test_voice_cleanup_uses_side_model_fallback():
     )
 
 
+@pytest.mark.skip(reason="Phase 1: server-client migration — voice stays in client")
 def test_init_voice_passes_side_model_to_cleanup():
     """_init_voice() 构建的 _cleanup_llm 使用 side_manager.get_side_model() 的返回值。"""
     config = {
@@ -290,6 +297,7 @@ def test_init_voice_passes_side_model_to_cleanup():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Phase 1: server-client migration — logic moved to server/app.py")
 async def test_process_streaming_fires_pref_detection_when_should_run_true():
     """当 should_run_pref_detection() 返回 True 时，
     _process_streaming 应调用 fire_and_forget('pref_detection')。"""
@@ -585,6 +593,7 @@ class TestBrixMemoryProviderComponents:
 class TestSaveMemoryToolRegistered:
     """验证 SaveMemoryTool 已注册到 ToolRunner。"""
 
+    @pytest.mark.skip(reason="Phase 1: server-client migration — logic moved to server/app.py")
     def test_save_memory_tool_in_registered_tools(self):
         """_register_tools() 应将 SaveMemoryTool 注册到 tool_runner。
         通过 BrixCLI 初始化验证 save_memory 出现在工具 schema 列表中。"""

@@ -7,10 +7,16 @@ from capability.base import Tool
 
 
 class MemorySearchTool(Tool):
-    """搜索长期记忆，查找与当前话题相关的用户信息。"""
+    """搜索长期记忆，查找与当前话题相关的用户信息。
 
-    def __init__(self, searcher: Any) -> None:
+    支持两种模式：
+    1. 直接绑定 searcher（旧模式，兼容 CLI）
+    2. 通过 server_app 获取 per-connection memory（新模式，Server 端）
+    """
+
+    def __init__(self, searcher: Any = None, server_app: Any = None) -> None:
         self._searcher = searcher
+        self._server_app = server_app
 
     @property
     def name(self) -> str:
@@ -33,6 +39,16 @@ class MemorySearchTool(Tool):
             "required": ["query"],
         }
 
+    def _get_searcher(self, client_id: str = "") -> Any:
+        """获取 searcher 实例。"""
+        if self._searcher:
+            return self._searcher
+        if self._server_app and client_id:
+            ctx = self._server_app.get_session_context(client_id)
+            if ctx and ctx.memory.searcher:
+                return ctx.memory.searcher
+        return None
+
     async def execute(self, **params: Any) -> str:
         # 1. 校验 query 类型
         query = params.get("query")
@@ -42,9 +58,15 @@ class MemorySearchTool(Tool):
         if not query:
             return "请输入搜索关键词。"
 
-        # 2. 搜索 + 结果格式化，统一捕获异常
+        # 2. 获取 searcher
+        client_id = params.get("client_id", "")
+        searcher = self._get_searcher(client_id)
+        if not searcher:
+            return "错误：记忆搜索功能不可用。"
+
+        # 3. 搜索 + 结果格式化，统一捕获异常
         try:
-            results = self._searcher.search(query, limit=5)
+            results = searcher.search(query, limit=5)
             if not results:
                 return "未找到相关记忆。"
             lines = []
