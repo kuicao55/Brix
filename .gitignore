@@ -8,3 +8,6 @@ build/
 .DS_Store
 node_modules/
 .claude/
+
+# 运行时数据,不纳入版本控制
+data/
